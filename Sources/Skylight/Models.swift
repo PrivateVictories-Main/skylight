@@ -40,6 +40,7 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
 
 enum WorkspaceItemKind: Codable, Equatable {
     case chat(ChatProvider)
+    case nativeClaude
     case terminal
 }
 
@@ -57,7 +58,15 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
     var symbolName: String {
         switch kind {
         case let .chat(provider): provider.symbolName
+        case .nativeClaude: "message.badge.waveform"
         case .terminal: "terminal"
+        }
+    }
+
+    var isChat: Bool {
+        switch kind {
+        case .chat, .nativeClaude: true
+        case .terminal: false
         }
     }
 }

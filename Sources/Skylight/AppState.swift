@@ -24,10 +24,11 @@ final class AppState: ObservableObject {
             items = saved.items
             canvases = saved.canvases
         } else {
-            let claude = WorkspaceItem(kind: .chat(.claude), name: "Claude")
-            let chatgpt = WorkspaceItem(kind: .chat(.chatgpt), name: "ChatGPT")
+            let native = WorkspaceItem(kind: .nativeClaude, name: "Claude Chat")
+            let claude = WorkspaceItem(kind: .chat(.claude), name: "Claude (Web)")
+            let chatgpt = WorkspaceItem(kind: .chat(.chatgpt), name: "ChatGPT (Web)")
             let term = WorkspaceItem(kind: .terminal, name: "Terminal 1")
-            items = [claude, chatgpt, term]
+            items = [native, claude, chatgpt, term]
             canvases = []
         }
         if let first = items.first { selection = .item(first.id) }
@@ -60,7 +61,15 @@ final class AppState: ObservableObject {
     }
 
     func addChat(_ provider: ChatProvider) {
-        let item = WorkspaceItem(kind: .chat(provider), name: provider.displayName)
+        let item = WorkspaceItem(kind: .chat(provider), name: "\(provider.displayName) (Web)")
+        items.append(item)
+        selection = .item(item.id)
+        persist()
+    }
+
+    func addNativeClaudeChat() {
+        let count = items.filter { $0.kind == .nativeClaude }.count
+        let item = WorkspaceItem(kind: .nativeClaude, name: count == 0 ? "Claude Chat" : "Claude Chat \(count + 1)")
         items.append(item)
         selection = .item(item.id)
         persist()
@@ -120,6 +129,14 @@ final class AppState: ObservableObject {
 final class LiveSessionStore {
     private var terminals: [UUID: TerminalViewState] = [:]
     private var webViews: [UUID: WKWebView] = [:]
+    private var chatEngines: [UUID: NativeChatEngine] = [:]
+
+    func chatEngine(for item: WorkspaceItem) -> NativeChatEngine {
+        if let existing = chatEngines[item.id] { return existing }
+        let engine = NativeChatEngine(itemID: item.id)
+        chatEngines[item.id] = engine
+        return engine
+    }
 
     func terminal(for item: WorkspaceItem) -> TerminalViewState {
         if let existing = terminals[item.id] { return existing }

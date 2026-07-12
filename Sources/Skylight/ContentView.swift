@@ -22,7 +22,7 @@ struct SidebarView: View {
     @EnvironmentObject private var state: AppState
 
     private var chats: [WorkspaceItem] {
-        state.items.filter { if case .chat = $0.kind { true } else { false } }
+        state.items.filter(\.isChat)
     }
 
     private var terminals: [WorkspaceItem] {
@@ -63,8 +63,9 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {
                 Menu {
-                    Button("Claude Chat") { state.addChat(.claude) }
-                    Button("ChatGPT Chat") { state.addChat(.chatgpt) }
+                    Button("Claude Chat") { state.addNativeClaudeChat() }
+                    Button("Claude (Web)") { state.addChat(.claude) }
+                    Button("ChatGPT (Web)") { state.addChat(.chatgpt) }
                     Button("Terminal") { state.addTerminal() }
                     Button("Canvas") { state.selection = .canvas(state.newCanvas().id) }
                 } label: {
@@ -121,7 +122,11 @@ private struct ItemRow: View {
     }
 
     private var iconTint: Color {
-        if case let .chat(provider) = item.kind { provider.tint } else { .secondary }
+        switch item.kind {
+        case let .chat(provider): provider.tint
+        case .nativeClaude: ChatProvider.claude.tint
+        case .terminal: .secondary
+        }
     }
 }
 
@@ -172,6 +177,8 @@ struct FullItemView: View {
             switch item.kind {
             case let .chat(provider):
                 WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
+            case .nativeClaude:
+                NativeChatView(engine: state.sessions.chatEngine(for: item))
             case .terminal:
                 TerminalSurfaceView(context: state.sessions.terminal(for: item))
                     .padding(6)

@@ -157,6 +157,8 @@ private struct TileView: View {
         switch item.kind {
         case let .chat(provider):
             WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
+        case .nativeClaude:
+            NativeChatView(engine: state.sessions.chatEngine(for: item))
         case .terminal:
             TerminalSurfaceView(context: state.sessions.terminal(for: item))
         }
