@@ -176,7 +176,9 @@ struct FullItemView: View {
         Group {
             switch item.kind {
             case let .chat(provider):
-                WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
+                let bridge = state.sessions.bridge(for: item, provider: provider)
+                WebViewContainer(webView: bridge.webView)
+                    .toolbar { WebChatToolbar(bridge: bridge) }
             case .nativeClaude:
                 NativeChatView(engine: state.sessions.chatEngine(for: item))
             case .terminal:

@@ -30,6 +30,13 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    var newChatURL: URL {
+        switch self {
+        case .claude: URL(string: "https://claude.ai/new")!
+        case .chatgpt: URL(string: "https://chatgpt.com/")!
+        }
+    }
+
     var tint: Color {
         switch self {
         case .claude: Color(red: 0.85, green: 0.47, blue: 0.28)
