@@ -49,11 +49,13 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
 enum AssistantMode: String, Codable {
     case chat
     case code
+    case web
 
     func displayName(for provider: ChatProvider) -> String {
         switch self {
         case .chat: "Chat"
         case .code: provider == .chatgpt ? "Codex" : "Code"
+        case .web: "Open Web"
         }
     }
 }

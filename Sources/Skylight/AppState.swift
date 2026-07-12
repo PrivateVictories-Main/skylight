@@ -128,7 +128,7 @@ final class AppState: ObservableObject {
 final class LiveSessionStore {
     private var terminals: [UUID: TerminalViewState] = [:]
     private var bridges: [UUID: WebChatBridge] = [:]
-    private var chatEngines: [UUID: NativeChatEngine] = [:]
+    private var chatEngines: [UUID: ProviderChatEngine] = [:]
 
     func bridge(for item: WorkspaceItem, provider: ChatProvider) -> WebChatBridge {
         if let existing = bridges[item.id] { return existing }
@@ -137,9 +137,9 @@ final class LiveSessionStore {
         return bridge
     }
 
-    func chatEngine(for item: WorkspaceItem) -> NativeChatEngine {
+    func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
         if let existing = chatEngines[item.id] { return existing }
-        let engine = NativeChatEngine(itemID: item.id)
+        let engine = ProviderChatEngine(provider: provider, itemID: item.id)
         chatEngines[item.id] = engine
         return engine
     }

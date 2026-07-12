@@ -1,7 +1,23 @@
+import AppKit
 import Foundation
 import SwiftUI
+import UniformTypeIdentifiers
 
 // MARK: - Model
+
+struct ChatAttachment: Identifiable, Codable, Equatable {
+    let id: UUID
+    var path: String
+    var name: String
+    var isImage: Bool
+
+    init(id: UUID = UUID(), path: String, name: String, isImage: Bool) {
+        self.id = id
+        self.path = path
+        self.name = name
+        self.isImage = isImage
+    }
+}
 
 struct ChatMessage: Identifiable, Codable, Equatable {
     enum Role: String, Codable {
@@ -13,58 +29,81 @@ struct ChatMessage: Identifiable, Codable, Equatable {
     let id: UUID
     var role: Role
     var text: String
+    var attachments: [ChatAttachment]
     var date: Date
 
-    init(id: UUID = UUID(), role: Role, text: String, date: Date = .now) {
+    init(id: UUID = UUID(), role: Role, text: String, attachments: [ChatAttachment] = [], date: Date = .now) {
         self.id = id
         self.role = role
         self.text = text
+        self.attachments = attachments
         self.date = date
     }
 }
 
-enum ClaudeModel: String, Codable, CaseIterable, Identifiable {
-    case defaultModel = ""
-    case fable = "claude-fable-5"
-    case opus = "opus"
-    case sonnet = "sonnet"
-    case haiku = "haiku"
+// MARK: - Model / effort options per provider
 
+struct ModelOption: Identifiable, Hashable {
+    let id: String    // CLI value ("" = default)
+    let label: String
+}
+
+enum ReasoningEffort: String, CaseIterable, Identifiable, Codable {
+    case none, low, medium, high, xhigh, max
     var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+}
 
-    var displayName: String {
+extension ChatProvider {
+    /// Model choices surfaced in the composer, per provider.
+    var modelOptions: [ModelOption] {
         switch self {
-        case .defaultModel: "Default"
-        case .fable: "Fable 5"
-        case .opus: "Opus 4.8"
-        case .sonnet: "Sonnet 5"
-        case .haiku: "Haiku 4.5"
+        case .claude:
+            [.init(id: "", label: "Default"),
+             .init(id: "claude-fable-5", label: "Fable 5"),
+             .init(id: "opus", label: "Opus 4.8"),
+             .init(id: "sonnet", label: "Sonnet 5"),
+             .init(id: "haiku", label: "Haiku 4.5")]
+        case .chatgpt:
+            // GPT-5.6 Codex generation (GA 2026-07-09): plan-gated Sol/Terra/Luna.
+            [.init(id: "", label: "Default"),
+             .init(id: "gpt-5.6-codex", label: "GPT-5.6 Codex"),
+             .init(id: "gpt-5.6", label: "GPT-5.6")]
         }
     }
+
+    /// Codex exposes reasoning effort; Claude Code does not.
+    var supportsEffort: Bool { self == .chatgpt }
+
+    var composerPlaceholder: String { "Message \(displayName)…" }
 }
 
 // MARK: - Engine
 
-/// Native chat over the user's existing Claude subscription, via the Claude
-/// Code CLI (`claude -p --output-format json`). No web view, no private APIs —
-/// the CLI is the vendor-sanctioned surface and handles auth itself.
+/// Native chat over the user's existing subscription, driven by the provider's
+/// own CLI (Claude Code `claude -p`, or Codex `codex exec`). No web view, no
+/// private APIs — the CLI is the sanctioned surface and handles auth itself.
 @MainActor
-final class NativeChatEngine: ObservableObject {
+final class ProviderChatEngine: ObservableObject {
+    let provider: ChatProvider
+
     @Published var messages: [ChatMessage] = []
     @Published var isThinking = false
-    @Published var model: ClaudeModel = .defaultModel {
-        didSet { save() }
-    }
+    @Published var modelID: String = "" { didSet { save() } }
+    @Published var effort: ReasoningEffort = .medium { didSet { save() } }
+    @Published var missingCLI = false
 
     private var sessionID: String?
     private let itemID: UUID
 
-    init(itemID: UUID) {
+    init(provider: ChatProvider, itemID: UUID) {
+        self.provider = provider
         self.itemID = itemID
         load()
+        missingCLI = Self.binary(for: provider) == nil
     }
 
-    // MARK: Transcript persistence
+    // MARK: Persistence
 
     private var transcriptURL: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -76,7 +115,8 @@ final class NativeChatEngine: ObservableObject {
     private struct SavedChat: Codable {
         var messages: [ChatMessage]
         var sessionID: String?
-        var model: ClaudeModel?
+        var modelID: String?
+        var effort: ReasoningEffort?
     }
 
     private func load() {
@@ -84,11 +124,12 @@ final class NativeChatEngine: ObservableObject {
               let saved = try? JSONDecoder().decode(SavedChat.self, from: data) else { return }
         messages = saved.messages
         sessionID = saved.sessionID
-        model = saved.model ?? .defaultModel
+        modelID = saved.modelID ?? ""
+        effort = saved.effort ?? .medium
     }
 
     private func save() {
-        let saved = SavedChat(messages: messages, sessionID: sessionID, model: model)
+        let saved = SavedChat(messages: messages, sessionID: sessionID, modelID: modelID, effort: effort)
         if let data = try? JSONEncoder().encode(saved) {
             try? data.write(to: transcriptURL)
         }
@@ -96,17 +137,23 @@ final class NativeChatEngine: ObservableObject {
 
     // MARK: Sending
 
-    func send(_ prompt: String) {
+    func send(_ prompt: String, attachments: [ChatAttachment]) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isThinking else { return }
-        messages.append(ChatMessage(role: .user, text: trimmed))
+        guard (!trimmed.isEmpty || !attachments.isEmpty), !isThinking else { return }
+        messages.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
         isThinking = true
         save()
 
-        let resume = sessionID
-        let modelArg = model.rawValue
+        let request = Request(
+            provider: provider,
+            prompt: trimmed.isEmpty ? "(see attached)" : trimmed,
+            model: modelID,
+            effort: provider.supportsEffort ? effort : nil,
+            imagePaths: attachments.filter(\.isImage).map(\.path),
+            resume: sessionID
+        )
         Task.detached { [weak self] in
-            let outcome = Self.runClaude(prompt: trimmed, model: modelArg, resume: resume)
+            let outcome = Self.run(request)
             await MainActor.run { [weak self] in
                 guard let self else { return }
                 self.isThinking = false
@@ -122,205 +169,102 @@ final class NativeChatEngine: ObservableObject {
         }
     }
 
+    private struct Request: Sendable {
+        let provider: ChatProvider
+        let prompt: String
+        let model: String
+        let effort: ReasoningEffort?
+        let imagePaths: [String]
+        let resume: String?
+    }
+
     private enum Outcome: Sendable {
         case success(String, String?)
         case failure(String)
     }
 
-    nonisolated private static func claudeBinary() -> String? {
+    nonisolated private static func binary(for provider: ChatProvider) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = [
-            "\(home)/.local/bin/claude",
-            "/usr/local/bin/claude",
-            "/opt/homebrew/bin/claude",
-        ]
+        let name = provider == .claude ? "claude" : "codex"
+        let candidates = ["\(home)/.local/bin/\(name)", "/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    nonisolated private static func runClaude(prompt: String, model: String, resume: String?) -> Outcome {
-        guard let binary = claudeBinary() else {
-            return .failure("Couldn't find the `claude` CLI. Install Claude Code and log in once from a terminal.")
+    nonisolated private static func run(_ request: Request) -> Outcome {
+        guard let binary = binary(for: request.provider) else {
+            let cli = request.provider == .claude ? "Claude Code" : "Codex"
+            return .failure("Couldn't find the \(cli) CLI. Install it and log in once from a terminal.")
         }
-        var arguments = ["-p", prompt, "--output-format", "json"]
-        if !model.isEmpty { arguments += ["--model", model] }
-        if let resume { arguments += ["--resume", resume] }
+        switch request.provider {
+        case .claude: return runClaude(binary: binary, request: request)
+        case .chatgpt: return runCodex(binary: binary, request: request)
+        }
+    }
 
+    nonisolated private static func runClaude(binary: String, request: Request) -> Outcome {
+        var arguments = ["-p", request.prompt, "--output-format", "json"]
+        if !request.model.isEmpty { arguments += ["--model", request.model] }
+        if let resume = request.resume { arguments += ["--resume", resume] }
+        // Claude Code reads images from paths mentioned in the prompt; append them.
+        if !request.imagePaths.isEmpty {
+            arguments[1] += "\n\nAttached files:\n" + request.imagePaths.joined(separator: "\n")
+        }
+        guard let out = launch(binary, arguments) else {
+            return .failure("Couldn't launch claude.")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: out.data) as? [String: Any],
+              let result = json["result"] as? String else {
+            return .failure(out.stderr.isEmpty ? "Claude didn't return a result." : out.stderr)
+        }
+        if json["is_error"] as? Bool == true { return .failure(result) }
+        return .success(result, json["session_id"] as? String)
+    }
+
+    nonisolated private static func runCodex(binary: String, request: Request) -> Outcome {
+        // Write the final assistant message to a temp file for clean capture.
+        let outFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("skylight-codex-\(UUID().uuidString).txt")
+        var arguments = ["exec", "--skip-git-repo-check", "-o", outFile.path]
+        if !request.model.isEmpty { arguments += ["-m", request.model] }
+        if let effort = request.effort { arguments += ["-c", "model_reasoning_effort=\"\(effort.rawValue)\""] }
+        for path in request.imagePaths { arguments += ["-i", path] }
+        if request.resume != nil { arguments.insert("resume", at: 1); arguments.insert("--last", at: 2) }
+        arguments.append(request.prompt)
+
+        guard let out = launch(binary, arguments) else {
+            return .failure("Couldn't launch codex.")
+        }
+        if let reply = try? String(contentsOf: outFile, encoding: .utf8) {
+            try? FileManager.default.removeItem(at: outFile)
+            let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return .success(trimmed, nil) }
+        }
+        let fallback = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !fallback.isEmpty { return .success(fallback, nil) }
+        return .failure(out.stderr.isEmpty ? "Codex didn't return a result." : out.stderr)
+    }
+
+    private struct Launched { let data: Data; let stdout: String; let stderr: String }
+
+    nonisolated private static func launch(_ binary: String, _ arguments: [String]) -> Launched? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
         process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
-        let stdout = Pipe()
-        let stderr = Pipe()
+        var env = ProcessInfo.processInfo.environment
+        env["PATH"] = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+        process.environment = env
+        let stdout = Pipe(), stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-
-        do {
-            try process.run()
-        } catch {
-            return .failure("Couldn't launch claude: \(error.localizedDescription)")
-        }
+        do { try process.run() } catch { return nil }
         let outData = stdout.fileHandleForReading.readDataToEndOfFile()
         let errData = stderr.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-
-        guard let json = try? JSONSerialization.jsonObject(with: outData) as? [String: Any],
-              let result = json["result"] as? String
-        else {
-            let err = String(data: errData, encoding: .utf8) ?? ""
-            let out = String(data: outData, encoding: .utf8) ?? ""
-            return .failure("Claude didn't return a result.\n\(err.isEmpty ? out : err)")
-        }
-        if json["is_error"] as? Bool == true {
-            return .failure(result)
-        }
-        return .success(result, json["session_id"] as? String)
-    }
-}
-
-// MARK: - View
-
-struct NativeChatView: View {
-    @ObservedObject var engine: NativeChatEngine
-    @State private var draft = ""
-    @FocusState private var inputFocused: Bool
-
-    var body: some View {
-        VStack(spacing: 0) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(engine.messages) { message in
-                            MessageBubble(message: message)
-                                .id(message.id)
-                        }
-                        if engine.isThinking {
-                            HStack(spacing: 8) {
-                                ProgressView().controlSize(.small)
-                                Text("Thinking…")
-                                    .font(.callout)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .id("thinking")
-                        }
-                    }
-                    .padding(20)
-                    .frame(maxWidth: 760)
-                    .frame(maxWidth: .infinity)
-                }
-                .overlay {
-                    if engine.messages.isEmpty, !engine.isThinking {
-                        emptyState
-                    }
-                }
-                .onChange(of: engine.messages) {
-                    if let last = engine.messages.last {
-                        withAnimation { proxy.scrollTo(last.id, anchor: .bottom) }
-                    }
-                }
-                .onChange(of: engine.isThinking) {
-                    if engine.isThinking {
-                        withAnimation { proxy.scrollTo("thinking", anchor: .bottom) }
-                    }
-                }
-            }
-            inputBar
-        }
-        .background(Color(nsColor: .textBackgroundColor))
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Picker("Model", selection: $engine.model) {
-                    ForEach(ClaudeModel.allCases) { model in
-                        Text(model.displayName).tag(model)
-                    }
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
-            }
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            BrandIcon(provider: .claude, size: 44)
-            Text("Claude")
-                .font(.title3.weight(.semibold))
-            Text("Runs natively on your Claude subscription.\nPick a model from the toolbar — conversations continue across restarts.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-        }
-        .frame(maxWidth: 420)
-        .allowsHitTesting(false)
-    }
-
-    private var inputBar: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Message Claude…", text: $draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1 ... 8)
-                .focused($inputFocused)
-                .onSubmit(sendDraft)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .strokeBorder(Color.primary.opacity(0.12))
-                        )
-                )
-            Button(action: sendDraft) {
-                Image(systemName: "arrow.up.circle.fill")
-                    .font(.system(size: 24))
-                    .foregroundStyle(draft.isEmpty || engine.isThinking ? Color.secondary : Color.accentColor)
-            }
-            .buttonStyle(.plain)
-            .disabled(draft.isEmpty || engine.isThinking)
-            .padding(.bottom, 4)
-        }
-        .padding(12)
-        .background(.bar)
-        .onAppear { inputFocused = true }
-    }
-
-    private func sendDraft() {
-        let text = draft
-        draft = ""
-        engine.send(text)
-    }
-}
-
-private struct MessageBubble: View {
-    let message: ChatMessage
-
-    var body: some View {
-        switch message.role {
-        case .user:
-            HStack {
-                Spacer(minLength: 60)
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 9)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.16))
-                    )
-            }
-        case .assistant:
-            Text(LocalizedStringKey(message.text))
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        case .error:
-            Label {
-                Text(message.text)
-                    .textSelection(.enabled)
-            } icon: {
-                Image(systemName: "exclamationmark.triangle")
-            }
-            .font(.callout)
-            .foregroundStyle(.orange)
-        }
+        return Launched(
+            data: outData,
+            stdout: String(data: outData, encoding: .utf8) ?? "",
+            stderr: String(data: errData, encoding: .utf8) ?? ""
+        )
     }
 }

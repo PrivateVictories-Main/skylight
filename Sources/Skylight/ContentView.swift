@@ -202,15 +202,12 @@ struct AssistantView: View {
     var body: some View {
         Group {
             switch item.mode {
-            case .chat:
+            case .chat, .code:
+                // Both modes use our custom native chat — same composer and
+                // output rendering, differing only in which CLI/model backs it.
+                ProviderChatView(engine: state.sessions.chatEngine(for: item, provider: provider))
+            case .web:
                 WebChatDetailView(bridge: state.sessions.bridge(for: item, provider: provider))
-            case .code:
-                switch provider {
-                case .claude:
-                    NativeChatView(engine: state.sessions.chatEngine(for: item))
-                case .chatgpt:
-                    CodexPlaceholderView()
-                }
             }
         }
         .toolbar {
@@ -221,38 +218,12 @@ struct AssistantView: View {
                 )) {
                     Text(AssistantMode.chat.displayName(for: provider)).tag(AssistantMode.chat)
                     Text(AssistantMode.code.displayName(for: provider)).tag(AssistantMode.code)
+                    Divider()
+                    Text(AssistantMode.web.displayName(for: provider)).tag(AssistantMode.web)
                 }
                 .pickerStyle(.menu)
                 .fixedSize()
             }
         }
-    }
-}
-
-struct CodexPlaceholderView: View {
-    var body: some View {
-        VStack(spacing: 14) {
-            BrandIcon(provider: .chatgpt, size: 44)
-            Text("Codex isn't set up yet")
-                .font(.title3.weight(.semibold))
-            Text("Install the Codex CLI and sign in with your ChatGPT account,\nthen this becomes a native Codex chat.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-            VStack(alignment: .leading, spacing: 6) {
-                Text("npm install -g @openai/codex")
-                Text("codex login")
-            }
-            .font(.system(.callout, design: .monospaced))
-            .textSelection(.enabled)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 12)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color(nsColor: .textBackgroundColor))
     }
 }
