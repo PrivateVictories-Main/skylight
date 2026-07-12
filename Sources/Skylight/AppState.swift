@@ -133,7 +133,7 @@ final class LiveSessionStore {
 
     func bridge(for item: WorkspaceItem, provider: ChatProvider) -> WebChatBridge {
         if let existing = bridges[item.id] { return existing }
-        let bridge = WebChatBridge(provider: provider)
+        let bridge = WebChatBridge(provider: provider, itemID: item.id)
         bridges[item.id] = bridge
         return bridge
     }

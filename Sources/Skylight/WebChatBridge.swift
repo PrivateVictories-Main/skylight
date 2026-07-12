@@ -23,9 +23,14 @@ final class WebChatBridge: NSObject, ObservableObject {
 
     @Published var conversations: [WebConversation] = []
     @Published var chromeHidden = false
+    @Published var currentPath: String = ""
 
-    init(provider: ChatProvider) {
+    private let itemID: UUID
+    private var urlObservation: NSKeyValueObservation?
+
+    init(provider: ChatProvider, itemID: UUID) {
         self.provider = provider
+        self.itemID = itemID
         self.webView = ChatWebView.make(provider: provider)
         super.init()
 
@@ -34,6 +39,40 @@ final class WebChatBridge: NSObject, ObservableObject {
         controller.addUserScript(
             WKUserScript(source: Self.harvestScript, injectionTime: .atDocumentEnd, forMainFrameOnly: true)
         )
+        loadCache()
+        urlObservation = webView.observe(\.url) { [weak self] webView, _ in
+            let path = webView.url?.path() ?? ""
+            Task { @MainActor [weak self] in
+                self?.currentPath = path
+            }
+        }
+    }
+
+    // MARK: History cache (native list appears instantly on relaunch)
+
+    private var cacheURL: URL {
+        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Skylight/webhistory", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("\(itemID.uuidString).json")
+    }
+
+    private struct CachedConversation: Codable {
+        var path: String
+        var title: String
+    }
+
+    private func loadCache() {
+        guard let data = try? Data(contentsOf: cacheURL),
+              let cached = try? JSONDecoder().decode([CachedConversation].self, from: data) else { return }
+        conversations = cached.map { WebConversation(path: $0.path, title: $0.title) }
+    }
+
+    private func saveCache() {
+        let cached = conversations.map { CachedConversation(path: $0.path, title: $0.title) }
+        if let data = try? JSONEncoder().encode(cached) {
+            try? data.write(to: cacheURL)
+        }
     }
 
     // MARK: Native actions driving the web UI
@@ -110,8 +149,9 @@ final class WebChatBridge: NSObject, ObservableObject {
             guard let path = entry["path"] as? String, let title = entry["title"] as? String else { return nil }
             return WebConversation(path: path, title: title)
         }
-        if items != conversations {
+        if !items.isEmpty, items != conversations {
             conversations = items
+            saveCache()
         }
     }
 }
@@ -135,21 +175,14 @@ private final class WeakMessageHandler: NSObject, WKScriptMessageHandler {
 
 struct WebChatToolbar: ToolbarContent {
     @ObservedObject var bridge: WebChatBridge
+    @Binding var showHistory: Bool
 
     var body: some ToolbarContent {
         ToolbarItemGroup(placement: .primaryAction) {
-            Menu {
-                if bridge.conversations.isEmpty {
-                    Text("No conversations found — log in first")
-                } else {
-                    ForEach(bridge.conversations) { conversation in
-                        Button(conversation.title) { bridge.open(conversation) }
-                    }
-                }
-            } label: {
-                Label("Conversations", systemImage: "clock.arrow.circlepath")
+            Toggle(isOn: $showHistory) {
+                Label("History", systemImage: "clock.arrow.circlepath")
             }
-            .help("Previous chats, pulled live from the web app")
+            .help("Show your past conversations as a native list")
 
             Button {
                 bridge.newChat()
@@ -166,5 +199,108 @@ struct WebChatToolbar: ToolbarContent {
             }
             .help("Hide the site's own sidebar and header")
         }
+    }
+}
+
+// MARK: - Web chat detail: native history column + live web conversation
+
+/// The "intertwine" view: Skylight's own conversation list (populated from the
+/// web app's DOM) sits beside the real conversation surface. The user browses
+/// history in native UI; clicks navigate the embedded web app.
+struct WebChatDetailView: View {
+    @ObservedObject var bridge: WebChatBridge
+    @State private var showHistory = true
+    @State private var query = ""
+
+    private var filtered: [WebConversation] {
+        guard !query.isEmpty else { return bridge.conversations }
+        return bridge.conversations.filter { $0.title.localizedCaseInsensitiveContains(query) }
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            if showHistory {
+                historyColumn
+                    .frame(width: 240)
+                Divider()
+            }
+            WebViewContainer(webView: bridge.webView)
+        }
+        .toolbar { WebChatToolbar(bridge: bridge, showHistory: $showHistory) }
+    }
+
+    private var historyColumn: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                TextField("Search chats", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
+            .padding(10)
+
+            if bridge.conversations.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("No conversations yet")
+                        .font(.callout.weight(.medium))
+                    Text("Log in to \(bridge.provider.displayName) on the right — your past chats will appear here automatically.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal, 14)
+                Spacer()
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(filtered) { conversation in
+                            ConversationRow(
+                                conversation: conversation,
+                                isCurrent: conversation.path == bridge.currentPath
+                            ) {
+                                bridge.open(conversation)
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 10)
+                }
+            }
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private struct ConversationRow: View {
+    let conversation: WebConversation
+    let isCurrent: Bool
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(conversation.title)
+                .font(.system(size: 12.5))
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(
+                    RoundedRectangle(cornerRadius: 7, style: .continuous)
+                        .fill(isCurrent
+                            ? Color.accentColor.opacity(0.18)
+                            : hovering ? Color.primary.opacity(0.06) : .clear)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
     }
 }
