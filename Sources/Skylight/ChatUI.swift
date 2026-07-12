@@ -253,7 +253,7 @@ private struct Composer: View {
                         .font(.system(size: 16))
                         .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressable)
                 .padding(.bottom, 6)
                 .help("Attach files or images")
 
@@ -268,8 +268,9 @@ private struct Composer: View {
                     Image(systemName: "arrow.up.circle.fill")
                         .font(.system(size: 26))
                         .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.5))
+                        .symbolEffect(.bounce, value: engine.messages.count)
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(.pressable(scale: 0.86))
                 .disabled(!canSend)
                 .padding(.bottom, 1)
             }

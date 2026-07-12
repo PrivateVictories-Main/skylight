@@ -84,6 +84,7 @@ private struct TileView: View {
 
     @State private var dragOffset: CGSize = .zero
     @State private var resizeDelta: CGSize = .zero
+    @State private var grabbing = false
 
     private var liveFrame: CGRect {
         CGRect(
@@ -103,12 +104,19 @@ private struct TileView: View {
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.1))
+                .strokeBorder(grabbing ? Color.accentColor.opacity(0.5) : Color.primary.opacity(0.1),
+                              lineWidth: grabbing ? 1.5 : 1)
         )
-        .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
+        .shadow(color: .black.opacity(grabbing ? 0.28 : 0.14),
+                radius: grabbing ? 22 : 12, y: grabbing ? 12 : 5)
         .overlay(alignment: .bottomTrailing) { resizeHandle }
         .frame(width: liveFrame.width, height: liveFrame.height)
+        .scaleEffect(grabbing ? 1.015 : 1, anchor: .center)
         .offset(x: liveFrame.minX, y: liveFrame.minY)
+        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: grabbing)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.origin)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.size)
+        .zIndex(grabbing ? 1 : 0)
     }
 
     private var header: some View {
@@ -129,9 +137,11 @@ private struct TileView: View {
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.pressable(scale: 0.8))
             .help("Remove from canvas (keeps the item)")
         }
         .padding(.horizontal, 10)
@@ -140,7 +150,10 @@ private struct TileView: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture()
-                .onChanged { dragOffset = $0.translation }
+                .onChanged {
+                    if !grabbing { grabbing = true }
+                    dragOffset = $0.translation
+                }
                 .onEnded { value in
                     var updated = tile
                     updated.origin = CanvasLayout.snapped(
@@ -150,6 +163,7 @@ private struct TileView: View {
                         )
                     )
                     dragOffset = .zero
+                    grabbing = false
                     state.updateTile(updated, in: boardID)
                 }
         )
