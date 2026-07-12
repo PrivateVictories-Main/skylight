@@ -8,6 +8,8 @@ final class AppState: ObservableObject {
     @Published var items: [WorkspaceItem]
     @Published var canvases: [CanvasBoard]
     @Published var selection: Selection?
+    @Published var visibleSections: Set<SidebarSection>
+    @Published var profile: UserProfile
 
     let sessions = LiveSessionStore()
 
@@ -23,12 +25,16 @@ final class AppState: ObservableObject {
            let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
             items = saved.items
             canvases = saved.canvases
+            visibleSections = saved.visibleSections ?? SidebarSection.defaultVisible
+            profile = saved.profile ?? UserProfile()
         } else {
             let claude = WorkspaceItem(kind: .assistant(.claude), name: "Claude")
             let chatgpt = WorkspaceItem(kind: .assistant(.chatgpt), name: "ChatGPT")
             let term = WorkspaceItem(kind: .terminal, name: "Terminal 1")
             items = [claude, chatgpt, term]
             canvases = []
+            visibleSections = SidebarSection.defaultVisible
+            profile = UserProfile()
         }
         if let first = items.first { selection = .item(first.id) }
     }
@@ -36,13 +42,35 @@ final class AppState: ObservableObject {
     private struct SavedState: Codable {
         var items: [WorkspaceItem]
         var canvases: [CanvasBoard]
+        var visibleSections: Set<SidebarSection>?
+        var profile: UserProfile?
     }
 
     func persist() {
-        let saved = SavedState(items: items, canvases: canvases)
+        let saved = SavedState(items: items, canvases: canvases,
+                               visibleSections: visibleSections, profile: profile)
         if let data = try? JSONEncoder().encode(saved) {
             try? data.write(to: Self.stateURL)
         }
+    }
+
+    // MARK: - Customization
+
+    func toggleSection(_ section: SidebarSection) {
+        if visibleSections.contains(section) { visibleSections.remove(section) }
+        else { visibleSections.insert(section) }
+        persist()
+    }
+
+    func togglePin(_ itemID: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        items[index].pinned.toggle()
+        persist()
+    }
+
+    func updateProfile(_ profile: UserProfile) {
+        self.profile = profile
+        persist()
     }
 
     func item(_ id: UUID) -> WorkspaceItem? {

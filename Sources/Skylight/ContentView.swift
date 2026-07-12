@@ -20,64 +20,99 @@ struct ContentView: View {
 
 struct SidebarView: View {
     @EnvironmentObject private var state: AppState
+    @State private var showProfile = false
 
-    private var chats: [WorkspaceItem] {
-        state.items.filter(\.isChat)
-    }
+    private var pinned: [WorkspaceItem] { state.items.filter(\.pinned) }
+    private var chats: [WorkspaceItem] { state.items.filter(\.isChat) }
+    private var terminals: [WorkspaceItem] { state.items.filter { $0.kind == .terminal } }
 
-    private var terminals: [WorkspaceItem] {
-        state.items.filter { $0.kind == .terminal }
+    private func isVisible(_ section: SidebarSection) -> Bool {
+        state.visibleSections.contains(section)
     }
 
     var body: some View {
         List(selection: $state.selection) {
-            Section("Chats") {
-                ForEach(chats) { item in
-                    ItemRow(item: item)
+            if isVisible(.pinned), !pinned.isEmpty {
+                Section("Pinned") {
+                    ForEach(pinned) { item in ItemRow(item: item) }
                 }
             }
-            Section("Terminals") {
-                ForEach(terminals) { item in
-                    ItemRow(item: item)
+            if isVisible(.chats) {
+                Section("Chats") {
+                    ForEach(chats) { item in ItemRow(item: item) }
                 }
             }
-            Section("Canvases") {
-                ForEach(state.canvases) { board in
-                    Label(board.name, systemImage: "square.on.square.dashed")
-                        .tag(Selection.canvas(board.id))
-                        .dropDestination(for: String.self) { ids, _ in
-                            dropItems(ids, onto: board.id)
-                        }
+            if isVisible(.terminals) {
+                Section("Terminals") {
+                    ForEach(terminals) { item in ItemRow(item: item) }
                 }
-                if state.canvases.isEmpty {
-                    Text("Drag a chat or terminal here")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                        .dropDestination(for: String.self) { ids, _ in
-                            dropItems(ids, onto: nil)
-                        }
+            }
+            if isVisible(.canvases) {
+                Section("Canvases") {
+                    ForEach(state.canvases) { board in
+                        Label(board.name, systemImage: "square.on.square.dashed")
+                            .tag(Selection.canvas(board.id))
+                            .dropDestination(for: String.self) { ids, _ in dropItems(ids, onto: board.id) }
+                    }
+                    if state.canvases.isEmpty {
+                        Text("Drag a chat or terminal here")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                            .dropDestination(for: String.self) { ids, _ in dropItems(ids, onto: nil) }
+                    }
                 }
             }
         }
         .listStyle(.sidebar)
-        .safeAreaInset(edge: .bottom) {
-            HStack(spacing: 12) {
-                Menu {
-                    Button("Claude") { state.addAssistant(.claude) }
-                    Button("ChatGPT") { state.addAssistant(.chatgpt) }
-                    Button("Terminal") { state.addTerminal() }
-                    Button("Canvas") { state.selection = .canvas(state.newCanvas().id) }
-                } label: {
-                    Label("New", systemImage: "plus")
-                }
-                .menuStyle(.borderlessButton)
-                .fixedSize()
-                Spacer()
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 10)
-        }
+        .safeAreaInset(edge: .bottom) { bottomBar }
         .navigationTitle("Skylight")
+        .popover(isPresented: $showProfile, arrowEdge: .bottom) {
+            ProfileEditor().environmentObject(state)
+        }
+    }
+
+    private var bottomBar: some View {
+        HStack(spacing: 10) {
+            Button { showProfile = true } label: {
+                HStack(spacing: 8) {
+                    ProfileAvatar(profile: state.profile, size: 24)
+                    Text(state.profile.name)
+                        .font(.system(size: 13, weight: .medium))
+                        .lineLimit(1)
+                }
+            }
+            .buttonStyle(.pressable(scale: 0.97))
+
+            Spacer()
+
+            Menu {
+                Button { state.addAssistant(.claude) } label: { Label("Claude Chat", systemImage: "plus") }
+                Button { state.addAssistant(.chatgpt) } label: { Label("ChatGPT", systemImage: "plus") }
+                Button { state.addTerminal() } label: { Label("Terminal", systemImage: "plus") }
+                Button { state.selection = .canvas(state.newCanvas().id) } label: { Label("Canvas", systemImage: "plus") }
+                Divider()
+                Menu("Customize Sidebar") {
+                    ForEach(SidebarSection.allCases) { section in
+                        Toggle(isOn: Binding(
+                            get: { state.visibleSections.contains(section) },
+                            set: { _ in state.toggleSection(section) }
+                        )) {
+                            Label(section.title + (section.isLive ? "" : " (soon)"), systemImage: section.symbol)
+                        }
+                        .disabled(!section.isLive)
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 9)
+        .background(.bar)
     }
 
     private func dropItems(_ ids: [String], onto canvasID: UUID?) -> Bool {
@@ -88,6 +123,66 @@ struct SidebarView: View {
             if target == nil, case let .canvas(created)? = state.selection { target = created }
         }
         return true
+    }
+}
+
+// MARK: - Profile
+
+struct ProfileAvatar: View {
+    let profile: UserProfile
+    var size: CGFloat = 24
+
+    private var initials: String {
+        let parts = profile.name.split(separator: " ")
+        let letters = parts.prefix(2).compactMap { $0.first }
+        return String(letters).uppercased()
+    }
+
+    var body: some View {
+        Circle()
+            .fill(Color(hex: profile.accentHex) ?? .accentColor)
+            .frame(width: size, height: size)
+            .overlay(
+                Text(initials.isEmpty ? "Y" : initials)
+                    .font(.system(size: size * 0.42, weight: .semibold))
+                    .foregroundStyle(.white)
+            )
+    }
+}
+
+struct ProfileEditor: View {
+    @EnvironmentObject private var state: AppState
+    @State private var draft = UserProfile()
+
+    private let swatches = ["#D97757", "#10A37F", "#3B82F6", "#8B5CF6", "#EF4444", "#111111"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                ProfileAvatar(profile: draft, size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Your Profile").font(.headline)
+                    Text("Shown across Skylight").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            TextField("Name", text: $draft.name)
+                .textFieldStyle(.roundedBorder)
+            HStack(spacing: 8) {
+                ForEach(swatches, id: \.self) { hex in
+                    Circle()
+                        .fill(Color(hex: hex) ?? .gray)
+                        .frame(width: 24, height: 24)
+                        .overlay(
+                            Circle().strokeBorder(Color.primary.opacity(draft.accentHex == hex ? 0.9 : 0), lineWidth: 2)
+                        )
+                        .onTapGesture { draft.accentHex = hex }
+                }
+            }
+        }
+        .padding(18)
+        .frame(width: 280)
+        .onAppear { draft = state.profile }
+        .onDisappear { state.updateProfile(draft) }
     }
 }
 
@@ -111,6 +206,10 @@ private struct ItemRow: View {
         .tag(Selection.item(item.id))
         .draggable(item.id.uuidString)
         .contextMenu {
+            Button(item.pinned ? "Unpin" : "Pin", systemImage: item.pinned ? "pin.slash" : "pin") {
+                state.togglePin(item.id)
+            }
+            Divider()
             Button("Add to New Canvas") {
                 state.addTile(itemID: item.id, to: nil, at: nil)
             }
