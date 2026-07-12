@@ -87,6 +87,8 @@ final class ProviderChatEngine: ObservableObject {
     @Published var missingCLI = false
 
     let codexModels: [CodexModel]
+    /// Called with a derived conversation title on the first user message.
+    var onTitle: ((String) -> Void)?
     private var sessionID: String?
     private let itemID: UUID
 
@@ -157,7 +159,11 @@ final class ProviderChatEngine: ObservableObject {
     func send(_ prompt: String, attachments: [ChatAttachment]) {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         guard (!trimmed.isEmpty || !attachments.isEmpty), !isThinking else { return }
+        let isFirst = messages.isEmpty
         messages.append(ChatMessage(role: .user, text: trimmed, attachments: attachments))
+        if isFirst {
+            onTitle?(Self.deriveTitle(from: trimmed, attachments: attachments))
+        }
         isThinking = true
         save()
 
@@ -184,6 +190,26 @@ final class ProviderChatEngine: ObservableObject {
                 self.save()
             }
         }
+    }
+
+    /// A short, human-readable title from the first message — like ChatGPT/Claude.
+    static func deriveTitle(from text: String, attachments: [ChatAttachment]) -> String {
+        var t = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        // Collapse runs of whitespace.
+        while t.contains("  ") { t = t.replacingOccurrences(of: "  ", with: " ") }
+        if t.isEmpty {
+            return attachments.first.map { $0.name } ?? "New Chat"
+        }
+        let maxLen = 44
+        if t.count <= maxLen { return t }
+        // Cut on a word boundary near the limit.
+        let clipped = String(t.prefix(maxLen))
+        if let lastSpace = clipped.lastIndex(of: " "), clipped.distance(from: clipped.startIndex, to: lastSpace) > 20 {
+            return String(clipped[..<lastSpace]) + "…"
+        }
+        return clipped + "…"
     }
 
     private struct Request: Sendable {

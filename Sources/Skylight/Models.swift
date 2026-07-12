@@ -71,13 +71,24 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
     var name: String
     var mode: AssistantMode
     var pinned: Bool
+    /// Auto-derived conversation title (what the chat is about). Nil until the
+    /// first message. Terminals keep `name`.
+    var title: String?
 
-    init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String, mode: AssistantMode = .chat, pinned: Bool = false) {
+    init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String, mode: AssistantMode = .chat,
+         pinned: Bool = false, title: String? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
         self.mode = mode
         self.pinned = pinned
+        self.title = title
+    }
+
+    /// What the sidebar shows: the conversation title for chats, else the name.
+    var displayLabel: String {
+        if isChat { return title ?? "New Chat" }
+        return name
     }
 
     var symbolName: String {

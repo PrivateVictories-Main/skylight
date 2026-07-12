@@ -128,7 +128,7 @@ private struct TileView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-            Text(item.name)
+            Text(item.displayLabel)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             Spacer()

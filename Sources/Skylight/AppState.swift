@@ -37,6 +37,7 @@ final class AppState: ObservableObject {
             profile = UserProfile()
         }
         if let first = items.first { selection = .item(first.id) }
+        sessions.renameChat = { [weak self] id, title in self?.setTitle(title, for: id) }
     }
 
     private struct SavedState: Codable {
@@ -70,6 +71,14 @@ final class AppState: ObservableObject {
 
     func updateProfile(_ profile: UserProfile) {
         self.profile = profile
+        persist()
+    }
+
+    /// Set the auto-derived title for a chat, the first time it gets one.
+    func setTitle(_ title: String, for itemID: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }),
+              items[index].title == nil else { return }
+        items[index].title = title
         persist()
     }
 
@@ -165,9 +174,17 @@ final class LiveSessionStore {
         return bridge
     }
 
+    /// Set by AppState so a chat can rename its sidebar item from the first message.
+    var renameChat: ((UUID, String) -> Void)?
+
     func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
         if let existing = chatEngines[item.id] { return existing }
         let engine = ProviderChatEngine(provider: provider, itemID: item.id)
+        engine.onTitle = { [weak self] title in self?.renameChat?(item.id, title) }
+        // Backfill a title for a chat that already has history but no title yet.
+        if item.title == nil, let firstUser = engine.messages.first(where: { $0.role == .user }) {
+            renameChat?(item.id, ProviderChatEngine.deriveTitle(from: firstUser.text, attachments: firstUser.attachments))
+        }
         chatEngines[item.id] = engine
         return engine
     }

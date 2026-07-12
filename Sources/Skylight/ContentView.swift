@@ -200,7 +200,7 @@ private struct ItemRow: View {
                     .foregroundStyle(iconTint)
                     .frame(width: 18, height: 18)
             }
-            Text(item.name)
+            Text(item.displayLabel)
         }
         .padding(.vertical, 1)
         .tag(Selection.item(item.id))
@@ -286,7 +286,7 @@ struct FullItemView: View {
                     .background(Color(nsColor: .textBackgroundColor))
             }
         }
-        .navigationTitle(item.name)
+        .navigationTitle(item.displayLabel)
     }
 }
 
