@@ -189,9 +189,6 @@ struct NativeChatView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 14) {
-                        if engine.messages.isEmpty {
-                            emptyState
-                        }
                         ForEach(engine.messages) { message in
                             MessageBubble(message: message)
                                 .id(message.id)
@@ -209,6 +206,11 @@ struct NativeChatView: View {
                     .padding(20)
                     .frame(maxWidth: 760)
                     .frame(maxWidth: .infinity)
+                }
+                .overlay {
+                    if engine.messages.isEmpty, !engine.isThinking {
+                        emptyState
+                    }
                 }
                 .onChange(of: engine.messages) {
                     if let last = engine.messages.last {
@@ -238,14 +240,17 @@ struct NativeChatView: View {
     }
 
     private var emptyState: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Claude — native chat")
+        VStack(spacing: 14) {
+            BrandIcon(provider: .claude, size: 44)
+            Text("Claude")
                 .font(.title3.weight(.semibold))
-            Text("Runs on your Claude subscription through the Claude Code CLI. Pick a model from the toolbar; the conversation continues across turns and app restarts.")
+            Text("Runs natively on your Claude subscription.\nPick a model from the toolbar — conversations continue across restarts.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
         }
-        .padding(.top, 24)
+        .frame(maxWidth: 420)
+        .allowsHitTesting(false)
     }
 
     private var inputBar: some View {

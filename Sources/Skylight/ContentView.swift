@@ -96,12 +96,18 @@ private struct ItemRow: View {
     let item: WorkspaceItem
 
     var body: some View {
-        Label {
+        HStack(spacing: 8) {
+            if case let .assistant(provider) = item.kind {
+                BrandIcon(provider: provider, size: 18)
+            } else {
+                Image(systemName: item.symbolName)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(iconTint)
+                    .frame(width: 18, height: 18)
+            }
             Text(item.name)
-        } icon: {
-            Image(systemName: item.symbolName)
-                .foregroundStyle(iconTint)
         }
+        .padding(.vertical, 1)
         .tag(Selection.item(item.id))
         .draggable(item.id.uuidString)
         .contextMenu {
@@ -225,12 +231,28 @@ struct AssistantView: View {
 
 struct CodexPlaceholderView: View {
     var body: some View {
-        ContentUnavailableView {
-            Label("Codex isn't set up yet", systemImage: "chevron.left.forwardslash.chevron.right")
-        } description: {
-            Text("Install the Codex CLI and sign in with your ChatGPT account, then this becomes a native Codex chat:\n\nnpm install -g @openai/codex\ncodex login")
+        VStack(spacing: 14) {
+            BrandIcon(provider: .chatgpt, size: 44)
+            Text("Codex isn't set up yet")
+                .font(.title3.weight(.semibold))
+            Text("Install the Codex CLI and sign in with your ChatGPT account,\nthen this becomes a native Codex chat.")
                 .font(.callout)
-                .textSelection(.enabled)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("npm install -g @openai/codex")
+                Text("codex login")
+            }
+            .font(.system(.callout, design: .monospaced))
+            .textSelection(.enabled)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor))
+            )
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(nsColor: .textBackgroundColor))
     }
 }

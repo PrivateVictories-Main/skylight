@@ -100,12 +100,12 @@ private struct TileView: View {
             content
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.12))
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.1))
         )
-        .shadow(color: .black.opacity(0.18), radius: 10, y: 4)
+        .shadow(color: .black.opacity(0.14), radius: 12, y: 5)
         .overlay(alignment: .bottomTrailing) { resizeHandle }
         .frame(width: liveFrame.width, height: liveFrame.height)
         .offset(x: liveFrame.minX, y: liveFrame.minY)
@@ -113,9 +113,13 @@ private struct TileView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: item.symbolName)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(.secondary)
+            if case let .assistant(provider) = item.kind {
+                BrandIcon(provider: provider, size: 15)
+            } else {
+                Image(systemName: item.symbolName)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
             Text(item.name)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
@@ -171,9 +175,12 @@ private struct TileView: View {
 
     private var resizeHandle: some View {
         Image(systemName: "arrow.up.left.and.arrow.down.right")
-            .font(.system(size: 9, weight: .bold))
-            .foregroundStyle(.tertiary)
-            .padding(6)
+            .font(.system(size: 8, weight: .bold))
+            .foregroundStyle(.secondary)
+            .padding(5)
+            .background(Circle().fill(.bar))
+            .overlay(Circle().strokeBorder(Color.primary.opacity(0.1)))
+            .padding(5)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture()

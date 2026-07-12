@@ -239,24 +239,35 @@ struct WebChatDetailView: View {
                     .textFieldStyle(.plain)
                     .font(.system(size: 12))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                RoundedRectangle(cornerRadius: 9, style: .continuous)
                     .fill(Color(nsColor: .controlBackgroundColor))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9, style: .continuous)
+                            .strokeBorder(Color.primary.opacity(0.08))
+                    )
             )
-            .padding(10)
+            .padding(.horizontal, 12)
+            .padding(.top, 14)
+            .padding(.bottom, 8)
 
             if bridge.conversations.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(spacing: 10) {
+                    Spacer()
+                    BrandIcon(provider: bridge.provider, size: 32)
                     Text("No conversations yet")
                         .font(.callout.weight(.medium))
-                    Text("Log in to \(bridge.provider.displayName) on the right — your past chats will appear here automatically.")
+                    Text("Log in to \(bridge.provider.displayName) on the right — your past chats appear here automatically.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                    Spacer()
+                    Spacer()
                 }
-                .padding(.horizontal, 14)
-                Spacer()
+                .padding(.horizontal, 18)
+                .frame(maxWidth: .infinity)
             } else {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 2) {

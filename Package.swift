@@ -16,7 +16,8 @@ let package = Package(
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
                 .product(name: "GhosttyTheme", package: "libghostty-spm"),
             ],
-            path: "Sources/Skylight"
+            path: "Sources/Skylight",
+            resources: [.process("Resources")]
         ),
     ]
 )
