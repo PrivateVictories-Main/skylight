@@ -63,9 +63,8 @@ struct SidebarView: View {
         .safeAreaInset(edge: .bottom) {
             HStack(spacing: 12) {
                 Menu {
-                    Button("Claude Chat") { state.addNativeClaudeChat() }
-                    Button("Claude (Web)") { state.addChat(.claude) }
-                    Button("ChatGPT (Web)") { state.addChat(.chatgpt) }
+                    Button("Claude") { state.addAssistant(.claude) }
+                    Button("ChatGPT") { state.addAssistant(.chatgpt) }
                     Button("Terminal") { state.addTerminal() }
                     Button("Canvas") { state.selection = .canvas(state.newCanvas().id) }
                 } label: {
@@ -123,8 +122,7 @@ private struct ItemRow: View {
 
     private var iconTint: Color {
         switch item.kind {
-        case let .chat(provider): provider.tint
-        case .nativeClaude: ChatProvider.claude.tint
+        case let .assistant(provider): provider.tint
         case .terminal: .secondary
         }
     }
@@ -175,10 +173,8 @@ struct FullItemView: View {
     var body: some View {
         Group {
             switch item.kind {
-            case let .chat(provider):
-                WebChatDetailView(bridge: state.sessions.bridge(for: item, provider: provider))
-            case .nativeClaude:
-                NativeChatView(engine: state.sessions.chatEngine(for: item))
+            case let .assistant(provider):
+                AssistantView(item: item, provider: provider)
             case .terminal:
                 TerminalSurfaceView(context: state.sessions.terminal(for: item))
                     .padding(6)
@@ -186,5 +182,55 @@ struct FullItemView: View {
             }
         }
         .navigationTitle(item.name)
+    }
+}
+
+/// One assistant, two surfaces behind a mode dropdown — Chat (the provider's
+/// full web experience, with Skylight's native history column) and Code/Codex
+/// (native CLI-backed chat). Mirrors the unified ChatGPT app's mode switcher.
+struct AssistantView: View {
+    @EnvironmentObject private var state: AppState
+    let item: WorkspaceItem
+    let provider: ChatProvider
+
+    var body: some View {
+        Group {
+            switch item.mode {
+            case .chat:
+                WebChatDetailView(bridge: state.sessions.bridge(for: item, provider: provider))
+            case .code:
+                switch provider {
+                case .claude:
+                    NativeChatView(engine: state.sessions.chatEngine(for: item))
+                case .chatgpt:
+                    CodexPlaceholderView()
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .navigation) {
+                Picker("Mode", selection: Binding(
+                    get: { item.mode },
+                    set: { state.setMode($0, for: item.id) }
+                )) {
+                    Text(AssistantMode.chat.displayName(for: provider)).tag(AssistantMode.chat)
+                    Text(AssistantMode.code.displayName(for: provider)).tag(AssistantMode.code)
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+            }
+        }
+    }
+}
+
+struct CodexPlaceholderView: View {
+    var body: some View {
+        ContentUnavailableView {
+            Label("Codex isn't set up yet", systemImage: "chevron.left.forwardslash.chevron.right")
+        } description: {
+            Text("Install the Codex CLI and sign in with your ChatGPT account, then this becomes a native Codex chat:\n\nnpm install -g @openai/codex\ncodex login")
+                .font(.callout)
+                .textSelection(.enabled)
+        }
     }
 }

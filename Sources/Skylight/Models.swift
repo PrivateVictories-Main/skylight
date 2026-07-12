@@ -45,9 +45,21 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
     }
 }
 
+/// One assistant item, two surfaces — mirrors the ChatGPT app's Work/Codex dropdown.
+enum AssistantMode: String, Codable {
+    case chat
+    case code
+
+    func displayName(for provider: ChatProvider) -> String {
+        switch self {
+        case .chat: "Chat"
+        case .code: provider == .chatgpt ? "Codex" : "Code"
+        }
+    }
+}
+
 enum WorkspaceItemKind: Codable, Equatable {
-    case chat(ChatProvider)
-    case nativeClaude
+    case assistant(ChatProvider)
     case terminal
 }
 
@@ -55,26 +67,24 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
     let id: UUID
     var kind: WorkspaceItemKind
     var name: String
+    var mode: AssistantMode
 
-    init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String) {
+    init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String, mode: AssistantMode = .chat) {
         self.id = id
         self.kind = kind
         self.name = name
+        self.mode = mode
     }
 
     var symbolName: String {
         switch kind {
-        case let .chat(provider): provider.symbolName
-        case .nativeClaude: "message.badge.waveform"
+        case let .assistant(provider): provider.symbolName
         case .terminal: "terminal"
         }
     }
 
     var isChat: Bool {
-        switch kind {
-        case .chat, .nativeClaude: true
-        case .terminal: false
-        }
+        if case .assistant = kind { true } else { false }
     }
 }
 

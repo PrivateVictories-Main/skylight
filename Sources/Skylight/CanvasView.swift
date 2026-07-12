@@ -155,10 +155,15 @@ private struct TileView: View {
     @ViewBuilder
     private var content: some View {
         switch item.kind {
-        case let .chat(provider):
-            WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
-        case .nativeClaude:
-            NativeChatView(engine: state.sessions.chatEngine(for: item))
+        case let .assistant(provider):
+            switch (item.mode, provider) {
+            case (.chat, _):
+                WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
+            case (.code, .claude):
+                NativeChatView(engine: state.sessions.chatEngine(for: item))
+            case (.code, .chatgpt):
+                CodexPlaceholderView()
+            }
         case .terminal:
             TerminalSurfaceView(context: state.sessions.terminal(for: item))
         }

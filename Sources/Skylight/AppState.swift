@@ -24,11 +24,10 @@ final class AppState: ObservableObject {
             items = saved.items
             canvases = saved.canvases
         } else {
-            let native = WorkspaceItem(kind: .nativeClaude, name: "Claude Chat")
-            let claude = WorkspaceItem(kind: .chat(.claude), name: "Claude (Web)")
-            let chatgpt = WorkspaceItem(kind: .chat(.chatgpt), name: "ChatGPT (Web)")
+            let claude = WorkspaceItem(kind: .assistant(.claude), name: "Claude")
+            let chatgpt = WorkspaceItem(kind: .assistant(.chatgpt), name: "ChatGPT")
             let term = WorkspaceItem(kind: .terminal, name: "Terminal 1")
-            items = [native, claude, chatgpt, term]
+            items = [claude, chatgpt, term]
             canvases = []
         }
         if let first = items.first { selection = .item(first.id) }
@@ -60,18 +59,18 @@ final class AppState: ObservableObject {
         persist()
     }
 
-    func addChat(_ provider: ChatProvider) {
-        let item = WorkspaceItem(kind: .chat(provider), name: "\(provider.displayName) (Web)")
+    func addAssistant(_ provider: ChatProvider) {
+        let count = items.filter { $0.kind == .assistant(provider) }.count
+        let name = count == 0 ? provider.displayName : "\(provider.displayName) \(count + 1)"
+        let item = WorkspaceItem(kind: .assistant(provider), name: name)
         items.append(item)
         selection = .item(item.id)
         persist()
     }
 
-    func addNativeClaudeChat() {
-        let count = items.filter { $0.kind == .nativeClaude }.count
-        let item = WorkspaceItem(kind: .nativeClaude, name: count == 0 ? "Claude Chat" : "Claude Chat \(count + 1)")
-        items.append(item)
-        selection = .item(item.id)
+    func setMode(_ mode: AssistantMode, for itemID: UUID) {
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        items[index].mode = mode
         persist()
     }
 
