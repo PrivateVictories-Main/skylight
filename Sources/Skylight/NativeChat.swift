@@ -48,14 +48,9 @@ struct ModelOption: Identifiable, Hashable {
     let label: String
 }
 
-enum ReasoningEffort: String, CaseIterable, Identifiable, Codable {
-    case none, low, medium, high, xhigh, max
-    var id: String { rawValue }
-    var label: String { rawValue.capitalized }
-}
-
 extension ChatProvider {
-    /// Model choices surfaced in the composer, per provider.
+    /// Model choices surfaced in the composer, per provider. ChatGPT/Codex is
+    /// read live from the CLI's own model cache so it always matches the plan.
     var modelOptions: [ModelOption] {
         switch self {
         case .claude:
@@ -65,10 +60,8 @@ extension ChatProvider {
              .init(id: "sonnet", label: "Sonnet 5"),
              .init(id: "haiku", label: "Haiku 4.5")]
         case .chatgpt:
-            // GPT-5.6 Codex generation (GA 2026-07-09): plan-gated Sol/Terra/Luna.
-            [.init(id: "", label: "Default"),
-             .init(id: "gpt-5.6-codex", label: "GPT-5.6 Codex"),
-             .init(id: "gpt-5.6", label: "GPT-5.6")]
+            [.init(id: "", label: "Default")]
+                + CodexCatalog.load().map { .init(id: $0.slug, label: $0.displayName) }
         }
     }
 
@@ -89,18 +82,42 @@ final class ProviderChatEngine: ObservableObject {
 
     @Published var messages: [ChatMessage] = []
     @Published var isThinking = false
-    @Published var modelID: String = "" { didSet { save() } }
-    @Published var effort: ReasoningEffort = .medium { didSet { save() } }
+    @Published var modelID: String = "" { didSet { reconcileEffort(); save() } }
+    @Published var effort: String = "medium" { didSet { save() } }
     @Published var missingCLI = false
 
+    let codexModels: [CodexModel]
     private var sessionID: String?
     private let itemID: UUID
 
     init(provider: ChatProvider, itemID: UUID) {
         self.provider = provider
         self.itemID = itemID
+        self.codexModels = provider == .chatgpt ? CodexCatalog.load() : []
         load()
         missingCLI = Self.binary(for: provider) == nil
+    }
+
+    /// Effort choices valid for the currently-selected Codex model.
+    var effortOptions: [String] {
+        guard provider == .chatgpt else { return [] }
+        if let model = codexModels.first(where: { $0.slug == modelID }) {
+            return model.efforts
+        }
+        return codexModels.first?.efforts ?? ["low", "medium", "high", "xhigh"]
+    }
+
+    /// Keep the selected effort valid when the model changes.
+    private func reconcileEffort() {
+        let options = effortOptions
+        if !options.isEmpty, !options.contains(effort) {
+            if let modelDefault = codexModels.first(where: { $0.slug == modelID })?.defaultEffort,
+               options.contains(modelDefault) {
+                effort = modelDefault
+            } else {
+                effort = options.contains("medium") ? "medium" : options[0]
+            }
+        }
     }
 
     // MARK: Persistence
@@ -116,7 +133,7 @@ final class ProviderChatEngine: ObservableObject {
         var messages: [ChatMessage]
         var sessionID: String?
         var modelID: String?
-        var effort: ReasoningEffort?
+        var effort: String?
     }
 
     private func load() {
@@ -125,7 +142,7 @@ final class ProviderChatEngine: ObservableObject {
         messages = saved.messages
         sessionID = saved.sessionID
         modelID = saved.modelID ?? ""
-        effort = saved.effort ?? .medium
+        effort = saved.effort ?? "medium"
     }
 
     private func save() {
@@ -173,7 +190,7 @@ final class ProviderChatEngine: ObservableObject {
         let provider: ChatProvider
         let prompt: String
         let model: String
-        let effort: ReasoningEffort?
+        let effort: String?
         let imagePaths: [String]
         let resume: String?
     }
@@ -226,7 +243,7 @@ final class ProviderChatEngine: ObservableObject {
             .appendingPathComponent("skylight-codex-\(UUID().uuidString).txt")
         var arguments = ["exec", "--skip-git-repo-check", "-o", outFile.path]
         if !request.model.isEmpty { arguments += ["-m", request.model] }
-        if let effort = request.effort { arguments += ["-c", "model_reasoning_effort=\"\(effort.rawValue)\""] }
+        if let effort = request.effort { arguments += ["-c", "model_reasoning_effort=\"\(effort)\""] }
         for path in request.imagePaths { arguments += ["-i", path] }
         if request.resume != nil { arguments.insert("resume", at: 1); arguments.insert("--last", at: 2) }
         arguments.append(request.prompt)

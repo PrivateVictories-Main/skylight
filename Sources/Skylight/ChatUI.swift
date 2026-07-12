@@ -25,12 +25,13 @@ struct ProviderChatView: View {
 
                 if engine.provider.supportsEffort {
                     Picker("Effort", selection: $engine.effort) {
-                        ForEach(ReasoningEffort.allCases) { effort in
-                            Text(effort.label).tag(effort)
+                        ForEach(engine.effortOptions, id: \.self) { effort in
+                            Text(effort.capitalized).tag(effort)
                         }
                     }
                     .pickerStyle(.menu)
                     .fixedSize()
+                    .help("Reasoning effort for the selected model")
                 }
             }
         }
