@@ -41,6 +41,7 @@ enum RenameTarget: Identifiable {
 struct SidebarView: View {
     @EnvironmentObject private var state: AppState
     @State private var showProfile = false
+    @State private var showNewPicker = false
     @State private var renameTarget: RenameTarget?
     @State private var renameDraft = ""
 
@@ -101,6 +102,9 @@ struct SidebarView: View {
         .popover(isPresented: $showProfile, arrowEdge: .bottom) {
             ProfileEditor().environmentObject(state)
         }
+        .sheet(isPresented: $showNewPicker) {
+            NewItemPicker().environmentObject(state)
+        }
         .alert("Rename", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -137,20 +141,17 @@ struct SidebarView: View {
 
             Spacer()
 
-            Menu {
-                Section("Chats") {
-                    Button("Claude") { state.addAssistant(.claude) }
-                    Button("ChatGPT") { state.addAssistant(.chatgpt) }
-                }
-                Section("Terminals") {
-                    Button("Terminal") { state.addTerminal() }
-                    Button("Claude Code Session") { state.addTerminal(.claudeCode) }
-                    Button("Codex Session") { state.addTerminal(.codex) }
-                }
-                Section("Boards") {
-                    Button("Canvas") { state.selection = .canvas(state.newCanvas().id) }
-                }
-                Divider()
+            Button {
+                showNewPicker = true
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .semibold))
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable)
+            .help("New chat, terminal, or canvas")
+            .contextMenu {
                 Menu("Customize Sidebar") {
                     ForEach(SidebarSection.allCases) { section in
                         Toggle(isOn: Binding(
@@ -162,13 +163,7 @@ struct SidebarView: View {
                         .disabled(!section.isLive)
                     }
                 }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
@@ -250,6 +245,7 @@ private struct ItemRow: View {
     @EnvironmentObject private var state: AppState
     let item: WorkspaceItem
     var onRename: ((WorkspaceItem) -> Void)?
+    @State private var confirmDelete = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -297,8 +293,13 @@ private struct ItemRow: View {
             }
             Divider()
             Button("Delete", role: .destructive) {
-                state.deleteItem(item.id)
+                confirmDelete = true
             }
+        }
+        .confirmationDialog("Delete “\(item.displayLabel)”?", isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) { state.deleteItem(item.id) }
+        } message: {
+            Text(item.isChat ? "The conversation and its history will be removed." : "The running session will end.")
         }
     }
 
