@@ -391,9 +391,21 @@ struct FullItemView: View {
                 TerminalSurfaceView(context: state.sessions.terminal(for: item))
                     .padding(6)
                     .background(Color(nsColor: .textBackgroundColor))
+                    .onAppear { deliverPendingInput() }
             }
         }
         .navigationTitle(item.displayLabel)
+    }
+
+    /// Chat → agent handoff: type the queued context into the terminal once
+    /// the agent CLI has had a moment to boot. Not submitted — the user
+    /// reviews the prefilled prompt and presses Enter.
+    private func deliverPendingInput() {
+        guard let text = state.sessions.pendingInput.removeValue(forKey: item.id) else { return }
+        let terminal = state.sessions.terminal(for: item)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+            terminal.send(text)
+        }
     }
 }
 
@@ -417,6 +429,18 @@ struct AssistantView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                if item.mode != .web {
+                    Button {
+                        state.handOff(from: item, provider: provider)
+                    } label: {
+                        Label("Hand off to \(TerminalFlavor.forProvider(provider).displayName)",
+                              systemImage: "terminal")
+                    }
+                    .disabled(state.sessions.chatEngine(for: item, provider: provider).messages.isEmpty)
+                    .help("Open a \(TerminalFlavor.forProvider(provider).displayName) session that continues this conversation")
+                }
+            }
             ToolbarItem(placement: .navigation) {
                 SlidingSegments(
                     options: [

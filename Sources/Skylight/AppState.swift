@@ -161,6 +161,25 @@ final class AppState: ObservableObject {
 
     // MARK: - Mutations
 
+    /// The chat → agent handoff: spin up the matching agent terminal and queue
+    /// the conversation context to be typed into it once the CLI boots.
+    func handOff(from item: WorkspaceItem, provider: ChatProvider) {
+        let flavor: TerminalFlavor = switch provider {
+        case .claude: .claudeCode
+        case .chatgpt: .codex
+        case .gemini: .gemini
+        }
+        let engine = sessions.chatEngine(for: item, provider: provider)
+        let context = engine.handoffContext()
+        let title = item.title.map { String($0.prefix(24)) } ?? "chat"
+        let terminal = WorkspaceItem(kind: .terminal, name: "\(flavor.displayName) — \(title)",
+                                     terminalFlavor: flavor)
+        items.append(terminal)
+        sessions.pendingInput[terminal.id] = context
+        selection = .item(terminal.id)
+        persist()
+    }
+
     func addTerminal(_ flavor: TerminalFlavor = .shell, directory: String? = nil) {
         let siblings = items.filter { $0.kind == .terminal && ($0.terminalFlavor ?? .shell) == flavor }.count
         let base = flavor.displayName
@@ -254,6 +273,9 @@ final class LiveSessionStore {
     var renameChat: ((UUID, String) -> Void)?
     /// Model-refined title, overwrites the truncated one.
     var renameRefined: ((UUID, String) -> Void)?
+    /// Text queued to be typed into a terminal once its CLI has booted
+    /// (chat → agent handoff). Not submitted — the user reviews and hits Enter.
+    var pendingInput: [UUID: String] = [:]
 
     /// Tear down live state for a deleted item.
     func discard(_ itemID: UUID) {

@@ -107,6 +107,14 @@ enum TerminalFlavor: String, Codable, CaseIterable {
         case .gemini: "gemini"
         }
     }
+
+    static func forProvider(_ provider: ChatProvider) -> TerminalFlavor {
+        switch provider {
+        case .claude: .claudeCode
+        case .chatgpt: .codex
+        case .gemini: .gemini
+        }
+    }
 }
 
 struct WorkspaceItem: Identifiable, Codable, Equatable {

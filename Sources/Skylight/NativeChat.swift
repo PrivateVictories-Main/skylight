@@ -210,6 +210,25 @@ final class ProviderChatEngine: ObservableObject {
         return "Earlier in this conversation:\n" + lines.joined(separator: "\n") + "\n\nNow the user says: "
     }
 
+    /// Compact, single-line context block for handing this conversation to an
+    /// interactive agent session. Newlines are flattened because the agent
+    /// TUI's Enter key submits.
+    func handoffContext() -> String {
+        let turns = messages.suffix(8).compactMap { message -> String? in
+            let clean = message.text
+                .replacingOccurrences(of: "\n", with: " ⏎ ")
+                .prefix(400)
+            switch message.role {
+            case .user: return "User: \(clean)"
+            case .assistant: return "Assistant: \(clean)"
+            case .error: return nil
+            }
+        }
+        return "I'm continuing from a chat conversation. Context: "
+            + turns.joined(separator: " | ")
+            + " — Please continue from here."
+    }
+
     /// A short, human-readable title from the first message — like ChatGPT/Claude.
     static func deriveTitle(from text: String, attachments: [ChatAttachment]) -> String {
         var t = text
