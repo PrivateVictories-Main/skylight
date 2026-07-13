@@ -27,10 +27,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>NSHighResolutionCapable</key><true/>
     <key>NSPrincipalClass</key><string>NSApplication</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
 </dict>
 </plist>
 PLIST
 
+mkdir -p "$APP/Contents/Resources"
+cp Sources/Skylight/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/Skylight"
 codesign --force --sign - "$APP" >/dev/null 2>&1 || true
 echo "Built $APP"
