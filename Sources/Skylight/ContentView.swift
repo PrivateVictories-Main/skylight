@@ -86,10 +86,18 @@ struct SidebarView: View {
             Spacer()
 
             Menu {
-                Button { state.addAssistant(.claude) } label: { Label("Claude Chat", systemImage: "plus") }
-                Button { state.addAssistant(.chatgpt) } label: { Label("ChatGPT", systemImage: "plus") }
-                Button { state.addTerminal() } label: { Label("Terminal", systemImage: "plus") }
-                Button { state.selection = .canvas(state.newCanvas().id) } label: { Label("Canvas", systemImage: "plus") }
+                Section("Chats") {
+                    Button("Claude") { state.addAssistant(.claude) }
+                    Button("ChatGPT") { state.addAssistant(.chatgpt) }
+                }
+                Section("Terminals") {
+                    Button("Terminal") { state.addTerminal() }
+                    Button("Claude Code Session") { state.addTerminal(.claudeCode) }
+                    Button("Codex Session") { state.addTerminal(.codex) }
+                }
+                Section("Boards") {
+                    Button("Canvas") { state.selection = .canvas(state.newCanvas().id) }
+                }
                 Divider()
                 Menu("Customize Sidebar") {
                     ForEach(SidebarSection.allCases) { section in
@@ -194,6 +202,17 @@ private struct ItemRow: View {
         HStack(spacing: 8) {
             if case let .assistant(provider) = item.kind {
                 BrandIcon(provider: provider, size: 18)
+            } else if let provider = item.terminalFlavor?.provider {
+                // Agent terminal: brand emblem with a small terminal badge.
+                BrandIcon(provider: provider, size: 18)
+                    .overlay(alignment: .bottomTrailing) {
+                        Image(systemName: "terminal.fill")
+                            .font(.system(size: 7, weight: .bold))
+                            .foregroundStyle(.secondary)
+                            .padding(1.5)
+                            .background(Circle().fill(.background))
+                            .offset(x: 4, y: 4)
+                    }
             } else {
                 Image(systemName: item.symbolName)
                     .font(.system(size: 13, weight: .medium))

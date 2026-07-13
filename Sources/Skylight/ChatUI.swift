@@ -26,9 +26,7 @@ struct ProviderChatView: View {
                     if let streaming = engine.streamingText, !streaming.isEmpty {
                         HStack(alignment: .top, spacing: 12) {
                             BrandIcon(provider: engine.provider, size: 24)
-                            Text(LocalizedStringKey(streaming))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                            RichMessageText(text: streaming)
                         }
                         .id("thinking")
                     } else if engine.isThinking {
@@ -92,9 +90,7 @@ private struct MessageRow: View {
         case .assistant:
             HStack(alignment: .top, spacing: 12) {
                 BrandIcon(provider: provider, size: 24)
-                Text(LocalizedStringKey(message.text))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                RichMessageText(text: message.text)
             }
         case .error:
             HStack(alignment: .top, spacing: 12) {

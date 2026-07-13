@@ -88,9 +88,12 @@ final class AppState: ObservableObject {
 
     // MARK: - Mutations
 
-    func addTerminal() {
-        let count = items.filter { $0.kind == .terminal }.count
-        let item = WorkspaceItem(kind: .terminal, name: "Terminal \(count + 1)")
+    func addTerminal(_ flavor: TerminalFlavor = .shell, directory: String? = nil) {
+        let siblings = items.filter { $0.kind == .terminal && ($0.terminalFlavor ?? .shell) == flavor }.count
+        let base = flavor.displayName
+        let name = siblings == 0 ? base : "\(base) \(siblings + 1)"
+        let item = WorkspaceItem(kind: .terminal, name: name,
+                                 terminalFlavor: flavor, workingDirectory: directory)
         items.append(item)
         selection = .item(item.id)
         persist()
@@ -191,13 +194,26 @@ final class LiveSessionStore {
 
     func terminal(for item: WorkspaceItem) -> TerminalViewState {
         if let existing = terminals[item.id] { return existing }
-        let state = TerminalViewState()
+        let state: TerminalViewState
+        let flavor = item.terminalFlavor ?? .shell
+        if let command = flavor.command, let binary = Self.resolveBinary(command) {
+            // Agent terminal: ghostty runs the CLI directly as the surface command.
+            state = TerminalViewState(configSource: .generated("command = \(binary)\n"))
+        } else {
+            state = TerminalViewState()
+        }
         state.configuration = TerminalSurfaceOptions(
             backend: .exec,
-            workingDirectory: FileManager.default.homeDirectoryForCurrentUser.path
+            workingDirectory: item.workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path
         )
         terminals[item.id] = state
         return state
+    }
+
+    nonisolated static func resolveBinary(_ name: String) -> String? {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        let candidates = ["\(home)/.local/bin/\(name)", "/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)"]
+        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
     func webView(for item: WorkspaceItem, provider: ChatProvider) -> WKWebView {

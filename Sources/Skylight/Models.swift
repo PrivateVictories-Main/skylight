@@ -65,6 +65,40 @@ enum WorkspaceItemKind: Codable, Equatable {
     case terminal
 }
 
+/// What runs inside a terminal tile. Agent flavors launch the vendor CLI as a
+/// full interactive session — the T3 Code / Conductor pattern, but in a real
+/// embedded terminal.
+enum TerminalFlavor: String, Codable {
+    case shell
+    case claudeCode
+    case codex
+
+    var displayName: String {
+        switch self {
+        case .shell: "Terminal"
+        case .claudeCode: "Claude Code"
+        case .codex: "Codex"
+        }
+    }
+
+    /// Brand emblem provider for agent terminals; nil = plain terminal glyph.
+    var provider: ChatProvider? {
+        switch self {
+        case .shell: nil
+        case .claudeCode: .claude
+        case .codex: .chatgpt
+        }
+    }
+
+    var command: String? {
+        switch self {
+        case .shell: nil
+        case .claudeCode: "claude"
+        case .codex: "codex"
+        }
+    }
+}
+
 struct WorkspaceItem: Identifiable, Codable, Equatable {
     let id: UUID
     var kind: WorkspaceItemKind
@@ -74,15 +108,21 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
     /// Auto-derived conversation title (what the chat is about). Nil until the
     /// first message. Terminals keep `name`.
     var title: String?
+    /// What a terminal runs: plain shell, or an agent CLI inside it.
+    var terminalFlavor: TerminalFlavor?
+    var workingDirectory: String?
 
     init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String, mode: AssistantMode = .chat,
-         pinned: Bool = false, title: String? = nil) {
+         pinned: Bool = false, title: String? = nil,
+         terminalFlavor: TerminalFlavor? = nil, workingDirectory: String? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
         self.mode = mode
         self.pinned = pinned
         self.title = title
+        self.terminalFlavor = terminalFlavor
+        self.workingDirectory = workingDirectory
     }
 
     /// What the sidebar shows: the conversation title for chats, else the name.
