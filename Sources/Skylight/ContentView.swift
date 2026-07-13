@@ -18,9 +18,31 @@ struct ContentView: View {
 
 // MARK: - Sidebar
 
+/// What the rename sheet is targeting.
+enum RenameTarget: Identifiable {
+    case item(WorkspaceItem)
+    case canvas(CanvasBoard)
+
+    var id: UUID {
+        switch self {
+        case let .item(item): item.id
+        case let .canvas(board): board.id
+        }
+    }
+
+    var currentName: String {
+        switch self {
+        case let .item(item): item.displayLabel
+        case let .canvas(board): board.name
+        }
+    }
+}
+
 struct SidebarView: View {
     @EnvironmentObject private var state: AppState
     @State private var showProfile = false
+    @State private var renameTarget: RenameTarget?
+    @State private var renameDraft = ""
 
     private var pinned: [WorkspaceItem] { state.items.filter(\.pinned) }
     private var chats: [WorkspaceItem] { state.items.filter(\.isChat) }
@@ -34,17 +56,17 @@ struct SidebarView: View {
         List(selection: $state.selection) {
             if isVisible(.pinned), !pinned.isEmpty {
                 Section("Pinned") {
-                    ForEach(pinned) { item in ItemRow(item: item) }
+                    ForEach(pinned) { item in ItemRow(item: item, onRename: beginRename) }
                 }
             }
             if isVisible(.chats) {
                 Section("Chats") {
-                    ForEach(chats) { item in ItemRow(item: item) }
+                    ForEach(chats) { item in ItemRow(item: item, onRename: beginRename) }
                 }
             }
             if isVisible(.terminals) {
                 Section("Terminals") {
-                    ForEach(terminals) { item in ItemRow(item: item) }
+                    ForEach(terminals) { item in ItemRow(item: item, onRename: beginRename) }
                 }
             }
             if isVisible(.canvases) {
@@ -53,6 +75,16 @@ struct SidebarView: View {
                         Label(board.name, systemImage: "square.on.square.dashed")
                             .tag(Selection.canvas(board.id))
                             .dropDestination(for: String.self) { ids, _ in dropItems(ids, onto: board.id) }
+                            .contextMenu {
+                                Button("Rename…") {
+                                    renameDraft = board.name
+                                    renameTarget = .canvas(board)
+                                }
+                                Divider()
+                                Button("Delete Canvas", role: .destructive) {
+                                    state.deleteCanvas(board.id)
+                                }
+                            }
                     }
                     if state.canvases.isEmpty {
                         Text("Drag a chat or terminal here")
@@ -69,6 +101,26 @@ struct SidebarView: View {
         .popover(isPresented: $showProfile, arrowEdge: .bottom) {
             ProfileEditor().environmentObject(state)
         }
+        .alert("Rename", isPresented: Binding(
+            get: { renameTarget != nil },
+            set: { if !$0 { renameTarget = nil } }
+        )) {
+            TextField("Name", text: $renameDraft)
+            Button("Rename") {
+                switch renameTarget {
+                case let .item(item): state.rename(item.id, to: renameDraft)
+                case let .canvas(board): state.renameCanvas(board.id, to: renameDraft)
+                case nil: break
+                }
+                renameTarget = nil
+            }
+            Button("Cancel", role: .cancel) { renameTarget = nil }
+        }
+    }
+
+    private func beginRename(_ item: WorkspaceItem) {
+        renameDraft = item.displayLabel
+        renameTarget = .item(item)
     }
 
     private var bottomBar: some View {
@@ -197,6 +249,7 @@ struct ProfileEditor: View {
 private struct ItemRow: View {
     @EnvironmentObject private var state: AppState
     let item: WorkspaceItem
+    var onRename: ((WorkspaceItem) -> Void)?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -228,6 +281,7 @@ private struct ItemRow: View {
             Button(item.pinned ? "Unpin" : "Pin", systemImage: item.pinned ? "pin.slash" : "pin") {
                 state.togglePin(item.id)
             }
+            Button("Rename…") { onRename?(item) }
             Divider()
             Button("Add to New Canvas") {
                 state.addTile(itemID: item.id, to: nil, at: nil)
@@ -240,6 +294,10 @@ private struct ItemRow: View {
                         }
                     }
                 }
+            }
+            Divider()
+            Button("Delete", role: .destructive) {
+                state.deleteItem(item.id)
             }
         }
     }

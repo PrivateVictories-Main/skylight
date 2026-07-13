@@ -82,6 +82,49 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    func rename(_ itemID: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        if items[index].isChat {
+            items[index].title = trimmed
+        } else {
+            items[index].name = trimmed
+        }
+        persist()
+    }
+
+    func renameCanvas(_ canvasID: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        canvases[index].name = trimmed
+        persist()
+    }
+
+    func deleteItem(_ itemID: UUID) {
+        items.removeAll { $0.id == itemID }
+        for index in canvases.indices {
+            canvases[index].tiles.removeAll { $0.itemID == itemID }
+        }
+        sessions.discard(itemID)
+        // Remove persisted transcript/history for the item.
+        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Skylight", isDirectory: true)
+        try? FileManager.default.removeItem(at: support.appendingPathComponent("chats/\(itemID.uuidString).json"))
+        try? FileManager.default.removeItem(at: support.appendingPathComponent("webhistory/\(itemID.uuidString).json"))
+        if case let .item(selected)? = selection, selected == itemID {
+            selection = items.first.map { .item($0.id) }
+        }
+        persist()
+    }
+
+    func deleteCanvas(_ canvasID: UUID) {
+        canvases.removeAll { $0.id == canvasID }
+        if case let .canvas(selected)? = selection, selected == canvasID {
+            selection = items.first.map { .item($0.id) }
+        }
+        persist()
+    }
+
     func item(_ id: UUID) -> WorkspaceItem? {
         items.first { $0.id == id }
     }
@@ -179,6 +222,13 @@ final class LiveSessionStore {
 
     /// Set by AppState so a chat can rename its sidebar item from the first message.
     var renameChat: ((UUID, String) -> Void)?
+
+    /// Tear down live state for a deleted item.
+    func discard(_ itemID: UUID) {
+        if let engine = chatEngines.removeValue(forKey: itemID) { engine.stop() }
+        terminals.removeValue(forKey: itemID)
+        bridges.removeValue(forKey: itemID)
+    }
 
     func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
         if let existing = chatEngines[item.id] { return existing }
