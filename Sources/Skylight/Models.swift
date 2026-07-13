@@ -69,8 +69,6 @@ enum AssistantMode: String, Codable {
 enum WorkspaceItemKind: Codable, Equatable {
     case assistant(ChatProvider)
     case terminal
-    /// One prompt fanned out to every installed provider, side by side.
-    case compare
 }
 
 /// What runs inside a terminal tile. Agent flavors launch the vendor CLI as a
@@ -134,13 +132,10 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
     /// True once the user renames a chat — auto-title refinement must not
     /// overwrite a deliberate name.
     var titleIsManual: Bool?
-    /// Compare items: one child conversation id per provider raw value.
-    var compareChildren: [String: UUID]?
 
     init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String, mode: AssistantMode = .chat,
          pinned: Bool = false, title: String? = nil,
-         terminalFlavor: TerminalFlavor? = nil, workingDirectory: String? = nil,
-         compareChildren: [String: UUID]? = nil) {
+         terminalFlavor: TerminalFlavor? = nil, workingDirectory: String? = nil) {
         self.id = id
         self.kind = kind
         self.name = name
@@ -149,7 +144,6 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
         self.title = title
         self.terminalFlavor = terminalFlavor
         self.workingDirectory = workingDirectory
-        self.compareChildren = compareChildren
     }
 
     /// What the sidebar shows: the conversation title for chats, else the name.
@@ -162,15 +156,11 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
         switch kind {
         case let .assistant(provider): provider.symbolName
         case .terminal: "terminal"
-        case .compare: "square.split.3x1"
         }
     }
 
     var isChat: Bool {
-        switch kind {
-        case .assistant, .compare: true
-        case .terminal: false
-        }
+        if case .assistant = kind { true } else { false }
     }
 }
 

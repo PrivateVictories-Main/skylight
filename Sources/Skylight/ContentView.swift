@@ -315,7 +315,6 @@ private struct ItemRow: View {
         switch item.kind {
         case let .assistant(provider): provider.tint
         case .terminal: .secondary
-        case .compare: .accentColor
         }
     }
 }
@@ -409,8 +408,6 @@ struct FullItemView: View {
             switch item.kind {
             case let .assistant(provider):
                 AssistantView(item: item, provider: provider)
-            case .compare:
-                CompareView(item: item)
             case .terminal:
                 PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
                     .padding(6)
@@ -454,14 +451,30 @@ struct AssistantView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 if item.mode != .web {
-                    Button {
-                        state.handOff(from: item, provider: provider)
-                    } label: {
-                        Label("Hand off to \(TerminalFlavor.forProvider(provider).displayName)",
-                              systemImage: "terminal")
+                    let engine = state.sessions.chatEngine(for: item, provider: provider)
+                    let others = ChatProvider.allCases.filter {
+                        $0 != provider && ProviderChatEngine.binary(for: $0) != nil
                     }
-                    .disabled(state.sessions.chatEngine(for: item, provider: provider).messages.isEmpty)
-                    .help("Open a \(TerminalFlavor.forProvider(provider).displayName) session that continues this conversation")
+                    Menu {
+                        Button {
+                            state.handOff(from: item, provider: provider)
+                        } label: {
+                            Label("Continue in \(TerminalFlavor.forProvider(provider).displayName)",
+                                  systemImage: "terminal")
+                        }
+                        if !others.isEmpty {
+                            Divider()
+                            ForEach(others) { other in
+                                Button("Ask \(other.displayName) the same thing") {
+                                    state.askAnother(other, from: item, sourceProvider: provider)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("Actions", systemImage: "ellipsis.circle")
+                    }
+                    .disabled(engine.messages.isEmpty)
+                    .help("Continue this conversation in an agent, or ask another model the same question")
                 }
             }
             ToolbarItem(placement: .navigation) {

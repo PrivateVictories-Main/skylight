@@ -161,18 +161,15 @@ final class AppState: ObservableObject {
     }
 
     func deleteItem(_ itemID: UUID) {
-        let childIDs = items.first(where: { $0.id == itemID })?.compareChildren.map { Array($0.values) } ?? []
         items.removeAll { $0.id == itemID }
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == itemID }
         }
+        sessions.discard(itemID)
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Skylight", isDirectory: true)
-        for id in [itemID] + childIDs {
-            sessions.discard(id)
-            try? FileManager.default.removeItem(at: support.appendingPathComponent("chats/\(id.uuidString).json"))
-            try? FileManager.default.removeItem(at: support.appendingPathComponent("webhistory/\(id.uuidString).json"))
-        }
+        try? FileManager.default.removeItem(at: support.appendingPathComponent("chats/\(itemID.uuidString).json"))
+        try? FileManager.default.removeItem(at: support.appendingPathComponent("webhistory/\(itemID.uuidString).json"))
         if case let .item(selected)? = selection, selected == itemID {
             selection = items.first.map { .item($0.id) }
         }
@@ -213,17 +210,6 @@ final class AppState: ObservableObject {
     }
 
     /// New compare item: one child conversation per installed provider.
-    func addCompare() {
-        let providers = ChatProvider.allCases.filter { ProviderChatEngine.binary(for: $0) != nil }
-        guard providers.count >= 2 else { return }
-        var children: [String: UUID] = [:]
-        for provider in providers { children[provider.rawValue] = UUID() }
-        let item = WorkspaceItem(kind: .compare, name: "Compare", compareChildren: children)
-        items.append(item)
-        selection = .item(item.id)
-        persist()
-    }
-
     func addTerminal(_ flavor: TerminalFlavor = .shell, directory: String? = nil) {
         let siblings = items.filter { $0.kind == .terminal && ($0.terminalFlavor ?? .shell) == flavor }.count
         let base = flavor.displayName
@@ -233,6 +219,18 @@ final class AppState: ObservableObject {
         items.append(item)
         selection = .item(item.id)
         persist()
+    }
+
+    /// Opt-in second opinion: open a fresh chat with another provider, seeded
+    /// with this conversation's latest user prompt. Only when you ask for it.
+    func askAnother(_ provider: ChatProvider, from item: WorkspaceItem, sourceProvider: ChatProvider) {
+        let sourceEngine = sessions.chatEngine(for: item, provider: sourceProvider)
+        guard let lastPrompt = sourceEngine.messages.last(where: { $0.role == .user })?.text else { return }
+        let new = WorkspaceItem(kind: .assistant(provider), name: provider.displayName)
+        items.append(new)
+        selection = .item(new.id)
+        persist()
+        sessions.chatEngine(for: new, provider: provider).send(lastPrompt, attachments: [])
     }
 
     func addAssistant(_ provider: ChatProvider) {
@@ -383,14 +381,6 @@ final class LiveSessionStore {
 
     /// Engine for one column of a compare item, keyed by the child id so each
     /// provider keeps its own transcript and session.
-    func compareEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
-        let childID = item.compareChildren?[provider.rawValue] ?? item.id
-        if let existing = chatEngines[childID] { return existing }
-        let engine = ProviderChatEngine(provider: provider, itemID: childID)
-        chatEngines[childID] = engine
-        return engine
-    }
-
     func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
         if let existing = chatEngines[item.id] { return existing }
         let engine = ProviderChatEngine(provider: provider, itemID: item.id)
