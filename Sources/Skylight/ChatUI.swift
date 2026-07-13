@@ -15,7 +15,10 @@ struct ProviderChatView: View {
         .background(Color(nsColor: .textBackgroundColor))
     }
 
+    @State private var nearBottom = true
+
     private var transcript: some View {
+        GeometryReader { viewport in
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 16) {
@@ -42,7 +45,44 @@ struct ProviderChatView: View {
                 .frame(maxWidth: 780)
                 .frame(maxWidth: .infinity)
                 .animation(.spring(response: 0.35, dampingFraction: 0.82), value: engine.messages)
+                // Sentinel: tells us whether the bottom of the thread is on screen.
+                .background(alignment: .bottom) {
+                    GeometryReader { geo in
+                        Color.clear.preference(
+                            key: BottomDistanceKey.self,
+                            value: geo.frame(in: .named("transcript")).maxY
+                        )
+                    }
+                }
             }
+            .coordinateSpace(name: "transcript")
+            .onPreferenceChange(BottomDistanceKey.self) { maxY in
+                // Content bottom edge vs. viewport: within 120pt counts as "at bottom".
+                nearBottom = maxY <= viewport.size.height + 120
+            }
+            .overlay(alignment: .bottom) {
+                if !nearBottom {
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+                            if let last = engine.messages.last {
+                                proxy.scrollTo(last.id, anchor: .bottom)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "arrow.down")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(.primary)
+                            .frame(width: 32, height: 32)
+                            .background(Circle().fill(.bar))
+                            .overlay(Circle().strokeBorder(Color.primary.opacity(0.12)))
+                            .shadow(color: .black.opacity(0.18), radius: 6, y: 2)
+                    }
+                    .buttonStyle(.pressable)
+                    .padding(.bottom, 10)
+                    .transition(.scale(scale: 0.6).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: nearBottom)
             .overlay {
                 if engine.messages.isEmpty, !engine.isThinking {
                     WelcomePanel(provider: engine.provider, missingCLI: engine.missingCLI) { prompt in
@@ -59,9 +99,18 @@ struct ProviderChatView: View {
                 if engine.isThinking { withAnimation { proxy.scrollTo("thinking", anchor: .bottom) } }
             }
             .onChange(of: engine.streamingText) {
-                proxy.scrollTo("thinking", anchor: .bottom)
+                if nearBottom { proxy.scrollTo("thinking", anchor: .bottom) }
             }
         }
+        }
+    }
+}
+
+/// Bottom edge of the transcript content in scroll-view space.
+private struct BottomDistanceKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 
