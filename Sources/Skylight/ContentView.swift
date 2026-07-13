@@ -273,6 +273,10 @@ private struct ItemRow: View {
             } else {
                 Text(item.displayLabel)
             }
+            if state.attention.contains(item.id) {
+                Spacer(minLength: 4)
+                AttentionDot()
+            }
         }
         .padding(.vertical, 1)
         .tag(Selection.item(item.id))
@@ -313,6 +317,23 @@ private struct ItemRow: View {
         case .terminal: .secondary
         case .compare: .accentColor
         }
+    }
+}
+
+/// A soft pulsing dot marking a terminal whose agent rang the bell — it's
+/// done or waiting for you — until you open it.
+private struct AttentionDot: View {
+    @State private var pulse = false
+
+    var body: some View {
+        Circle()
+            .fill(Color.accentColor)
+            .frame(width: 7, height: 7)
+            .shadow(color: Color.accentColor.opacity(0.7), radius: pulse ? 3.5 : 1)
+            .scaleEffect(pulse ? 1.15 : 0.9)
+            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
+            .onAppear { pulse = true }
+            .help("This session finished or needs your input")
     }
 }
 

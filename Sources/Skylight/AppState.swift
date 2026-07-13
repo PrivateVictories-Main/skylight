@@ -11,6 +11,9 @@ final class AppState: ObservableObject {
     @Published var selection: Selection?
     @Published var visibleSections: Set<SidebarSection>
     @Published var profile: UserProfile
+    /// Terminal items whose agent has rung the bell (finished / wants input)
+    /// since they were last viewed.
+    @Published var attention: Set<UUID> = []
 
     let sessions = LiveSessionStore()
 
@@ -61,8 +64,19 @@ final class AppState: ObservableObject {
         }
         sessions.renameChat = { [weak self] id, title in self?.setTitle(title, for: id) }
         sessions.renameRefined = { [weak self] id, title in self?.setTitle(title, for: id, refine: true) }
+        sessions.onBell = { [weak self] id in
+            guard let self, self.selection != .item(id) else { return }
+            self.attention.insert(id)
+        }
         Self.shared = self
         // Save selection as it changes (cheap: whole-state persist).
+        $selection
+            .dropFirst()
+            .sink { [weak self] selection in
+                // Viewing a terminal clears its pending attention.
+                if case let .item(id)? = selection { self?.attention.remove(id) }
+            }
+            .store(in: &observers)
         $selection
             .dropFirst()
             .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
@@ -305,6 +319,9 @@ final class LiveSessionStore {
     var renameChat: ((UUID, String) -> Void)?
     /// Model-refined title, overwrites the truncated one.
     var renameRefined: ((UUID, String) -> Void)?
+    /// Fired when a terminal rings the bell (agent done / needs input).
+    var onBell: ((UUID) -> Void)?
+    private var bellObservers: [UUID: AnyCancellable] = [:]
     /// Text queued to be typed into a terminal once its CLI has booted
     /// (chat → agent handoff). Not submitted — the user reviews and hits Enter.
     var pendingInput: [UUID: String] = [:]
@@ -354,6 +371,7 @@ final class LiveSessionStore {
         }
         terminals.removeValue(forKey: itemID)
         terminalNSViews.removeValue(forKey: itemID)   // frees the surface, ends the process
+        bellObservers.removeValue(forKey: itemID)
         bridges.removeValue(forKey: itemID)
         pendingInput.removeValue(forKey: itemID)
     }
@@ -406,6 +424,11 @@ final class LiveSessionStore {
             workingDirectory: item.workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path
         )
         terminals[item.id] = state
+        // The terminal bell is how agent CLIs signal "done / needs input".
+        let itemID = item.id
+        bellObservers[itemID] = state.$bellCount
+            .dropFirst()
+            .sink { [weak self] _ in self?.onBell?(itemID) }
         return state
     }
 
