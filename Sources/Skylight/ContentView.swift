@@ -388,25 +388,24 @@ struct FullItemView: View {
             case let .assistant(provider):
                 AssistantView(item: item, provider: provider)
             case .terminal:
-                TerminalSurfaceView(context: state.sessions.terminal(for: item))
+                PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
                     .padding(6)
                     .background(Color(nsColor: .textBackgroundColor))
-                    .onAppear { deliverPendingInput() }
+                    .onAppear { state.sessions.deliverPendingInput(for: item) }
             }
         }
         .navigationTitle(item.displayLabel)
     }
+}
 
-    /// Chat → agent handoff: type the queued context into the terminal once
-    /// the agent CLI has had a moment to boot. Not submitted — the user
-    /// reviews the prefilled prompt and presses Enter.
-    private func deliverPendingInput() {
-        guard let text = state.sessions.pendingInput.removeValue(forKey: item.id) else { return }
-        let terminal = state.sessions.terminal(for: item)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
-            terminal.send(text)
-        }
-    }
+/// Hosts the store-owned terminal NSView. The ghostty surface (and its shell
+/// process) lives exactly as long as the store keeps the view — navigation
+/// only reparents it.
+struct PersistentTerminalView: NSViewRepresentable {
+    let view: TerminalView
+
+    func makeNSView(context: Context) -> TerminalView { view }
+    func updateNSView(_ nsView: TerminalView, context: Context) {}
 }
 
 /// One assistant, two surfaces behind a mode dropdown — Chat (the provider's

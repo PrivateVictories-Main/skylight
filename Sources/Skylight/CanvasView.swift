@@ -183,7 +183,7 @@ private struct TileView: View {
                 WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
             }
         case .terminal:
-            TerminalSurfaceView(context: state.sessions.terminal(for: item))
+            PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
         }
     }
 

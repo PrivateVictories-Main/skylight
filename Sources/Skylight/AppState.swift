@@ -294,6 +294,43 @@ final class LiveSessionStore {
     /// Text queued to be typed into a terminal once its CLI has booted
     /// (chat → agent handoff). Not submitted — the user reviews and hits Enter.
     var pendingInput: [UUID: String] = [:]
+    private var deliveryInFlight: Set<UUID> = []
+    /// One long-lived native terminal view per item: the ghostty surface (and
+    /// its shell/CLI process) belongs to the NSView, so the view must survive
+    /// SwiftUI navigation. AppTerminalView reattaches cleanly by design.
+    private var terminalNSViews: [UUID: TerminalView] = [:]
+
+    func terminalHostView(for item: WorkspaceItem) -> TerminalView {
+        if let existing = terminalNSViews[item.id] { return existing }
+        let state = terminal(for: item)
+        let view = TerminalView(frame: .zero)
+        view.delegate = state
+        view.controller = state.controller
+        view.configuration = state.configuration
+        terminalNSViews[item.id] = view
+        return view
+    }
+
+    /// Deliver queued handoff text once the terminal can actually accept it,
+    /// retrying until the surface is attached (a fixed timer raced navigation
+    /// and silently dropped the context).
+    func deliverPendingInput(for item: WorkspaceItem) {
+        guard pendingInput[item.id] != nil, !deliveryInFlight.contains(item.id) else { return }
+        deliveryInFlight.insert(item.id)
+        let state = terminal(for: item)
+        Task { @MainActor [weak self] in
+            defer { self?.deliveryInFlight.remove(item.id) }
+            try? await Task.sleep(for: .seconds(3.5))   // let the CLI boot
+            for _ in 0 ..< 30 {
+                guard let self, let text = self.pendingInput[item.id] else { return }
+                if state.send(text) {
+                    self.pendingInput.removeValue(forKey: item.id)
+                    return
+                }
+                try? await Task.sleep(for: .seconds(1))
+            }
+        }
+    }
 
     /// Tear down live state for a deleted item.
     func discard(_ itemID: UUID) {
@@ -302,7 +339,9 @@ final class LiveSessionStore {
             engine.stop()
         }
         terminals.removeValue(forKey: itemID)
+        terminalNSViews.removeValue(forKey: itemID)   // frees the surface, ends the process
         bridges.removeValue(forKey: itemID)
+        pendingInput.removeValue(forKey: itemID)
     }
 
     /// App quit: terminate every in-flight CLI so nothing is orphaned.
