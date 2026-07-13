@@ -54,11 +54,10 @@ extension ChatProvider {
     var modelOptions: [ModelOption] {
         switch self {
         case .claude:
+            // Newest generation + the one before it, nothing older.
             [.init(id: "", label: "Default"),
              .init(id: "claude-fable-5", label: "Fable 5"),
-             .init(id: "opus", label: "Opus 4.8"),
-             .init(id: "sonnet", label: "Sonnet 5"),
-             .init(id: "haiku", label: "Haiku 4.5")]
+             .init(id: "opus", label: "Opus 4.8")]
         case .chatgpt:
             [.init(id: "", label: "Default")]
                 + CodexCatalog.load().map { .init(id: $0.slug, label: $0.displayName) }
@@ -70,8 +69,9 @@ extension ChatProvider {
         }
     }
 
-    /// Codex exposes reasoning effort; Claude Code and Gemini do not.
-    var supportsEffort: Bool { self == .chatgpt }
+    /// Claude Code (--effort) and Codex (model_reasoning_effort) expose
+    /// reasoning effort; Gemini CLI does not.
+    var supportsEffort: Bool { self != .gemini }
 
     var composerPlaceholder: String { "Message \(displayName)…" }
 }
@@ -110,13 +110,20 @@ final class ProviderChatEngine: ObservableObject {
         missingCLI = Self.binary(for: provider) == nil
     }
 
-    /// Effort choices valid for the currently-selected Codex model.
+    /// Effort choices valid for the current provider + model.
     var effortOptions: [String] {
-        guard provider == .chatgpt else { return [] }
-        if let model = codexModels.first(where: { $0.slug == modelID }) {
-            return model.efforts
+        switch provider {
+        case .claude:
+            // Documented by `claude --help` and validated at runtime.
+            return ["low", "medium", "high", "xhigh", "max"]
+        case .chatgpt:
+            if let model = codexModels.first(where: { $0.slug == modelID }) {
+                return model.efforts
+            }
+            return codexModels.first?.efforts ?? ["low", "medium", "high", "xhigh"]
+        case .gemini:
+            return []
         }
-        return codexModels.first?.efforts ?? ["low", "medium", "high", "xhigh"]
     }
 
     /// Keep the selected effort valid when the model changes.
@@ -255,7 +262,8 @@ final class ProviderChatEngine: ObservableObject {
                 fullPrompt += "\n\nAttached files:\n" + imagePaths.joined(separator: "\n")
             }
             arguments = ["-p", fullPrompt, "--output-format", "stream-json",
-                         "--include-partial-messages", "--verbose"]
+                         "--include-partial-messages", "--verbose",
+                         "--effort", effort]
             if !modelID.isEmpty { arguments += ["--model", modelID] }
             if let resume = sessionID { arguments += ["--resume", resume] }
         case .chatgpt:

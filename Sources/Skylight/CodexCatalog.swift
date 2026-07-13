@@ -52,7 +52,23 @@ enum CodexCatalog {
                 defaultEffort: dict["default_reasoning_level"] as? String ?? "medium"
             ))
         }
-        return models.isEmpty ? fallback : models
+        return models.isEmpty ? fallback : latestTwoGenerations(of: models)
+    }
+
+    /// Only the newest model generation and the one before it — nobody wants
+    /// a graveyard of deprecated models in the picker.
+    static func latestTwoGenerations(of models: [CodexModel]) -> [CodexModel] {
+        func generation(_ slug: String) -> Double? {
+            guard let range = slug.range(of: #"gpt-(\d+(?:\.\d+)?)"#, options: .regularExpression) else { return nil }
+            return Double(slug[range].dropFirst(4))
+        }
+        let generations = Set(models.compactMap { generation($0.slug) }).sorted(by: >)
+        guard generations.count > 2 else { return models }
+        let keep = Set(generations.prefix(2))
+        return models.filter { model in
+            guard let gen = generation(model.slug) else { return false }
+            return keep.contains(gen)
+        }
     }
 
     private static func walk(_ node: Any, _ visit: ([String: Any]) -> Void) {

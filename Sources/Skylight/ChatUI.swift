@@ -474,18 +474,10 @@ private struct ModelEffortPanel: View {
                             .animation(.spring(response: 0.3), value: engine.effort)
                     }
                     StopSlider(options: engine.effortOptions, selection: $engine.effort)
-                    HStack {
-                        Text(engine.effortOptions.first?.capitalized ?? "")
-                        Spacer()
-                        Text(engine.effortOptions.last?.capitalized ?? "")
-                    }
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 4)
                 }
             }
         }
         .padding(16)
-        .frame(width: 264)
+        .frame(width: 292)
     }
 }
