@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 import WebKit
@@ -36,20 +37,47 @@ final class AppState: ObservableObject {
             visibleSections = SidebarSection.defaultVisible
             profile = UserProfile()
         }
-        if let first = items.first { selection = .item(first.id) }
+        // Restore last selection; fall back to the first item.
+        let saved = (try? Data(contentsOf: Self.stateURL))
+            .flatMap { try? JSONDecoder().decode(SavedState.self, from: $0) }
+        if let id = saved?.selectedItem, items.contains(where: { $0.id == id }) {
+            selection = .item(id)
+        } else if let id = saved?.selectedCanvas, canvases.contains(where: { $0.id == id }) {
+            selection = .canvas(id)
+        } else if let first = items.first {
+            selection = .item(first.id)
+        }
         sessions.renameChat = { [weak self] id, title in self?.setTitle(title, for: id) }
+        // Save selection as it changes (cheap: whole-state persist).
+        $selection
+            .dropFirst()
+            .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.persist() }
+            .store(in: &observers)
     }
+
+    private var observers: Set<AnyCancellable> = []
 
     private struct SavedState: Codable {
         var items: [WorkspaceItem]
         var canvases: [CanvasBoard]
         var visibleSections: Set<SidebarSection>?
         var profile: UserProfile?
+        var selectedItem: UUID?
+        var selectedCanvas: UUID?
     }
 
     func persist() {
+        var selectedItem: UUID?
+        var selectedCanvas: UUID?
+        switch selection {
+        case let .item(id): selectedItem = id
+        case let .canvas(id): selectedCanvas = id
+        case nil: break
+        }
         let saved = SavedState(items: items, canvases: canvases,
-                               visibleSections: visibleSections, profile: profile)
+                               visibleSections: visibleSections, profile: profile,
+                               selectedItem: selectedItem, selectedCanvas: selectedCanvas)
         if let data = try? JSONEncoder().encode(saved) {
             try? data.write(to: Self.stateURL)
         }
