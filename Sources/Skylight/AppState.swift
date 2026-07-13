@@ -48,6 +48,7 @@ final class AppState: ObservableObject {
             selection = .item(first.id)
         }
         sessions.renameChat = { [weak self] id, title in self?.setTitle(title, for: id) }
+        sessions.renameRefined = { [weak self] id, title in self?.setTitle(title, for: id, refine: true) }
         // Save selection as it changes (cheap: whole-state persist).
         $selection
             .dropFirst()
@@ -102,10 +103,11 @@ final class AppState: ObservableObject {
         persist()
     }
 
-    /// Set the auto-derived title for a chat, the first time it gets one.
-    func setTitle(_ title: String, for itemID: UUID) {
+    /// Set the auto-derived title for a chat. `refine` overwrites the initial
+    /// truncated title with a model-written summary.
+    func setTitle(_ title: String, for itemID: UUID, refine: Bool = false) {
         guard let index = items.firstIndex(where: { $0.id == itemID }),
-              items[index].title == nil else { return }
+              refine || items[index].title == nil else { return }
         items[index].title = title
         persist()
     }
@@ -250,6 +252,8 @@ final class LiveSessionStore {
 
     /// Set by AppState so a chat can rename its sidebar item from the first message.
     var renameChat: ((UUID, String) -> Void)?
+    /// Model-refined title, overwrites the truncated one.
+    var renameRefined: ((UUID, String) -> Void)?
 
     /// Tear down live state for a deleted item.
     func discard(_ itemID: UUID) {
@@ -262,12 +266,18 @@ final class LiveSessionStore {
         if let existing = chatEngines[item.id] { return existing }
         let engine = ProviderChatEngine(provider: provider, itemID: item.id)
         engine.onTitle = { [weak self] title in self?.renameChat?(item.id, title) }
+        engine.onTitleRefined = { [weak self] title in self?.renameRefined?(item.id, title) }
         // Backfill a title for a chat that already has history but no title yet.
         if item.title == nil, let firstUser = engine.messages.first(where: { $0.role == .user }) {
             renameChat?(item.id, ProviderChatEngine.deriveTitle(from: firstUser.text, attachments: firstUser.attachments))
         }
         chatEngines[item.id] = engine
         return engine
+    }
+
+    /// Non-creating: nil until the terminal has actually been opened.
+    func existingTerminal(for itemID: UUID) -> TerminalViewState? {
+        terminals[itemID]
     }
 
     func terminal(for item: WorkspaceItem) -> TerminalViewState {

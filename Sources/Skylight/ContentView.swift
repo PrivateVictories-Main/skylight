@@ -268,7 +268,11 @@ private struct ItemRow: View {
                     .foregroundStyle(iconTint)
                     .frame(width: 18, height: 18)
             }
-            Text(item.displayLabel)
+            if item.kind == .terminal, let terminal = state.sessions.existingTerminal(for: item.id) {
+                TerminalRowLabel(item: item, terminal: terminal)
+            } else {
+                Text(item.displayLabel)
+            }
         }
         .padding(.vertical, 1)
         .tag(Selection.item(item.id))
@@ -307,6 +311,31 @@ private struct ItemRow: View {
         switch item.kind {
         case let .assistant(provider): provider.tint
         case .terminal: .secondary
+        }
+    }
+}
+
+/// Terminal row with a live activity caption from ghostty's reported title —
+/// glance at the sidebar and see what every session is doing.
+private struct TerminalRowLabel: View {
+    let item: WorkspaceItem
+    @ObservedObject var terminal: TerminalViewState
+
+    private var activity: String? {
+        let title = terminal.title.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, title != item.displayLabel else { return nil }
+        return title
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(item.displayLabel)
+            if let activity {
+                Text(activity)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
     }
 }

@@ -97,6 +97,8 @@ final class ProviderChatEngine: ObservableObject {
     let codexModels: [CodexModel]
     /// Called with a derived conversation title on the first user message.
     var onTitle: ((String) -> Void)?
+    /// Called with a model-written summary title after the first exchange.
+    var onTitleRefined: ((String) -> Void)?
     private var sessionID: String?
     private let itemID: UUID
 
@@ -398,6 +400,41 @@ final class ProviderChatEngine: ObservableObject {
         if let reply { messages.append(ChatMessage(role: .assistant, text: reply)) }
         if let error { messages.append(ChatMessage(role: .error, text: error)) }
         save()
+        if reply != nil, messages.filter({ $0.role == .assistant }).count == 1 {
+            refineTitle()
+        }
+    }
+
+    /// After the first exchange, ask a fast model for a proper 3–6 word title —
+    /// the same quiet upgrade ChatGPT and Claude do a moment after you start.
+    private func refineTitle() {
+        guard let userText = messages.first(where: { $0.role == .user })?.text,
+              let assistantText = messages.last(where: { $0.role == .assistant })?.text,
+              let binary = Self.binary(for: .claude) else { return }
+        let excerpt = "User: \(userText.prefix(400))\nAssistant: \(assistantText.prefix(400))"
+        let prompt = "Write a title for this conversation: 3 to 6 words, no quotes, no trailing period, just the title.\n\n\(excerpt)"
+
+        Task.detached { [weak self] in
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: binary)
+            process.arguments = ["-p", prompt, "--model", "haiku"]
+            process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
+            let stdout = Pipe()
+            process.standardOutput = stdout
+            process.standardError = Pipe()
+            guard (try? process.run()) != nil else { return }
+            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0,
+                  var title = String(data: data, encoding: .utf8)?
+                      .trimmingCharacters(in: .whitespacesAndNewlines),
+                  !title.isEmpty, title.count <= 64
+            else { return }
+            title = title.trimmingCharacters(in: CharacterSet(charactersIn: "\"'."))
+            await MainActor.run { [weak self] in
+                self?.onTitleRefined?(title)
+            }
+        }
     }
 }
 
