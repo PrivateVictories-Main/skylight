@@ -40,8 +40,9 @@ struct ProviderChatView: View {
             }
             .overlay {
                 if engine.messages.isEmpty, !engine.isThinking {
-                    WelcomePanel(provider: engine.provider, missingCLI: engine.missingCLI)
-                        .allowsHitTesting(false)
+                    WelcomePanel(provider: engine.provider, missingCLI: engine.missingCLI) { prompt in
+                        engine.send(prompt, attachments: [])
+                    }
                 }
             }
             .onChange(of: engine.messages) {
@@ -140,6 +141,20 @@ private struct ThinkingRow: View {
 private struct WelcomePanel: View {
     let provider: ChatProvider
     let missingCLI: Bool
+    var onSuggestion: ((String) -> Void)?
+
+    private var suggestions: [(String, String)] {
+        switch provider {
+        case .claude:
+            [("lightbulb", "Brainstorm ideas for a side project"),
+             ("doc.text", "Summarize a file I attach"),
+             ("wand.and.stars", "Improve a paragraph I paste")]
+        case .chatgpt:
+            [("chevron.left.forwardslash.chevron.right", "Explain a piece of code I paste"),
+             ("ladybug", "Help me debug an error message"),
+             ("square.grid.2x2", "Sketch an app architecture with me")]
+        }
+    }
 
     var body: some View {
         VStack(spacing: 14) {
@@ -154,10 +169,41 @@ private struct WelcomePanel: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
             } else {
-                Text("Runs natively on your \(provider.displayName) subscription.\nAsk anything, attach files — the conversation continues across restarts.")
+                Text("Runs natively on your \(provider.displayName) subscription.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
+
+                VStack(spacing: 8) {
+                    ForEach(suggestions, id: \.1) { symbol, prompt in
+                        Button {
+                            onSuggestion?(prompt)
+                        } label: {
+                            HStack(spacing: 9) {
+                                Image(systemName: symbol)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 16)
+                                Text(prompt)
+                                    .font(.system(size: 12.5))
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 13)
+                            .padding(.vertical, 9)
+                            .frame(width: 300)
+                            .background(
+                                RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 11, style: .continuous)
+                                            .strokeBorder(Color.primary.opacity(0.08))
+                                    )
+                            )
+                        }
+                        .buttonStyle(.pressable(scale: 0.97))
+                    }
+                }
+                .padding(.top, 6)
             }
         }
         .frame(maxWidth: 440)
