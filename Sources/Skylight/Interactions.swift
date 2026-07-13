@@ -59,6 +59,44 @@ extension View {
     }
 }
 
+/// Segmented capsule with a sliding thumb — the ChatGPT-app mode-switcher
+/// feel: the selection pill glides between options with a spring.
+struct SlidingSegments<T: Hashable>: View {
+    let options: [(T, String)]
+    @Binding var selection: T
+    @Namespace private var thumb
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.0) { value, label in
+                Button {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                        selection = value
+                    }
+                } label: {
+                    Text(label)
+                        .font(.system(size: 12, weight: selection == value ? .semibold : .regular))
+                        .foregroundStyle(selection == value ? Color.primary : Color.secondary)
+                        .padding(.horizontal, 11)
+                        .padding(.vertical, 4.5)
+                        .background {
+                            if selection == value {
+                                Capsule()
+                                    .fill(.background)
+                                    .shadow(color: .black.opacity(0.12), radius: 2.5, y: 1)
+                                    .matchedGeometryEffect(id: "thumb", in: thumb)
+                            }
+                        }
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(3)
+        .background(Capsule().fill(Color.primary.opacity(0.055)))
+    }
+}
+
 extension Color {
     /// Hex string ("#RRGGBB") → Color.
     init?(hex: String) {

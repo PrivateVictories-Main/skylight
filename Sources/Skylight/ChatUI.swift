@@ -22,6 +22,10 @@ struct ProviderChatView: View {
                     ForEach(engine.messages) { message in
                         MessageRow(message: message, provider: engine.provider)
                             .id(message.id)
+                            .transition(.asymmetric(
+                                insertion: .move(edge: .bottom).combined(with: .opacity),
+                                removal: .opacity
+                            ))
                     }
                     if let streaming = engine.streamingText, !streaming.isEmpty {
                         HStack(alignment: .top, spacing: 12) {
@@ -37,6 +41,7 @@ struct ProviderChatView: View {
                 .padding(.vertical, 20)
                 .frame(maxWidth: 780)
                 .frame(maxWidth: .infinity)
+                .animation(.spring(response: 0.35, dampingFraction: 0.82), value: engine.messages)
             }
             .overlay {
                 if engine.messages.isEmpty, !engine.isThinking {

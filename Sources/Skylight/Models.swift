@@ -61,7 +61,7 @@ enum AssistantMode: String, Codable {
         switch self {
         case .chat: "Chat"
         case .code: provider == .chatgpt ? "Codex" : "Code"
-        case .web: "Open Web"
+        case .web: "Web"
         }
     }
 }

@@ -389,17 +389,17 @@ struct AssistantView: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
-                Picker("Mode", selection: Binding(
-                    get: { item.mode },
-                    set: { state.setMode($0, for: item.id) }
-                )) {
-                    Text(AssistantMode.chat.displayName(for: provider)).tag(AssistantMode.chat)
-                    Text(AssistantMode.code.displayName(for: provider)).tag(AssistantMode.code)
-                    Divider()
-                    Text(AssistantMode.web.displayName(for: provider)).tag(AssistantMode.web)
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
+                SlidingSegments(
+                    options: [
+                        (AssistantMode.chat, AssistantMode.chat.displayName(for: provider)),
+                        (AssistantMode.code, AssistantMode.code.displayName(for: provider)),
+                        (AssistantMode.web, AssistantMode.web.displayName(for: provider)),
+                    ],
+                    selection: Binding(
+                        get: { item.mode },
+                        set: { state.setMode($0, for: item.id) }
+                    )
+                )
             }
         }
     }
