@@ -49,6 +49,14 @@ struct ModelOption: Identifiable, Hashable {
 }
 
 extension ChatProvider {
+    var cliDisplayName: String {
+        switch self {
+        case .claude: "Claude Code"
+        case .chatgpt: "Codex"
+        case .gemini: "Gemini"
+        }
+    }
+
     /// Model choices surfaced in the composer, per provider. ChatGPT/Codex is
     /// read live from the CLI's own model cache so it always matches the plan.
     var modelOptions: [ModelOption] {
@@ -99,6 +107,9 @@ final class ProviderChatEngine: ObservableObject {
     var onTitle: ((String) -> Void)?
     /// Called with a model-written summary title after the first exchange.
     var onTitleRefined: ((String) -> Void)?
+    /// Set when the item is deleted: suppress any further disk writes so a
+    /// late terminationHandler can't resurrect the deleted transcript.
+    var discarded = false
     private var sessionID: String?
     private let itemID: UUID
 
@@ -165,9 +176,10 @@ final class ProviderChatEngine: ObservableObject {
     }
 
     private func save() {
+        guard !discarded else { return }
         let saved = SavedChat(messages: messages, sessionID: sessionID, modelID: modelID, effort: effort)
         if let data = try? JSONEncoder().encode(saved) {
-            try? data.write(to: transcriptURL)
+            try? data.write(to: transcriptURL, options: .atomic)
         }
     }
 
@@ -268,8 +280,7 @@ final class ProviderChatEngine: ObservableObject {
 
     private func startStreaming(prompt: String, imagePaths: [String]) {
         guard let binary = Self.binary(for: provider) else {
-            let cli = provider == .claude ? "Claude Code" : "Codex"
-            finish(error: "Couldn't find the \(cli) CLI. Install it and log in once from a terminal.")
+            finish(error: "Couldn't find the \(provider.cliDisplayName) CLI. Install it and log in once from a terminal.")
             return
         }
 
@@ -291,7 +302,9 @@ final class ProviderChatEngine: ObservableObject {
             if !modelID.isEmpty { arguments += ["-m", modelID] }
             arguments += ["-c", "model_reasoning_effort=\"\(effort)\""]
             for path in imagePaths { arguments += ["-i", path] }
-            arguments.append(prompt)
+            // "--" stops flag parsing: a message starting with "-" must never
+            // be interpreted as a codex flag.
+            arguments += ["--", prompt]
         case .gemini:
             // Gemini CLI is stateless in -p mode: replay recent turns for context.
             var fullPrompt = conversationContext() + prompt
@@ -317,11 +330,9 @@ final class ProviderChatEngine: ObservableObject {
 
         let providerKind = provider
         let lineBuffer = LineBuffer()
-        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
-            let chunk = handle.availableData
-            guard !chunk.isEmpty else { return }
-            // Gemini prints one JSON document, not JSONL — collect and parse at exit.
-            let lines = lineBuffer.append(chunk)
+        let stderrBuffer = LineBuffer()
+
+        let dispatchLines: @Sendable ([Data]) -> Void = { [weak self] lines in
             guard providerKind != .gemini else { return }
             for lineData in lines {
                 Task { @MainActor [weak self] in
@@ -331,10 +342,31 @@ final class ProviderChatEngine: ObservableObject {
             }
         }
 
-        process.terminationHandler = { [weak self] proc in
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            // Gemini prints one JSON document, not JSONL — collect and parse at exit.
+            dispatchLines(lineBuffer.append(chunk))
+        }
+        // Drain stderr continuously: a CLI that logs >64KB to a full, unread
+        // stderr pipe blocks forever and the reply never finishes.
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            _ = stderrBuffer.append(chunk)
+        }
+
+        process.terminationHandler = { proc in
+            // Drain whatever is still sitting in the pipes — the final line is
+            // often the one carrying the session id and authoritative text.
             stdout.fileHandleForReading.readabilityHandler = nil
-            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-            let stderrText = String(data: errData, encoding: .utf8) ?? ""
+            stderr.fileHandleForReading.readabilityHandler = nil
+            let remainingOut = stdout.fileHandleForReading.readDataToEndOfFile()
+            if !remainingOut.isEmpty { dispatchLines(lineBuffer.append(remainingOut)) }
+            let remainingErr = stderr.fileHandleForReading.readDataToEndOfFile()
+            if !remainingErr.isEmpty { _ = stderrBuffer.append(remainingErr) }
+
+            let stderrText = String(data: stderrBuffer.allData(), encoding: .utf8) ?? ""
             let fullOutput = lineBuffer.allData()
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -355,12 +387,14 @@ final class ProviderChatEngine: ObservableObject {
             try process.run()
         } catch {
             activeProcess = nil
-            finish(error: "Couldn't launch \(provider == .claude ? "claude" : "codex"): \(error.localizedDescription)")
+            finish(error: "Couldn't launch \(Self.cliName(for: provider)): \(error.localizedDescription)")
         }
     }
 
     /// One JSONL event from either CLI → streaming state updates.
     private func handleEvent(_ event: [String: Any], provider: ChatProvider) {
+        // Stale events can arrive after finish()/stop(); never resurrect a bubble.
+        guard isThinking else { return }
         switch provider {
         case .claude:
             switch event["type"] as? String {
@@ -448,7 +482,8 @@ final class ProviderChatEngine: ObservableObject {
             process.currentDirectoryURL = FileManager.default.homeDirectoryForCurrentUser
             let stdout = Pipe()
             process.standardOutput = stdout
-            process.standardError = Pipe()
+            // Discard stderr entirely — an unread pipe can deadlock the child.
+            process.standardError = FileHandle.nullDevice
             guard (try? process.run()) != nil else { return }
             let data = stdout.fileHandleForReading.readDataToEndOfFile()
             process.waitUntilExit()

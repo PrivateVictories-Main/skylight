@@ -129,6 +129,9 @@ struct WorkspaceItem: Identifiable, Codable, Equatable {
     /// What a terminal runs: plain shell, or an agent CLI inside it.
     var terminalFlavor: TerminalFlavor?
     var workingDirectory: String?
+    /// True once the user renames a chat — auto-title refinement must not
+    /// overwrite a deliberate name.
+    var titleIsManual: Bool?
 
     init(id: UUID = UUID(), kind: WorkspaceItemKind, name: String, mode: AssistantMode = .chat,
          pinned: Bool = false, title: String? = nil,

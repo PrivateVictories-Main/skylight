@@ -71,7 +71,7 @@ final class WebChatBridge: NSObject, ObservableObject {
     private func saveCache() {
         let cached = conversations.map { CachedConversation(path: $0.path, title: $0.title) }
         if let data = try? JSONEncoder().encode(cached) {
-            try? data.write(to: cacheURL)
+            try? data.write(to: cacheURL, options: .atomic)
         }
     }
 

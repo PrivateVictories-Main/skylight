@@ -21,7 +21,19 @@ final class AppState: ObservableObject {
         return dir.appendingPathComponent("workspace.json")
     }
 
+    static weak var shared: AppState?
+
     init() {
+        // A corrupt/incompatible workspace must never be silently clobbered:
+        // keep it as .bak so nothing is lost.
+        if let data = try? Data(contentsOf: Self.stateURL),
+           (try? JSONDecoder().decode(SavedState.self, from: data)) == nil {
+            try? FileManager.default.removeItem(at: Self.stateURL.appendingPathExtension("bak"))
+            try? FileManager.default.moveItem(
+                at: Self.stateURL,
+                to: Self.stateURL.appendingPathExtension("bak")
+            )
+        }
         if let data = try? Data(contentsOf: Self.stateURL),
            let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
             items = saved.items
@@ -49,6 +61,7 @@ final class AppState: ObservableObject {
         }
         sessions.renameChat = { [weak self] id, title in self?.setTitle(title, for: id) }
         sessions.renameRefined = { [weak self] id, title in self?.setTitle(title, for: id, refine: true) }
+        Self.shared = self
         // Save selection as it changes (cheap: whole-state persist).
         $selection
             .dropFirst()
@@ -80,7 +93,7 @@ final class AppState: ObservableObject {
                                visibleSections: visibleSections, profile: profile,
                                selectedItem: selectedItem, selectedCanvas: selectedCanvas)
         if let data = try? JSONEncoder().encode(saved) {
-            try? data.write(to: Self.stateURL)
+            try? data.write(to: Self.stateURL, options: .atomic)
         }
     }
 
@@ -106,8 +119,10 @@ final class AppState: ObservableObject {
     /// Set the auto-derived title for a chat. `refine` overwrites the initial
     /// truncated title with a model-written summary.
     func setTitle(_ title: String, for itemID: UUID, refine: Bool = false) {
-        guard let index = items.firstIndex(where: { $0.id == itemID }),
-              refine || items[index].title == nil else { return }
+        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
+        // Never clobber a name the user typed themselves.
+        if items[index].titleIsManual == true { return }
+        guard refine || items[index].title == nil else { return }
         items[index].title = title
         persist()
     }
@@ -117,6 +132,7 @@ final class AppState: ObservableObject {
         guard !trimmed.isEmpty, let index = items.firstIndex(where: { $0.id == itemID }) else { return }
         if items[index].isChat {
             items[index].title = trimmed
+            items[index].titleIsManual = true
         } else {
             items[index].name = trimmed
         }
@@ -279,9 +295,17 @@ final class LiveSessionStore {
 
     /// Tear down live state for a deleted item.
     func discard(_ itemID: UUID) {
-        if let engine = chatEngines.removeValue(forKey: itemID) { engine.stop() }
+        if let engine = chatEngines.removeValue(forKey: itemID) {
+            engine.discarded = true   // late termination must not re-save the transcript
+            engine.stop()
+        }
         terminals.removeValue(forKey: itemID)
         bridges.removeValue(forKey: itemID)
+    }
+
+    /// App quit: terminate every in-flight CLI so nothing is orphaned.
+    func stopAllEngines() {
+        for engine in chatEngines.values { engine.stop() }
     }
 
     func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {

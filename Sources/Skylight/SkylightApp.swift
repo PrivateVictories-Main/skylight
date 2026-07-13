@@ -46,4 +46,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default: break
         }
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Never orphan in-flight CLI processes (they keep burning quota).
+        MainActor.assumeIsolated {
+            AppState.shared?.sessions.stopAllEngines()
+        }
+    }
 }
