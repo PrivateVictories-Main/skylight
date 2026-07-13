@@ -7,7 +7,9 @@ struct SkylightApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        WindowGroup {
+        // Single-window app: live terminals and webviews can't render in two
+        // hierarchies at once, and this frees ⌘N from "New Window".
+        Window("Skylight", id: "main") {
             ContentView()
                 .environmentObject(state)
         }

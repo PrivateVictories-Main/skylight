@@ -23,16 +23,18 @@ struct CanvasView: View {
                     }
                 }
                 .frame(width: contentSize.width, height: contentSize.height, alignment: .topLeading)
+                // Inside the scroll view: drop locations are content coordinates,
+                // correct regardless of scroll offset.
+                .dropDestination(for: String.self) { ids, location in
+                    for raw in ids {
+                        guard let id = UUID(uuidString: raw), state.item(id) != nil else { continue }
+                        state.addTile(itemID: id, to: boardID, at: location)
+                    }
+                    return true
+                }
             }
         }
         .background(Color(nsColor: .windowBackgroundColor))
-        .dropDestination(for: String.self) { ids, location in
-            for raw in ids {
-                guard let id = UUID(uuidString: raw), state.item(id) != nil else { continue }
-                state.addTile(itemID: id, to: boardID, at: location)
-            }
-            return true
-        }
         .navigationTitle(board?.name ?? "Canvas")
         .overlay {
             if board?.tiles.isEmpty ?? true {

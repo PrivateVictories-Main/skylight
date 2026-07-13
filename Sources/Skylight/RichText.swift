@@ -7,16 +7,9 @@ import SwiftUI
 struct RichMessageText: View {
     let text: String
 
-    private enum Segment: Identifiable {
-        case prose(String, UUID = UUID())
-        case code(language: String, body: String, id: UUID = UUID())
-
-        var id: UUID {
-            switch self {
-            case let .prose(_, id): id
-            case let .code(_, _, id): id
-            }
-        }
+    private enum Segment {
+        case prose(String)
+        case code(language: String, body: String)
     }
 
     private var segments: [Segment] {
@@ -58,13 +51,15 @@ struct RichMessageText: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(segments) { segment in
+            // Positional identity keeps segments stable across streaming
+            // re-renders (fresh UUIDs would reset copy state and selection).
+            ForEach(Array(segments.enumerated()), id: \.offset) { _, segment in
                 switch segment {
-                case let .prose(text, _):
+                case let .prose(text):
                     Text(LocalizedStringKey(text))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                case let .code(language, body, _):
+                case let .code(language, body):
                     CodeBlock(language: language, code: body)
                 }
             }

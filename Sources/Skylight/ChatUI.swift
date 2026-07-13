@@ -91,6 +91,8 @@ struct ProviderChatView: View {
                 }
             }
             .onChange(of: engine.messages) {
+                // Follow new content only if the user is at the bottom or just sent.
+                guard nearBottom || engine.messages.last?.role == .user else { return }
                 if let last = engine.messages.last {
                     withAnimation(.easeOut(duration: 0.2)) { proxy.scrollTo(last.id, anchor: .bottom) }
                 }

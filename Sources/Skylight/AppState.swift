@@ -262,7 +262,9 @@ final class AppState: ObservableObject {
         guard let boardIndex = canvases.firstIndex(where: { $0.id == canvasID }),
               let tileIndex = canvases[boardIndex].tiles.firstIndex(where: { $0.id == tile.id })
         else { return }
-        canvases[boardIndex].tiles[tileIndex] = tile
+        // Last-touched tile renders on top (tiles draw in array order).
+        canvases[boardIndex].tiles.remove(at: tileIndex)
+        canvases[boardIndex].tiles.append(tile)
         persist()
     }
 }

@@ -46,8 +46,8 @@ struct SidebarView: View {
     @State private var renameDraft = ""
 
     private var pinned: [WorkspaceItem] { state.items.filter(\.pinned) }
-    private var chats: [WorkspaceItem] { state.items.filter(\.isChat) }
-    private var terminals: [WorkspaceItem] { state.items.filter { $0.kind == .terminal } }
+    private var chats: [WorkspaceItem] { state.items.filter { $0.isChat && !$0.pinned } }
+    private var terminals: [WorkspaceItem] { state.items.filter { $0.kind == .terminal && !$0.pinned } }
 
     private func isVisible(_ section: SidebarSection) -> Bool {
         state.visibleSections.contains(section)
