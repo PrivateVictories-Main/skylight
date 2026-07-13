@@ -82,6 +82,9 @@ final class ProviderChatEngine: ObservableObject {
 
     @Published var messages: [ChatMessage] = []
     @Published var isThinking = false
+    /// Partial assistant text while a reply streams in; nil when idle.
+    @Published var streamingText: String?
+    private var activeProcess: Process?
     @Published var modelID: String = "" { didSet { reconcileEffort(); save() } }
     @Published var effort: String = "medium" { didSet { save() } }
     @Published var missingCLI = false
@@ -165,31 +168,17 @@ final class ProviderChatEngine: ObservableObject {
             onTitle?(Self.deriveTitle(from: trimmed, attachments: attachments))
         }
         isThinking = true
+        streamingText = nil
         save()
 
-        let request = Request(
-            provider: provider,
-            prompt: trimmed.isEmpty ? "(see attached)" : trimmed,
-            model: modelID,
-            effort: provider.supportsEffort ? effort : nil,
-            imagePaths: attachments.filter(\.isImage).map(\.path),
-            resume: sessionID
-        )
-        Task.detached { [weak self] in
-            let outcome = Self.run(request)
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.isThinking = false
-                switch outcome {
-                case let .success(reply, newSession):
-                    self.sessionID = newSession ?? self.sessionID
-                    self.messages.append(ChatMessage(role: .assistant, text: reply))
-                case let .failure(message):
-                    self.messages.append(ChatMessage(role: .error, text: message))
-                }
-                self.save()
-            }
-        }
+        let prompt = trimmed.isEmpty ? "(see attached)" : trimmed
+        let imagePaths = attachments.filter(\.isImage).map(\.path)
+        startStreaming(prompt: prompt, imagePaths: imagePaths)
+    }
+
+    /// Stops the in-flight reply, keeping whatever streamed so far.
+    func stop() {
+        activeProcess?.terminate()
     }
 
     /// A short, human-readable title from the first message — like ChatGPT/Claude.
@@ -212,19 +201,7 @@ final class ProviderChatEngine: ObservableObject {
         return clipped + "…"
     }
 
-    private struct Request: Sendable {
-        let provider: ChatProvider
-        let prompt: String
-        let model: String
-        let effort: String?
-        let imagePaths: [String]
-        let resume: String?
-    }
-
-    private enum Outcome: Sendable {
-        case success(String, String?)
-        case failure(String)
-    }
+    // MARK: Streaming
 
     nonisolated private static func binary(for provider: ChatProvider) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -233,63 +210,33 @@ final class ProviderChatEngine: ObservableObject {
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    nonisolated private static func run(_ request: Request) -> Outcome {
-        guard let binary = binary(for: request.provider) else {
-            let cli = request.provider == .claude ? "Claude Code" : "Codex"
-            return .failure("Couldn't find the \(cli) CLI. Install it and log in once from a terminal.")
+    private func startStreaming(prompt: String, imagePaths: [String]) {
+        guard let binary = Self.binary(for: provider) else {
+            let cli = provider == .claude ? "Claude Code" : "Codex"
+            finish(error: "Couldn't find the \(cli) CLI. Install it and log in once from a terminal.")
+            return
         }
-        switch request.provider {
-        case .claude: return runClaude(binary: binary, request: request)
-        case .chatgpt: return runCodex(binary: binary, request: request)
-        }
-    }
 
-    nonisolated private static func runClaude(binary: String, request: Request) -> Outcome {
-        var arguments = ["-p", request.prompt, "--output-format", "json"]
-        if !request.model.isEmpty { arguments += ["--model", request.model] }
-        if let resume = request.resume { arguments += ["--resume", resume] }
-        // Claude Code reads images from paths mentioned in the prompt; append them.
-        if !request.imagePaths.isEmpty {
-            arguments[1] += "\n\nAttached files:\n" + request.imagePaths.joined(separator: "\n")
+        var arguments: [String]
+        switch provider {
+        case .claude:
+            var fullPrompt = prompt
+            if !imagePaths.isEmpty {
+                fullPrompt += "\n\nAttached files:\n" + imagePaths.joined(separator: "\n")
+            }
+            arguments = ["-p", fullPrompt, "--output-format", "stream-json",
+                         "--include-partial-messages", "--verbose"]
+            if !modelID.isEmpty { arguments += ["--model", modelID] }
+            if let resume = sessionID { arguments += ["--resume", resume] }
+        case .chatgpt:
+            arguments = ["exec", "--skip-git-repo-check", "--json"]
+            if let resume = sessionID { arguments.insert(contentsOf: ["resume", resume], at: 1) }
+            if !modelID.isEmpty { arguments += ["-m", modelID] }
+            arguments += ["-c", "model_reasoning_effort=\"\(effort)\""]
+            for path in imagePaths { arguments += ["-i", path] }
+            arguments.append(prompt)
         }
-        guard let out = launch(binary, arguments) else {
-            return .failure("Couldn't launch claude.")
-        }
-        guard let json = try? JSONSerialization.jsonObject(with: out.data) as? [String: Any],
-              let result = json["result"] as? String else {
-            return .failure(out.stderr.isEmpty ? "Claude didn't return a result." : out.stderr)
-        }
-        if json["is_error"] as? Bool == true { return .failure(result) }
-        return .success(result, json["session_id"] as? String)
-    }
 
-    nonisolated private static func runCodex(binary: String, request: Request) -> Outcome {
-        // Write the final assistant message to a temp file for clean capture.
-        let outFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("skylight-codex-\(UUID().uuidString).txt")
-        var arguments = ["exec", "--skip-git-repo-check", "-o", outFile.path]
-        if !request.model.isEmpty { arguments += ["-m", request.model] }
-        if let effort = request.effort { arguments += ["-c", "model_reasoning_effort=\"\(effort)\""] }
-        for path in request.imagePaths { arguments += ["-i", path] }
-        if request.resume != nil { arguments.insert("resume", at: 1); arguments.insert("--last", at: 2) }
-        arguments.append(request.prompt)
-
-        guard let out = launch(binary, arguments) else {
-            return .failure("Couldn't launch codex.")
-        }
-        if let reply = try? String(contentsOf: outFile, encoding: .utf8) {
-            try? FileManager.default.removeItem(at: outFile)
-            let trimmed = reply.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty { return .success(trimmed, nil) }
-        }
-        let fallback = out.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !fallback.isEmpty { return .success(fallback, nil) }
-        return .failure(out.stderr.isEmpty ? "Codex didn't return a result." : out.stderr)
-    }
-
-    private struct Launched { let data: Data; let stdout: String; let stderr: String }
-
-    nonisolated private static func launch(_ binary: String, _ arguments: [String]) -> Launched? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
@@ -297,17 +244,126 @@ final class ProviderChatEngine: ObservableObject {
         var env = ProcessInfo.processInfo.environment
         env["PATH"] = "\(FileManager.default.homeDirectoryForCurrentUser.path)/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
         process.environment = env
+
         let stdout = Pipe(), stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        do { try process.run() } catch { return nil }
-        let outData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let errData = stderr.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        return Launched(
-            data: outData,
-            stdout: String(data: outData, encoding: .utf8) ?? "",
-            stderr: String(data: errData, encoding: .utf8) ?? ""
-        )
+        activeProcess = process
+
+        let providerKind = provider
+        let lineBuffer = LineBuffer()
+        stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
+            let chunk = handle.availableData
+            guard !chunk.isEmpty else { return }
+            for lineData in lineBuffer.append(chunk) {
+                Task { @MainActor [weak self] in
+                    guard let event = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { return }
+                    self?.handleEvent(event, provider: providerKind)
+                }
+            }
+        }
+
+        process.terminationHandler = { [weak self] proc in
+            stdout.fileHandleForReading.readabilityHandler = nil
+            let errData = stderr.fileHandleForReading.readDataToEndOfFile()
+            let stderrText = String(data: errData, encoding: .utf8) ?? ""
+            Task { @MainActor [weak self] in
+                self?.processEnded(status: proc.terminationStatus, stderr: stderrText)
+            }
+        }
+
+        do {
+            try process.run()
+        } catch {
+            activeProcess = nil
+            finish(error: "Couldn't launch \(provider == .claude ? "claude" : "codex"): \(error.localizedDescription)")
+        }
+    }
+
+    /// One JSONL event from either CLI → streaming state updates.
+    private func handleEvent(_ event: [String: Any], provider: ChatProvider) {
+        switch provider {
+        case .claude:
+            switch event["type"] as? String {
+            case "stream_event":
+                if let inner = event["event"] as? [String: Any],
+                   inner["type"] as? String == "content_block_delta",
+                   let delta = inner["delta"] as? [String: Any],
+                   delta["type"] as? String == "text_delta",
+                   let text = delta["text"] as? String {
+                    streamingText = (streamingText ?? "") + text
+                }
+            case "result":
+                if let session = event["session_id"] as? String { sessionID = session }
+                let result = event["result"] as? String
+                if event["is_error"] as? Bool == true {
+                    finish(error: result ?? "Claude returned an error.")
+                } else if let result, !result.isEmpty {
+                    // Authoritative final text.
+                    streamingText = result
+                }
+            default:
+                break
+            }
+        case .chatgpt:
+            switch event["type"] as? String {
+            case "thread.started":
+                if let thread = event["thread_id"] as? String { sessionID = thread }
+            case "item.updated", "item.completed":
+                if let item = event["item"] as? [String: Any],
+                   item["item_type"] as? String == "agent_message",
+                   let text = item["text"] as? String {
+                    streamingText = text
+                }
+            case "error":
+                if let message = event["message"] as? String {
+                    finish(error: message)
+                }
+            default:
+                break
+            }
+        }
+    }
+
+    private func processEnded(status: Int32, stderr: String) {
+        activeProcess = nil
+        guard isThinking else { return }   // already finished via an error event
+        if let text = streamingText, !text.isEmpty {
+            finish(reply: text.trimmingCharacters(in: .whitespacesAndNewlines))
+        } else if status == 0 {
+            finish(error: "No reply received.")
+        } else if status == 15 {           // SIGTERM: user pressed stop
+            finish(error: "Stopped.")
+        } else {
+            let detail = stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+            finish(error: detail.isEmpty ? "The model exited unexpectedly (code \(status))." : detail)
+        }
+    }
+
+    private func finish(reply: String? = nil, error: String? = nil) {
+        isThinking = false
+        streamingText = nil
+        if let reply { messages.append(ChatMessage(role: .assistant, text: reply)) }
+        if let error { messages.append(ChatMessage(role: .error, text: error)) }
+        save()
+    }
+}
+
+/// Accumulates pipe chunks and splits complete newline-terminated lines.
+/// Locked because readabilityHandler runs on a background queue.
+private final class LineBuffer: @unchecked Sendable {
+    private var data = Data()
+    private let lock = NSLock()
+
+    func append(_ chunk: Data) -> [Data] {
+        lock.lock()
+        defer { lock.unlock() }
+        data.append(chunk)
+        var lines: [Data] = []
+        while let newline = data.firstIndex(of: 0x0A) {
+            lines.append(Data(data.prefix(upTo: newline)))
+            data.removeSubrange(...newline)
+        }
+        return lines
     }
 }

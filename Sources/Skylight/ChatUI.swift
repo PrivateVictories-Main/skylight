@@ -13,28 +13,6 @@ struct ProviderChatView: View {
             Composer(engine: engine)
         }
         .background(Color(nsColor: .textBackgroundColor))
-        .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
-                Picker("Model", selection: $engine.modelID) {
-                    ForEach(engine.provider.modelOptions) { option in
-                        Text(option.label).tag(option.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .fixedSize()
-
-                if engine.provider.supportsEffort {
-                    Picker("Effort", selection: $engine.effort) {
-                        ForEach(engine.effortOptions, id: \.self) { effort in
-                            Text(effort.capitalized).tag(effort)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .fixedSize()
-                    .help("Reasoning effort for the selected model")
-                }
-            }
-        }
     }
 
     private var transcript: some View {
@@ -45,7 +23,15 @@ struct ProviderChatView: View {
                         MessageRow(message: message, provider: engine.provider)
                             .id(message.id)
                     }
-                    if engine.isThinking {
+                    if let streaming = engine.streamingText, !streaming.isEmpty {
+                        HStack(alignment: .top, spacing: 12) {
+                            BrandIcon(provider: engine.provider, size: 24)
+                            Text(LocalizedStringKey(streaming))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .id("thinking")
+                    } else if engine.isThinking {
                         ThinkingRow(provider: engine.provider).id("thinking")
                     }
                 }
@@ -67,6 +53,9 @@ struct ProviderChatView: View {
             }
             .onChange(of: engine.isThinking) {
                 if engine.isThinking { withAnimation { proxy.scrollTo("thinking", anchor: .bottom) } }
+            }
+            .onChange(of: engine.streamingText) {
+                proxy.scrollTo("thinking", anchor: .bottom)
             }
         }
     }
@@ -234,6 +223,21 @@ private struct Composer: View {
         (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty) && !engine.isThinking
     }
 
+    private var sendColor: Color {
+        if engine.isThinking { return .primary }
+        return canSend ? .accentColor : Color.secondary.opacity(0.45)
+    }
+
+    private var composerBackground: some View {
+        let shape = RoundedRectangle(cornerRadius: 20, style: .continuous)
+        let border: Color = Color.primary.opacity(0.1)
+        let shadow: Color = Color.black.opacity(0.06)
+        return shape
+            .fill(Color(nsColor: .controlBackgroundColor))
+            .overlay(shape.strokeBorder(border))
+            .shadow(color: shadow, radius: 8, y: 2)
+    }
+
     var body: some View {
         VStack(spacing: 8) {
             if !attachments.isEmpty {
@@ -247,43 +251,49 @@ private struct Composer: View {
                     }
                 }
             }
-            HStack(alignment: .bottom, spacing: 10) {
-                Button(action: pickAttachments) {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 16))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.pressable)
-                .padding(.bottom, 6)
-                .help("Attach files or images")
-
+            // ChatGPT-app-style composer card: input on top, controls below.
+            VStack(spacing: 6) {
                 TextField(engine.provider.composerPlaceholder, text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1 ... 10)
                     .focused($focused)
                     .onSubmit(send)
                     .font(.system(size: 14))
+                    .padding(.horizontal, 4)
+                    .padding(.top, 4)
 
-                Button(action: send) {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 26))
-                        .foregroundStyle(canSend ? Color.accentColor : Color.secondary.opacity(0.5))
-                        .symbolEffect(.bounce, value: engine.messages.count)
+                HStack(spacing: 10) {
+                    Button(action: pickAttachments) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 26, height: 26)
+                            .background(Circle().fill(Color.primary.opacity(0.06)))
+                    }
+                    .buttonStyle(.pressable)
+                    .help("Attach files or images")
+
+                    Spacer()
+
+                    ModelPill(engine: engine)
+
+                    Button {
+                        if engine.isThinking { engine.stop() } else { send() }
+                    } label: {
+                        Image(systemName: engine.isThinking ? "stop.circle.fill" : "arrow.up.circle.fill")
+                            .font(.system(size: 27))
+                            .foregroundStyle(sendColor)
+                            .symbolEffect(.bounce, value: engine.messages.count)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                    .buttonStyle(.pressable(scale: 0.86))
+                    .disabled(!canSend && !engine.isThinking)
+                    .help(engine.isThinking ? "Stop generating" : "Send")
                 }
-                .buttonStyle(.pressable(scale: 0.86))
-                .disabled(!canSend)
-                .padding(.bottom, 1)
             }
-            .padding(.horizontal, 14)
+            .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 22, style: .continuous)
-                            .strokeBorder(Color.primary.opacity(0.12))
-                    )
-            )
+            .background(composerBackground)
         }
         .padding(14)
         .frame(maxWidth: 780)
@@ -319,5 +329,59 @@ private struct Composer: View {
         let imageExts: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "heic", "bmp", "tiff"]
         let isImage = imageExts.contains(url.pathExtension.lowercased())
         attachments.append(ChatAttachment(path: url.path, name: url.lastPathComponent, isImage: isImage))
+    }
+}
+
+/// The combined model + effort pill, like the ChatGPT app's "5.6 Sol Ultra".
+private struct ModelPill: View {
+    @ObservedObject var engine: ProviderChatEngine
+
+    private var label: String {
+        let model = engine.provider.modelOptions.first { $0.id == engine.modelID }?.label ?? "Default"
+        if engine.provider.supportsEffort, engine.modelID.isEmpty == false || !engine.effortOptions.isEmpty {
+            return "\(model) · \(engine.effort.capitalized)"
+        }
+        return model
+    }
+
+    var body: some View {
+        Menu {
+            Section("Model") {
+                Picker("Model", selection: $engine.modelID) {
+                    ForEach(engine.provider.modelOptions) { option in
+                        Text(option.label).tag(option.id)
+                    }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            if engine.provider.supportsEffort {
+                Section("Reasoning Effort") {
+                    Picker("Effort", selection: $engine.effort) {
+                        ForEach(engine.effortOptions, id: \.self) { effort in
+                            Text(effort.capitalized).tag(effort)
+                        }
+                    }
+                    .pickerStyle(.inline)
+                    .labelsHidden()
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "bolt.fill")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(label)
+                    .font(.system(size: 12, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .bold))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(Color.primary.opacity(0.05)))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
     }
 }
