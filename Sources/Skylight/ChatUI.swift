@@ -395,28 +395,11 @@ private struct ModelPill: View {
         return model
     }
 
+    @State private var showPanel = false
+
     var body: some View {
-        Menu {
-            Section("Model") {
-                Picker("Model", selection: $engine.modelID) {
-                    ForEach(engine.provider.modelOptions) { option in
-                        Text(option.label).tag(option.id)
-                    }
-                }
-                .pickerStyle(.inline)
-                .labelsHidden()
-            }
-            if engine.provider.supportsEffort {
-                Section("Reasoning Effort") {
-                    Picker("Effort", selection: $engine.effort) {
-                        ForEach(engine.effortOptions, id: \.self) { effort in
-                            Text(effort.capitalized).tag(effort)
-                        }
-                    }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
-                }
-            }
+        Button {
+            showPanel = true
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "bolt.fill")
@@ -431,8 +414,78 @@ private struct ModelPill: View {
             .padding(.vertical, 5)
             .background(Capsule().fill(Color.primary.opacity(0.05)))
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
+        .buttonStyle(.pressable(scale: 0.96))
+        .popover(isPresented: $showPanel, arrowEdge: .top) {
+            ModelEffortPanel(engine: engine)
+        }
+    }
+}
+
+/// The model + effort control surface: pressable model rows, and reasoning
+/// effort as a draggable snapping slider.
+private struct ModelEffortPanel: View {
+    @ObservedObject var engine: ProviderChatEngine
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Model")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                VStack(spacing: 2) {
+                    ForEach(engine.provider.modelOptions) { option in
+                        Button {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                engine.modelID = option.id
+                            }
+                        } label: {
+                            HStack {
+                                Text(option.label)
+                                    .font(.system(size: 12.5,
+                                                  weight: engine.modelID == option.id ? .semibold : .regular))
+                                Spacer()
+                                if engine.modelID == option.id {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 10, weight: .bold))
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .hoverHighlight(cornerRadius: 8, active: engine.modelID == option.id)
+                    }
+                }
+            }
+
+            if engine.provider.supportsEffort {
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Reasoning Effort")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text(engine.effort.capitalized)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.accentColor)
+                            .contentTransition(.numericText())
+                            .animation(.spring(response: 0.3), value: engine.effort)
+                    }
+                    StopSlider(options: engine.effortOptions, selection: $engine.effort)
+                    HStack {
+                        Text(engine.effortOptions.first?.capitalized ?? "")
+                        Spacer()
+                        Text(engine.effortOptions.last?.capitalized ?? "")
+                    }
+                    .font(.system(size: 9.5))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 4)
+                }
+            }
+        }
+        .padding(16)
+        .frame(width: 264)
     }
 }

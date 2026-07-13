@@ -97,6 +97,68 @@ struct SlidingSegments<T: Hashable>: View {
     }
 }
 
+/// A draggable, snapping stop-slider — drag or tap between discrete levels
+/// (reasoning efforts). The thumb glides with a spring, ticks light up as the
+/// fill passes them, and the active label follows the selection.
+struct StopSlider: View {
+    let options: [String]
+    @Binding var selection: String
+
+    private var selectedIndex: Int {
+        options.firstIndex(of: selection) ?? 0
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = geo.size.width
+            let count = max(options.count, 2)
+            let step = width / CGFloat(count - 1)
+            let x = CGFloat(selectedIndex) * step
+
+            ZStack(alignment: .leading) {
+                // Track + progress fill.
+                Capsule()
+                    .fill(Color.primary.opacity(0.08))
+                    .frame(height: 6)
+                Capsule()
+                    .fill(Color.accentColor.opacity(0.75))
+                    .frame(width: max(x, 6), height: 6)
+
+                // Tick dots.
+                ForEach(options.indices, id: \.self) { index in
+                    Circle()
+                        .fill(index <= selectedIndex ? Color.accentColor : Color.primary.opacity(0.18))
+                        .frame(width: 4.5, height: 4.5)
+                        .position(x: CGFloat(index) * step, y: geo.size.height / 2)
+                }
+
+                // Thumb.
+                Circle()
+                    .fill(.background)
+                    .frame(width: 20, height: 20)
+                    .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+                    .overlay(Circle().strokeBorder(Color.primary.opacity(0.08)))
+                    .position(x: x, y: geo.size.height / 2)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { value in
+                        let index = Int((value.location.x / step).rounded())
+                        let clamped = min(max(index, 0), options.count - 1)
+                        if options[clamped] != selection {
+                            withAnimation(.spring(response: 0.28, dampingFraction: 0.7)) {
+                                selection = options[clamped]
+                            }
+                        }
+                    }
+            )
+        }
+        .frame(height: 26)
+        .padding(.horizontal, 10)
+    }
+}
+
 extension Color {
     /// Hex string ("#RRGGBB") → Color.
     init?(hex: String) {
