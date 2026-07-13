@@ -62,10 +62,15 @@ extension ChatProvider {
         case .chatgpt:
             [.init(id: "", label: "Default")]
                 + CodexCatalog.load().map { .init(id: $0.slug, label: $0.displayName) }
+        case .gemini:
+            [.init(id: "", label: "Default"),
+             .init(id: "gemini-3.1-pro", label: "Gemini 3.1 Pro"),
+             .init(id: "gemini-3-pro", label: "Gemini 3 Pro"),
+             .init(id: "gemini-3-flash", label: "Gemini 3 Flash")]
         }
     }
 
-    /// Codex exposes reasoning effort; Claude Code does not.
+    /// Codex exposes reasoning effort; Claude Code and Gemini do not.
     var supportsEffort: Bool { self == .chatgpt }
 
     var composerPlaceholder: String { "Message \(displayName)…" }
@@ -181,6 +186,21 @@ final class ProviderChatEngine: ObservableObject {
         activeProcess?.terminate()
     }
 
+    /// Recent turns rendered as a prompt prefix, for stateless CLIs (Gemini).
+    private func conversationContext() -> String {
+        let recent = messages.suffix(9).dropLast()   // exclude the just-appended user turn
+        guard !recent.isEmpty else { return "" }
+        let lines = recent.compactMap { message -> String? in
+            switch message.role {
+            case .user: "User: \(message.text)"
+            case .assistant: "Assistant: \(message.text)"
+            case .error: nil
+            }
+        }
+        guard !lines.isEmpty else { return "" }
+        return "Earlier in this conversation:\n" + lines.joined(separator: "\n") + "\n\nNow the user says: "
+    }
+
     /// A short, human-readable title from the first message — like ChatGPT/Claude.
     static func deriveTitle(from text: String, attachments: [ChatAttachment]) -> String {
         var t = text
@@ -203,9 +223,17 @@ final class ProviderChatEngine: ObservableObject {
 
     // MARK: Streaming
 
-    nonisolated private static func binary(for provider: ChatProvider) -> String? {
+    nonisolated static func cliName(for provider: ChatProvider) -> String {
+        switch provider {
+        case .claude: "claude"
+        case .chatgpt: "codex"
+        case .gemini: "gemini"
+        }
+    }
+
+    nonisolated static func binary(for provider: ChatProvider) -> String? {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let name = provider == .claude ? "claude" : "codex"
+        let name = cliName(for: provider)
         let candidates = ["\(home)/.local/bin/\(name)", "/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)"]
         return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
@@ -235,6 +263,14 @@ final class ProviderChatEngine: ObservableObject {
             arguments += ["-c", "model_reasoning_effort=\"\(effort)\""]
             for path in imagePaths { arguments += ["-i", path] }
             arguments.append(prompt)
+        case .gemini:
+            // Gemini CLI is stateless in -p mode: replay recent turns for context.
+            var fullPrompt = conversationContext() + prompt
+            if !imagePaths.isEmpty {
+                fullPrompt += "\n\nAttached files:\n" + imagePaths.joined(separator: "\n")
+            }
+            arguments = ["-p", fullPrompt, "--output-format", "json"]
+            if !modelID.isEmpty { arguments += ["-m", modelID] }
         }
 
         let process = Process()
@@ -255,7 +291,10 @@ final class ProviderChatEngine: ObservableObject {
         stdout.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let chunk = handle.availableData
             guard !chunk.isEmpty else { return }
-            for lineData in lineBuffer.append(chunk) {
+            // Gemini prints one JSON document, not JSONL — collect and parse at exit.
+            let lines = lineBuffer.append(chunk)
+            guard providerKind != .gemini else { return }
+            for lineData in lines {
                 Task { @MainActor [weak self] in
                     guard let event = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { return }
                     self?.handleEvent(event, provider: providerKind)
@@ -267,8 +306,19 @@ final class ProviderChatEngine: ObservableObject {
             stdout.fileHandleForReading.readabilityHandler = nil
             let errData = stderr.fileHandleForReading.readDataToEndOfFile()
             let stderrText = String(data: errData, encoding: .utf8) ?? ""
+            let fullOutput = lineBuffer.allData()
             Task { @MainActor [weak self] in
-                self?.processEnded(status: proc.terminationStatus, stderr: stderrText)
+                guard let self else { return }
+                if providerKind == .gemini, self.isThinking {
+                    if let json = try? JSONSerialization.jsonObject(with: fullOutput) as? [String: Any],
+                       let response = json["response"] as? String, !response.isEmpty {
+                        self.streamingText = response
+                    } else if let text = String(data: fullOutput, encoding: .utf8),
+                              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        self.streamingText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    }
+                }
+                self.processEnded(status: proc.terminationStatus, stderr: stderrText)
             }
         }
 
@@ -322,6 +372,8 @@ final class ProviderChatEngine: ObservableObject {
             default:
                 break
             }
+        case .gemini:
+            break   // Gemini output is parsed whole at process exit.
         }
     }
 
@@ -355,9 +407,12 @@ private final class LineBuffer: @unchecked Sendable {
     private var data = Data()
     private let lock = NSLock()
 
+    private var everything = Data()
+
     func append(_ chunk: Data) -> [Data] {
         lock.lock()
         defer { lock.unlock() }
+        everything.append(chunk)
         data.append(chunk)
         var lines: [Data] = []
         while let newline = data.firstIndex(of: 0x0A) {
@@ -365,5 +420,11 @@ private final class LineBuffer: @unchecked Sendable {
             data.removeSubrange(...newline)
         }
         return lines
+    }
+
+    func allData() -> Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return everything
     }
 }

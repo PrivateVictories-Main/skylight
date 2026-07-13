@@ -153,6 +153,10 @@ private struct WelcomePanel: View {
             [("chevron.left.forwardslash.chevron.right", "Explain a piece of code I paste"),
              ("ladybug", "Help me debug an error message"),
              ("square.grid.2x2", "Sketch an app architecture with me")]
+        case .gemini:
+            [("globe", "Research a topic and cite sources"),
+             ("doc.richtext", "Draft a document outline"),
+             ("questionmark.circle", "Quiz me on something I'm learning")]
         }
     }
 

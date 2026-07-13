@@ -6,6 +6,7 @@ import SwiftUI
 enum ChatProvider: String, Codable, CaseIterable, Identifiable {
     case claude
     case chatgpt
+    case gemini
 
     var id: String { rawValue }
 
@@ -13,6 +14,7 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: "Claude"
         case .chatgpt: "ChatGPT"
+        case .gemini: "Gemini"
         }
     }
 
@@ -20,6 +22,7 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: URL(string: "https://claude.ai")!
         case .chatgpt: URL(string: "https://chatgpt.com")!
+        case .gemini: URL(string: "https://gemini.google.com")!
         }
     }
 
@@ -27,6 +30,7 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: "sparkle"
         case .chatgpt: "bubble.left.and.bubble.right"
+        case .gemini: "sparkles"
         }
     }
 
@@ -34,6 +38,7 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: URL(string: "https://claude.ai/new")!
         case .chatgpt: URL(string: "https://chatgpt.com/")!
+        case .gemini: URL(string: "https://gemini.google.com/app")!
         }
     }
 
@@ -41,6 +46,7 @@ enum ChatProvider: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .claude: Color(red: 0.85, green: 0.47, blue: 0.28)
         case .chatgpt: Color(red: 0.20, green: 0.65, blue: 0.55)
+        case .gemini: Color(red: 0.31, green: 0.51, blue: 0.93)
         }
     }
 }
@@ -68,16 +74,18 @@ enum WorkspaceItemKind: Codable, Equatable {
 /// What runs inside a terminal tile. Agent flavors launch the vendor CLI as a
 /// full interactive session — the T3 Code / Conductor pattern, but in a real
 /// embedded terminal.
-enum TerminalFlavor: String, Codable {
+enum TerminalFlavor: String, Codable, CaseIterable {
     case shell
     case claudeCode
     case codex
+    case gemini
 
     var displayName: String {
         switch self {
         case .shell: "Terminal"
         case .claudeCode: "Claude Code"
         case .codex: "Codex"
+        case .gemini: "Gemini CLI"
         }
     }
 
@@ -87,6 +95,7 @@ enum TerminalFlavor: String, Codable {
         case .shell: nil
         case .claudeCode: .claude
         case .codex: .chatgpt
+        case .gemini: .gemini
         }
     }
 
@@ -95,6 +104,7 @@ enum TerminalFlavor: String, Codable {
         case .shell: nil
         case .claudeCode: "claude"
         case .codex: "codex"
+        case .gemini: "gemini"
         }
     }
 }
