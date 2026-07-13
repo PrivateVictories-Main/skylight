@@ -424,7 +424,10 @@ final class ProviderChatEngine: ObservableObject {
                 if let thread = event["thread_id"] as? String { sessionID = thread }
             case "item.updated", "item.completed":
                 if let item = event["item"] as? [String: Any],
-                   item["item_type"] as? String == "agent_message",
+                   // The CLI labels the message item under "type" (older builds
+                   // used "item_type"); accept either.
+                   (item["type"] as? String == "agent_message"
+                       || item["item_type"] as? String == "agent_message"),
                    let text = item["text"] as? String {
                     streamingText = text
                 }

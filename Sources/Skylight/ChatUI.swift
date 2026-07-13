@@ -118,7 +118,7 @@ private struct BottomDistanceKey: PreferenceKey {
 
 // MARK: - Messages
 
-private struct MessageRow: View {
+struct MessageRow: View {
     let message: ChatMessage
     let provider: ChatProvider
 
@@ -171,7 +171,7 @@ private struct MessageRow: View {
     }
 }
 
-private struct ThinkingRow: View {
+struct ThinkingRow: View {
     let provider: ChatProvider
     @State private var pulse = false
 

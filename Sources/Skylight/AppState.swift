@@ -147,16 +147,18 @@ final class AppState: ObservableObject {
     }
 
     func deleteItem(_ itemID: UUID) {
+        let childIDs = items.first(where: { $0.id == itemID })?.compareChildren.map { Array($0.values) } ?? []
         items.removeAll { $0.id == itemID }
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == itemID }
         }
-        sessions.discard(itemID)
-        // Remove persisted transcript/history for the item.
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Skylight", isDirectory: true)
-        try? FileManager.default.removeItem(at: support.appendingPathComponent("chats/\(itemID.uuidString).json"))
-        try? FileManager.default.removeItem(at: support.appendingPathComponent("webhistory/\(itemID.uuidString).json"))
+        for id in [itemID] + childIDs {
+            sessions.discard(id)
+            try? FileManager.default.removeItem(at: support.appendingPathComponent("chats/\(id.uuidString).json"))
+            try? FileManager.default.removeItem(at: support.appendingPathComponent("webhistory/\(id.uuidString).json"))
+        }
         if case let .item(selected)? = selection, selected == itemID {
             selection = items.first.map { .item($0.id) }
         }
@@ -193,6 +195,18 @@ final class AppState: ObservableObject {
         items.append(terminal)
         sessions.pendingInput[terminal.id] = context
         selection = .item(terminal.id)
+        persist()
+    }
+
+    /// New compare item: one child conversation per installed provider.
+    func addCompare() {
+        let providers = ChatProvider.allCases.filter { ProviderChatEngine.binary(for: $0) != nil }
+        guard providers.count >= 2 else { return }
+        var children: [String: UUID] = [:]
+        for provider in providers { children[provider.rawValue] = UUID() }
+        let item = WorkspaceItem(kind: .compare, name: "Compare", compareChildren: children)
+        items.append(item)
+        selection = .item(item.id)
         persist()
     }
 
@@ -347,6 +361,16 @@ final class LiveSessionStore {
     /// App quit: terminate every in-flight CLI so nothing is orphaned.
     func stopAllEngines() {
         for engine in chatEngines.values { engine.stop() }
+    }
+
+    /// Engine for one column of a compare item, keyed by the child id so each
+    /// provider keeps its own transcript and session.
+    func compareEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
+        let childID = item.compareChildren?[provider.rawValue] ?? item.id
+        if let existing = chatEngines[childID] { return existing }
+        let engine = ProviderChatEngine(provider: provider, itemID: childID)
+        chatEngines[childID] = engine
+        return engine
     }
 
     func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {

@@ -311,6 +311,7 @@ private struct ItemRow: View {
         switch item.kind {
         case let .assistant(provider): provider.tint
         case .terminal: .secondary
+        case .compare: .accentColor
         }
     }
 }
@@ -387,6 +388,8 @@ struct FullItemView: View {
             switch item.kind {
             case let .assistant(provider):
                 AssistantView(item: item, provider: provider)
+            case .compare:
+                CompareView(item: item)
             case .terminal:
                 PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
                     .padding(6)

@@ -182,6 +182,8 @@ private struct TileView: View {
             case .web:
                 WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
             }
+        case .compare:
+            CompareView(item: item)
         case .terminal:
             PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
         }

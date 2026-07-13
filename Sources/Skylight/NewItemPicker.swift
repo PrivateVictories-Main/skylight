@@ -95,7 +95,15 @@ struct NewItemPicker: View {
                 }
             }
 
-            section("Boards", subtitle: "A canvas of live tiles") {
+            section("Boards", subtitle: "Multi-model surfaces") {
+                Tile(title: "Compare", subtitle: "Ask every model at once", installed: true) {
+                    Image(systemName: "square.split.3x1")
+                        .font(.system(size: 24, weight: .medium))
+                        .frame(width: 34, height: 34)
+                } action: {
+                    state.addCompare()
+                    dismiss()
+                }
                 Tile(title: "Canvas", subtitle: "Drag anything in", installed: true) {
                     Image(systemName: "square.on.square.dashed")
                         .font(.system(size: 24, weight: .medium))
