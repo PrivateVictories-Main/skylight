@@ -336,10 +336,19 @@ struct CanvasDropOverlay: View {
         VStack(spacing: 0) {
             ZStack(alignment: .topLeading) {
                 if let board = targetBoard {
-                    CanvasView(boardID: board.id)
-                        .allowsHitTesting(false)
+                    if state.selection == .canvas(board.id) {
+                        // The base DetailView already shows this exact board —
+                        // a second CanvasView would steal its live terminal
+                        // NSViews (one superview each). Let the base show through.
+                        Color.clear
+                    } else {
+                        CanvasView(boardID: board.id)
+                            .allowsHitTesting(false)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                    }
                 } else {
                     newCanvasSurface
+                        .background(Color(nsColor: .windowBackgroundColor))
                 }
                 if let ghost {
                     let frame = ghostFrame(at: ghost, pan: targetBoard?.pan ?? .zero)
@@ -365,12 +374,13 @@ struct CanvasDropOverlay: View {
                 }))
             chipBar
         }
-        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    /// Mirror of addTile's placement so the ghost never lies.
+    /// Mirror of addTile's placement so the ghost never lies — including a
+    /// repositioned tile's real size.
     private func ghostFrame(at location: CGPoint, pan: CGPoint) -> CGRect {
-        let size = CanvasLayout.defaultTileSize
+        let size = targetBoard?.tiles.first { $0.itemID == itemID }?.size
+            ?? CanvasLayout.defaultTileSize
         let origin = CanvasLayout.snapped(
             CGPoint(x: location.x - pan.x - size.width / 2, y: location.y - pan.y - 24))
         return CGRect(x: origin.x + pan.x, y: origin.y + pan.y,

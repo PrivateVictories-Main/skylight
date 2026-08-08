@@ -273,9 +273,11 @@ final class AppState: ObservableObject {
                     ?? CanvasLayout.staggeredOrigin(existing: canvases[index].tiles.count))
             canvases[index].tiles.append(
                 CanvasTile(itemID: itemID, origin: origin, size: size))
+            // Only a newly placed tile is worth panning to; nudging one that
+            // is already on screen must not re-center the whole canvas.
+            pendingReveal = itemID
         }
         selection = .canvas(boardID)
-        pendingReveal = itemID
         persist()
     }
 

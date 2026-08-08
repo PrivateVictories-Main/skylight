@@ -140,8 +140,13 @@ struct InstanceRow: View {
         }
         .onDrag {
             let token = DragToken(object: instance.id.uuidString as NSString)
-            token.onEnd = { AppState.shared?.endSidebarDrag() }
-            state.beginSidebarDrag(instance.id)
+            let id = instance.id
+            token.onEnd = {
+                if AppState.shared?.draggingItemID == id {
+                    AppState.shared?.endSidebarDrag()
+                }
+            }
+            state.beginSidebarDrag(id)
             return token
         }
         .contextMenu { menu }
