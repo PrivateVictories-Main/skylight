@@ -115,16 +115,16 @@ struct SidebarView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 30)
                     .contentShape(Rectangle())
+                    .background(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .fill(Color.accentColor.opacity(0.14))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .strokeBorder(Color.accentColor.opacity(0.3))
+                    )
             }
             .buttonStyle(.pressable(scale: 0.97))
-            .background(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.14))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.3))
-            )
             .help("New Terminal (⌘T)")
         }
         .padding(.horizontal, 14)

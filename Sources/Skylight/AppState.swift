@@ -423,7 +423,7 @@ final class LiveSessionStore {
 
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
-        // Glass + breathing room: translucency plus balanced inner padding so
+        // Glass + breathing room: translucency (never below 0.9 — readability beats effect, spec Addendum A1) plus balanced inner padding so
         // no row — least of all an agent's bottom status line — ever clips
         // against the rounded chrome.
         var config = """
