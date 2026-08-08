@@ -25,6 +25,8 @@ final class AppState: ObservableObject {
     /// Non-nil while a sidebar row is mid-drag; the detail area shows the
     /// canvas drop surface for exactly that long.
     @Published var draggingItemID: UUID?
+    /// The New sheet — openable from ⌘T and the sidebar + button alike.
+    @Published var newSheetShown = false
     @Published private(set) var presets: [LaunchPreset]
     @Published private(set) var usage: UsageLog
 
@@ -141,6 +143,12 @@ final class AppState: ObservableObject {
     private func persistUsage() {
         if let data = try? JSONEncoder().encode(usage) {
             try? data.write(to: Self.usageURL, options: .atomic)
+        }
+    }
+
+    private func persistPresets() {
+        if let data = try? JSONEncoder().encode(presets) {
+            try? data.write(to: Self.presetsURL, options: .atomic)
         }
     }
 
@@ -330,6 +338,20 @@ final class AppState: ObservableObject {
                 attention.remove(tile.itemID)
             }
         }
+    }
+
+    // MARK: - Presets
+
+    func savePreset(named name: String, spec: TerminalSpec) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        presets.append(LaunchPreset(name: trimmed, spec: spec))
+        persistPresets()
+    }
+
+    func deletePreset(_ id: UUID) {
+        presets.removeAll { $0.id == id }
+        persistPresets()
     }
 
     // MARK: - Sidebar drag session

@@ -17,8 +17,11 @@ struct SkylightApp: App {
         .windowStyle(.automatic)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("New Terminal") { state.launch(TerminalSpec()) }
+                Button("New Terminal…") { state.newSheetShown = true }
                     .keyboardShortcut("t", modifiers: [.command])
+                Button("New Shell Terminal") { state.launch(TerminalSpec()) }
+                    .keyboardShortcut("t", modifiers: [.command, .shift])
+                Divider()
                 Button("New Canvas") { state.selection = .canvas(state.newCanvas().id) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
                 Divider()

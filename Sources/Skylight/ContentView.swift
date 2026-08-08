@@ -43,7 +43,7 @@ struct SidebarView: View {
                     InstanceRow(instance: instance, onRename: beginRename)
                 }
                 if state.freeInstances.isEmpty {
-                    Text("⌘T opens a new terminal")
+                    Text("⌘T for a new terminal · ⇧⌘T for an instant shell")
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
@@ -70,6 +70,9 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { bottomBar }
         .navigationTitle("Skylight")
+        .sheet(isPresented: $state.newSheetShown) {
+            NewTerminalSheet().environmentObject(state)
+        }
         .alert("Rename", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -101,7 +104,7 @@ struct SidebarView: View {
         HStack {
             Spacer()
             Button {
-                state.launch(TerminalSpec())
+                state.newSheetShown = true
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
@@ -373,6 +376,7 @@ struct FullInstanceView: View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
             .padding(6)
             .background(Color(nsColor: .textBackgroundColor))
+            .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
             .navigationTitle(instance.name)
     }
 }
@@ -389,6 +393,7 @@ struct FocusView: View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
             .padding(6)
             .background(Color(nsColor: .textBackgroundColor))
+            .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
             .navigationTitle(instance.name)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
@@ -402,6 +407,40 @@ struct FocusView: View {
                 }
             }
             .onExitCommand { state.endFocus() }
+    }
+}
+
+/// Honest state for a terminal whose configured CLI or shell has vanished:
+/// the surface falls back to the login shell (LiveSessionStore already
+/// does), and this banner says so instead of failing silently.
+struct MissingHarnessBanner: View {
+    let instance: TerminalInstance
+
+    private var message: String? {
+        if let id = instance.spec.harness,
+           LiveSessionStore.resolveHarness(id) == nil {
+            let harness = Catalog.harnesses.first { $0.id == id }
+            let name = harness?.displayName ?? id
+            let install = harness.map { " Install: \($0.installCommand)" } ?? ""
+            return "\(name) isn't installed — running your shell.\(install)"
+        }
+        if let shell = instance.spec.shellPath,
+           !FileManager.default.isExecutableFile(atPath: shell) {
+            return "\((shell as NSString).lastPathComponent) is gone — running your login shell."
+        }
+        return nil
+    }
+
+    var body: some View {
+        if let message {
+            Label(message, systemImage: "exclamationmark.triangle")
+                .font(.system(size: 11, weight: .medium))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(.bar))
+                .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
+                .padding(.top, 8)
+        }
     }
 }
 

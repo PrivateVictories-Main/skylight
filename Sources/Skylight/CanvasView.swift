@@ -204,6 +204,7 @@ struct TileView: View {
         }
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
                 .strokeBorder(grabbing ? Color.accentColor.opacity(0.5) : Color.primary.opacity(0.1),
