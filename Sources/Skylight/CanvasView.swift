@@ -1,5 +1,6 @@
 import SwiftUI
 import GhosttyTerminal
+import SkylightCore
 
 /// A board of live tiles. Tiles reference sidebar items — the same chat or
 /// terminal keeps its running state whether shown here or full-window.

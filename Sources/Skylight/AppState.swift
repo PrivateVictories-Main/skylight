@@ -3,6 +3,7 @@ import Foundation
 import SwiftUI
 import WebKit
 import GhosttyTerminal
+import SkylightCore
 
 @MainActor
 final class AppState: ObservableObject {
@@ -430,29 +431,5 @@ final class LiveSessionStore {
 
     func webView(for item: WorkspaceItem, provider: ChatProvider) -> WKWebView {
         bridge(for: item, provider: provider).webView
-    }
-}
-
-// MARK: - Layout helpers
-
-enum CanvasLayout {
-    static let grid: CGFloat = 16
-
-    static func snapped(_ point: CGPoint) -> CGPoint {
-        CGPoint(
-            x: max(0, (point.x / grid).rounded() * grid),
-            y: max(0, (point.y / grid).rounded() * grid)
-        )
-    }
-
-    static func snapped(_ size: CGSize) -> CGSize {
-        CGSize(
-            width: max(320, (size.width / grid).rounded() * grid),
-            height: max(220, (size.height / grid).rounded() * grid)
-        )
-    }
-
-    static func staggeredOrigin(existing: Int) -> CGPoint {
-        CGPoint(x: 48 + CGFloat(existing) * 64, y: 48 + CGFloat(existing) * 48)
     }
 }
