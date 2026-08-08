@@ -26,6 +26,7 @@ final class AppState: ObservableObject {
 
     static weak var shared: AppState?
     private var observers: Set<AnyCancellable> = []
+    private let persistRequests = PassthroughSubject<Void, Never>()
 
     private static let supportDir: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -101,6 +102,10 @@ final class AppState: ObservableObject {
             .debounce(for: .seconds(0.5), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.persist() }
             .store(in: &observers)
+        persistRequests
+            .debounce(for: .seconds(0.4), scheduler: RunLoop.main)
+            .sink { [weak self] _ in self?.persist() }
+            .store(in: &observers)
     }
 
     // MARK: - Persistence
@@ -120,6 +125,10 @@ final class AppState: ObservableObject {
             try? data.write(to: Self.stateURL, options: .atomic)
         }
     }
+
+    /// Coalesced persist for high-frequency callers (wheel-scroll pan):
+    /// state mutates per event, the disk write lands once, trailing.
+    func persistSoon() { persistRequests.send(()) }
 
     private func persistUsage() {
         if let data = try? JSONEncoder().encode(usage) {
@@ -226,7 +235,8 @@ final class AppState: ObservableObject {
         persist()
     }
 
-    /// Remember where a canvas is panned; persisted on gesture end, not per tick.
+    /// Remember where a canvas is panned; persisted via persistSoon() —
+    /// state per event, disk write coalesced.
     func setPan(_ pan: CGPoint, for canvasID: UUID) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
         canvases[index].pan = pan

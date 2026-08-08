@@ -39,4 +39,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         default: break
         }
     }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // A debounced pan write may still be pending — flush the real state.
+        MainActor.assumeIsolated {
+            AppState.shared?.persist()
+        }
+    }
 }

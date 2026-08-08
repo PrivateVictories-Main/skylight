@@ -70,7 +70,7 @@ struct CanvasView: View {
 
     private func commitPan() {
         state.setPan(pan, for: boardID)
-        state.persist()
+        state.persistSoon()
     }
 
     /// Center the tile a sidebar row asked for.
@@ -87,9 +87,9 @@ struct CanvasView: View {
 
 // MARK: - Pan capture
 
-/// Sits behind the tiles and turns trackpad scrolls and empty-space drags
-/// into canvas pan. AppKit routes scrollWheel to the view under the cursor,
-/// so a terminal tile above still scrolls its own buffer.
+/// Sits behind the tiles and turns trackpad scrolls, mouse-wheel scrolls, and
+/// empty-space drags into canvas pan. AppKit routes scrollWheel to the view
+/// under the cursor, so a terminal tile above still scrolls its own buffer.
 struct PanSurface: NSViewRepresentable {
     let onPan: (CGSize) -> Void
     let onPanEnded: () -> Void
@@ -126,6 +126,8 @@ struct PanSurface: NSViewRepresentable {
         }
 
         override func mouseDown(with event: NSEvent) {
+            // A missed mouseUp must not arm the next bare click.
+            dragged = false
             dragOrigin = event.locationInWindow
         }
 
