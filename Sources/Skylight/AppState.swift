@@ -213,7 +213,7 @@ final class AppState: ObservableObject {
         }
         sessions.discard(id)
         attention.remove(id)
-        if focusedInstance == id { focusedInstance = nil }
+        if focusedInstance == id { endFocus() }
         if case let .item(selected)? = selection, selected == id {
             selection = (freeInstances.first ?? instances.first).map { .item($0.id) }
         }
@@ -321,7 +321,7 @@ final class AppState: ObservableObject {
         pendingReveal = itemID
     }
 
-    /// Esc / Back: leave focus. Whatever the window now shows stops asking
+    /// ⌘. / Back: leave focus. Whatever the window now shows stops asking
     /// for attention.
     func endFocus() {
         focusedInstance = nil
@@ -334,7 +334,12 @@ final class AppState: ObservableObject {
 
     // MARK: - Sidebar drag session
 
-    func beginSidebarDrag(_ itemID: UUID) { draggingItemID = itemID }
+    func beginSidebarDrag(_ itemID: UUID) {
+        // The drop overlay reveals the canvas through the base view — focus
+        // would cover it, so dragging leaves focus first.
+        focusedInstance = nil
+        draggingItemID = itemID
+    }
     func endSidebarDrag() { draggingItemID = nil }
 }
 

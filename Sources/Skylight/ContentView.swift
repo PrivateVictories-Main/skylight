@@ -377,8 +377,10 @@ struct FullInstanceView: View {
     }
 }
 
-/// Focus mode: one canvas tile borrows the whole window. Esc or the toolbar
-/// button hands it back — the canvas is exactly as you left it.
+/// Focus mode: one canvas tile borrows the whole window. ⌘. or the toolbar
+/// button hands it back — the canvas is exactly as you left it. The terminal
+/// eats Escape (vim and TUIs need it), so the menu command is the real exit;
+/// `.onExitCommand` only fires in the rare case nothing consumed the key.
 struct FocusView: View {
     @EnvironmentObject private var state: AppState
     let instance: TerminalInstance
@@ -396,7 +398,7 @@ struct FocusView: View {
                         Label("Back to Canvas", systemImage: "chevron.left")
                     }
                     .buttonStyle(.pressable(scale: 0.94))
-                    .help("Back to the canvas (Esc)")
+                    .help("Back to the canvas (⌘.)")
                 }
             }
             .onExitCommand { state.endFocus() }

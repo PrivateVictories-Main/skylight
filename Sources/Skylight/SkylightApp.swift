@@ -21,6 +21,10 @@ struct SkylightApp: App {
                     .keyboardShortcut("t", modifiers: [.command])
                 Button("New Canvas") { state.selection = .canvas(state.newCanvas().id) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
+                Divider()
+                Button("Back to Canvas") { state.endFocus() }
+                    .keyboardShortcut(".", modifiers: [.command])
+                    .disabled(state.focusedInstance == nil)
             }
         }
     }

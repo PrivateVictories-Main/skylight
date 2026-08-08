@@ -244,7 +244,7 @@ struct TileView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.pressable(scale: 0.8))
-            .help("Focus — fill the window (Esc returns)")
+            .help("Focus — fill the window (⌘. returns)")
             Button {
                 state.removeFromCanvas(instance.id)
             } label: {
