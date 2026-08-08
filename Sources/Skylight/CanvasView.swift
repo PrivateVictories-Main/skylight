@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import GhosttyTerminal
 import SkylightCore
 
@@ -300,5 +301,148 @@ struct TileView: View {
                         state.updateTile(updated, in: boardID)
                     }
             )
+    }
+}
+
+// MARK: - Drag-reveals-canvas
+
+/// An NSItemProvider that reports when its drag session ends — AppKit
+/// releases the provider on drop AND on cancel, so `deinit` is the one
+/// reliable end-of-session signal SwiftUI gives us.
+final class DragToken: NSItemProvider, @unchecked Sendable {
+    var onEnd: (@MainActor () -> Void)?
+
+    deinit {
+        if let onEnd { Task { @MainActor in onEnd() } }
+    }
+}
+
+/// Shown in the detail area the moment a sidebar row starts dragging: the
+/// target canvas with a live ghost of where the tile will land, plus chips
+/// for every other canvas and a new one.
+struct CanvasDropOverlay: View {
+    @EnvironmentObject private var state: AppState
+    let itemID: UUID
+    @State private var ghost: CGPoint?
+
+    private var targetBoard: CanvasBoard? {
+        if case let .canvas(id) = state.selection {
+            return state.canvases.first { $0.id == id }
+        }
+        return state.canvases.last
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                if let board = targetBoard {
+                    CanvasView(boardID: board.id)
+                        .allowsHitTesting(false)
+                } else {
+                    newCanvasSurface
+                }
+                if let ghost {
+                    let frame = ghostFrame(at: ghost, pan: targetBoard?.pan ?? .zero)
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.06))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .strokeBorder(Color.accentColor.opacity(0.7),
+                                              style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+                        )
+                        .frame(width: frame.width, height: frame.height)
+                        .offset(x: frame.minX, y: frame.minY)
+                        .allowsHitTesting(false)
+                }
+            }
+            .onDrop(of: [.text], delegate: GhostDropDelegate(
+                ghost: $ghost,
+                drop: { location in
+                    let pan = targetBoard?.pan ?? .zero
+                    state.addTile(itemID: itemID, to: targetBoard?.id,
+                                  at: CGPoint(x: location.x - pan.x, y: location.y - pan.y))
+                    state.endSidebarDrag()
+                }))
+            chipBar
+        }
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    /// Mirror of addTile's placement so the ghost never lies.
+    private func ghostFrame(at location: CGPoint, pan: CGPoint) -> CGRect {
+        let size = CanvasLayout.defaultTileSize
+        let origin = CanvasLayout.snapped(
+            CGPoint(x: location.x - pan.x - size.width / 2, y: location.y - pan.y - 24))
+        return CGRect(x: origin.x + pan.x, y: origin.y + pan.y,
+                      width: size.width, height: size.height)
+    }
+
+    private var newCanvasSurface: some View {
+        ContentUnavailableView(
+            "Drop to Create a Canvas",
+            systemImage: "square.on.square.dashed",
+            description: Text("This terminal becomes the first tile.")
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var chipBar: some View {
+        HStack(spacing: 8) {
+            ForEach(state.canvases) { board in
+                chip(board.name, active: board.id == targetBoard?.id)
+                    .dropDestination(for: String.self) { _, _ in
+                        state.addTile(itemID: itemID, to: board.id, at: nil)
+                        state.endSidebarDrag()
+                        return true
+                    }
+            }
+            chip("New Canvas", active: state.canvases.isEmpty)
+                .dropDestination(for: String.self) { _, _ in
+                    state.addTile(itemID: itemID, to: nil, at: nil)
+                    state.endSidebarDrag()
+                    return true
+                }
+            Spacer()
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.bar)
+    }
+
+    private func chip(_ title: String, active: Bool) -> some View {
+        Text(title)
+            .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 5)
+            .background(
+                Capsule().fill(active ? Color.accentColor.opacity(0.18)
+                                      : Color.primary.opacity(0.06))
+            )
+            .overlay(
+                Capsule().strokeBorder(active ? Color.accentColor.opacity(0.5)
+                                              : Color.primary.opacity(0.1))
+            )
+    }
+}
+
+/// Tracks the cursor for the ghost and performs the drop. The dragged id is
+/// threaded through AppState, so no provider decoding is needed.
+struct GhostDropDelegate: DropDelegate {
+    @Binding var ghost: CGPoint?
+    let drop: (CGPoint) -> Void
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        ghost = info.location
+        return DropProposal(operation: .move)
+    }
+
+    func dropExited(info: DropInfo) {
+        ghost = nil
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        ghost = nil
+        drop(info.location)
+        return true
     }
 }

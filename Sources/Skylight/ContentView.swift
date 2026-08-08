@@ -138,7 +138,12 @@ struct InstanceRow: View {
                 label.tag(Selection.item(instance.id))
             }
         }
-        .draggable(instance.id.uuidString)
+        .onDrag {
+            let token = DragToken(object: instance.id.uuidString as NSString)
+            token.onEnd = { AppState.shared?.endSidebarDrag() }
+            state.beginSidebarDrag(instance.id)
+            return token
+        }
         .contextMenu { menu }
         .confirmationDialog("Delete “\(instance.name)”?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) { state.deleteInstance(instance.id) }
@@ -305,6 +310,18 @@ struct DetailView: View {
     @EnvironmentObject private var state: AppState
 
     var body: some View {
+        ZStack {
+            base
+            if let dragID = state.draggingItemID {
+                CanvasDropOverlay(itemID: dragID)
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeOut(duration: 0.18), value: state.draggingItemID)
+    }
+
+    @ViewBuilder
+    private var base: some View {
         switch state.selection {
         case let .item(id):
             if let instance = state.instance(id) {

@@ -19,6 +19,9 @@ final class AppState: ObservableObject {
     @Published var attention: Set<UUID> = []
     /// Tile to center after opening a canvas from its sidebar row.
     @Published var pendingReveal: UUID?
+    /// Non-nil while a sidebar row is mid-drag; the detail area shows the
+    /// canvas drop surface for exactly that long.
+    @Published var draggingItemID: UUID?
     @Published private(set) var presets: [LaunchPreset]
     @Published private(set) var usage: UsageLog
 
@@ -255,7 +258,15 @@ final class AppState: ObservableObject {
             canvases[index].tiles.removeAll { $0.itemID == itemID }
         }
         guard let index = canvases.firstIndex(where: { $0.id == boardID }) else { return }
-        if !canvases[index].tiles.contains(where: { $0.itemID == itemID }) {
+        if let existing = canvases[index].tiles.firstIndex(where: { $0.itemID == itemID }) {
+            // Dropping on its own board repositions the tile.
+            if let point {
+                var tile = canvases[index].tiles.remove(at: existing)
+                tile.origin = CanvasLayout.snapped(
+                    CGPoint(x: point.x - tile.size.width / 2, y: point.y - 24))
+                canvases[index].tiles.append(tile)
+            }
+        } else {
             let size = CanvasLayout.defaultTileSize
             let origin = CanvasLayout.snapped(
                 point.map { CGPoint(x: $0.x - size.width / 2, y: $0.y - 24) }
@@ -297,6 +308,11 @@ final class AppState: ObservableObject {
         selection = .canvas(boardID)
         pendingReveal = itemID
     }
+
+    // MARK: - Sidebar drag session
+
+    func beginSidebarDrag(_ itemID: UUID) { draggingItemID = itemID }
+    func endSidebarDrag() { draggingItemID = nil }
 }
 
 // MARK: - Live sessions
