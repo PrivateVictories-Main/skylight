@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import SkylightCore
 
 /// Exact vector brand marks — transparent, infinitely crisp, 1:1 with the
 /// official logos. Rendered from SVG path data so they scale perfectly and
@@ -14,21 +15,21 @@ enum BrandMark {
     /// Google Gemini's official spark mark (Simple Icons, viewBox 24×24).
     static let geminiPath = "M11.04 19.32Q12 21.51 12 24q0-2.49.93-4.68.96-2.19 2.58-3.81t3.81-2.55Q21.51 12 24 12q-2.49 0-4.68-.93a12.3 12.3 0 0 1-3.81-2.58 12.3 12.3 0 0 1-2.58-3.81Q12 2.49 12 0q0 2.49-.96 4.68-.93 2.19-2.55 3.81a12.3 12.3 0 0 1-3.81 2.58Q2.49 12 0 12q2.49 0 4.68.96 2.19.93 3.81 2.55t2.55 3.81"
 
-    static func path(for provider: ChatProvider) -> String {
-        switch provider {
+    static func path(for brand: Brand) -> String {
+        switch brand {
         case .claude: claudePath
-        case .chatgpt: openAIPath
+        case .openai: openAIPath
         case .gemini: geminiPath
         }
     }
 }
 
-extension ChatProvider {
+extension Brand {
     /// The exact brand color of each mark.
     var brandColor: Color {
         switch self {
         case .claude: Color(red: 0.851, green: 0.467, blue: 0.341)   // #D97757
-        case .chatgpt: Color(red: 0.0, green: 0.0, blue: 0.0)
+        case .openai: Color(red: 0.0, green: 0.0, blue: 0.0)
         case .gemini: Color(red: 0.31, green: 0.51, blue: 0.93)      // Gemini blue
         }
     }
@@ -37,7 +38,7 @@ extension ChatProvider {
 /// Provider logo at a given size. `filled` draws the official rounded-square
 /// app-icon treatment; otherwise the bare transparent mark.
 struct BrandIcon: View {
-    let provider: ChatProvider
+    let brand: Brand
     var size: CGFloat = 18
     var filled = true
 
@@ -52,28 +53,28 @@ struct BrandIcon: View {
                         .strokeBorder(Color.primary.opacity(0.06), lineWidth: 0.5)
                 )
         } else {
-            mark(color: provider.brandColor)
+            mark(color: brand.brandColor)
                 .frame(width: size, height: size)
         }
     }
 
     private func mark(color: Color) -> some View {
-        SVGShape(pathData: BrandMark.path(for: provider), viewBox: CGSize(width: 24, height: 24))
+        SVGShape(pathData: BrandMark.path(for: brand), viewBox: CGSize(width: 24, height: 24))
             .fill(color)
     }
 
     private var background: Color {
-        switch provider {
-        case .claude: provider.brandColor
-        case .chatgpt, .gemini: Color.white
+        switch brand {
+        case .claude: brand.brandColor
+        case .openai, .gemini: Color.white
         }
     }
 
     private var markColor: Color {
-        switch provider {
+        switch brand {
         case .claude: .white
-        case .chatgpt: .black
-        case .gemini: provider.brandColor
+        case .openai: .black
+        case .gemini: brand.brandColor
         }
     }
 }

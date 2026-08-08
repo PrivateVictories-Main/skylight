@@ -2,8 +2,8 @@ import SwiftUI
 import GhosttyTerminal
 import SkylightCore
 
-/// A board of live tiles. Tiles reference sidebar items — the same chat or
-/// terminal keeps its running state whether shown here or full-window.
+/// A board of live tiles. Tiles reference sidebar instances — the same
+/// terminal keeps its running state here and full-window.
 struct CanvasView: View {
     @EnvironmentObject private var state: AppState
     let boardID: UUID
@@ -18,17 +18,19 @@ struct CanvasView: View {
                 ZStack(alignment: .topLeading) {
                     DotGrid()
                     ForEach(board?.tiles ?? []) { tile in
-                        if let item = state.item(tile.itemID) {
-                            TileView(tile: tile, item: item, boardID: boardID)
+                        if let instance = state.instance(tile.itemID) {
+                            TileView(tile: tile, instance: instance, boardID: boardID)
                         }
                     }
                 }
-                .frame(width: contentSize.width, height: contentSize.height, alignment: .topLeading)
-                // Inside the scroll view: drop locations are content coordinates,
-                // correct regardless of scroll offset.
+                .frame(width: contentSize.width, height: contentSize.height,
+                       alignment: .topLeading)
+                // Inside the scroll view: drop locations are content
+                // coordinates, correct regardless of scroll offset.
                 .dropDestination(for: String.self) { ids, location in
                     for raw in ids {
-                        guard let id = UUID(uuidString: raw), state.item(id) != nil else { continue }
+                        guard let id = UUID(uuidString: raw),
+                              state.instance(id) != nil else { continue }
                         state.addTile(itemID: id, to: boardID, at: location)
                     }
                     return true
@@ -42,7 +44,7 @@ struct CanvasView: View {
                 ContentUnavailableView(
                     "Empty Canvas",
                     systemImage: "square.on.square.dashed",
-                    description: Text("Drag chats and terminals here from the sidebar.")
+                    description: Text("Drag terminals here from the sidebar.")
                 )
                 .allowsHitTesting(false)
             }
@@ -79,10 +81,10 @@ private struct DotGrid: View {
 
 // MARK: - Tile
 
-private struct TileView: View {
+struct TileView: View {
     @EnvironmentObject private var state: AppState
     let tile: CanvasTile
-    let item: WorkspaceItem
+    let instance: TerminalInstance
     let boardID: UUID
 
     @State private var dragOffset: CGSize = .zero
@@ -93,15 +95,15 @@ private struct TileView: View {
         CGRect(
             x: tile.origin.x + dragOffset.width,
             y: tile.origin.y + dragOffset.height,
-            width: max(320, tile.size.width + resizeDelta.width),
-            height: max(220, tile.size.height + resizeDelta.height)
+            width: max(CanvasLayout.minTileSize.width, tile.size.width + resizeDelta.width),
+            height: max(CanvasLayout.minTileSize.height, tile.size.height + resizeDelta.height)
         )
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            content
+            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
         }
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -124,19 +126,19 @@ private struct TileView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            if case let .assistant(provider) = item.kind {
-                BrandIcon(provider: provider, size: 15)
+            if let brand = harnessBrand {
+                BrandIcon(brand: brand, size: 15)
             } else {
-                Image(systemName: item.symbolName)
+                Image(systemName: "terminal")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
-            Text(item.displayLabel)
+            Text(instance.name)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
             Spacer()
             Button {
-                state.removeTile(tile.id, from: boardID)
+                state.removeFromCanvas(instance.id)
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .bold))
@@ -145,7 +147,7 @@ private struct TileView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.pressable(scale: 0.8))
-            .help("Remove from canvas (keeps the item)")
+            .help("Return to a full-window terminal")
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
@@ -170,21 +172,11 @@ private struct TileView: View {
                     state.updateTile(updated, in: boardID)
                 }
         )
-        .onTapGesture(count: 2) { state.selection = .item(item.id) }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        switch item.kind {
-        case let .assistant(provider):
-            switch item.mode {
-            case .chat, .code:
-                ProviderChatView(engine: state.sessions.chatEngine(for: item, provider: provider))
-            case .web:
-                WebViewContainer(webView: state.sessions.webView(for: item, provider: provider))
-            }
-        case .terminal:
-            PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
+    private var harnessBrand: Brand? {
+        instance.spec.harness.flatMap { id in
+            Catalog.harnesses.first { $0.id == id }?.brand
         }
     }
 

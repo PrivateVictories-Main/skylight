@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import SkylightCore
 
 @main
 struct SkylightApp: App {
@@ -7,8 +8,8 @@ struct SkylightApp: App {
     @StateObject private var state = AppState()
 
     var body: some Scene {
-        // Single-window app: live terminals and webviews can't render in two
-        // hierarchies at once, and this frees ⌘N from "New Window".
+        // Single-window app: a live terminal NSView cannot render in two
+        // window hierarchies at once.
         Window("Skylight", id: "main") {
             ContentView()
                 .environmentObject(state)
@@ -16,18 +17,8 @@ struct SkylightApp: App {
         .windowStyle(.automatic)
         .commands {
             CommandGroup(after: .newItem) {
-                Button("New Claude Chat") { state.addAssistant(.claude) }
-                    .keyboardShortcut("n", modifiers: [.command])
-                Button("New ChatGPT Chat") { state.addAssistant(.chatgpt) }
-                    .keyboardShortcut("n", modifiers: [.command, .option])
-                Divider()
-                Button("New Terminal") { state.addTerminal() }
+                Button("New Terminal") { state.launch(TerminalSpec()) }
                     .keyboardShortcut("t", modifiers: [.command])
-                Button("New Claude Code Session") { state.addTerminal(.claudeCode) }
-                    .keyboardShortcut("t", modifiers: [.command, .shift])
-                Button("New Codex Session") { state.addTerminal(.codex) }
-                    .keyboardShortcut("t", modifiers: [.command, .option])
-                Divider()
                 Button("New Canvas") { state.selection = .canvas(state.newCanvas().id) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
             }
@@ -35,8 +26,8 @@ struct SkylightApp: App {
     }
 }
 
-/// Running as a SwiftPM executable (no bundle), we must promote ourselves to a
-/// regular, activatable app or no window appears.
+/// Running as a SwiftPM executable (no bundle), we must promote ourselves to
+/// a regular, activatable app or no window appears.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -46,13 +37,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         default: break
-        }
-    }
-
-    func applicationWillTerminate(_ notification: Notification) {
-        // Never orphan in-flight CLI processes (they keep burning quota).
-        MainActor.assumeIsolated {
-            AppState.shared?.sessions.stopAllEngines()
         }
     }
 }

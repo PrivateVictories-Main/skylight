@@ -1,6 +1,6 @@
 import SwiftUI
-import UniformTypeIdentifiers
 import GhosttyTerminal
+import SkylightCore
 
 struct ContentView: View {
     @EnvironmentObject private var state: AppState
@@ -20,78 +20,49 @@ struct ContentView: View {
 
 /// What the rename sheet is targeting.
 enum RenameTarget: Identifiable {
-    case item(WorkspaceItem)
+    case instance(TerminalInstance)
     case canvas(CanvasBoard)
 
     var id: UUID {
         switch self {
-        case let .item(item): item.id
+        case let .instance(instance): instance.id
         case let .canvas(board): board.id
-        }
-    }
-
-    var currentName: String {
-        switch self {
-        case let .item(item): item.displayLabel
-        case let .canvas(board): board.name
         }
     }
 }
 
 struct SidebarView: View {
     @EnvironmentObject private var state: AppState
-    @State private var showProfile = false
-    @State private var showNewPicker = false
     @State private var renameTarget: RenameTarget?
     @State private var renameDraft = ""
 
-    private var pinned: [WorkspaceItem] { state.items.filter(\.pinned) }
-    private var chats: [WorkspaceItem] { state.items.filter { $0.isChat && !$0.pinned } }
-    private var terminals: [WorkspaceItem] { state.items.filter { $0.kind == .terminal && !$0.pinned } }
-
-    private func isVisible(_ section: SidebarSection) -> Bool {
-        state.visibleSections.contains(section)
-    }
-
     var body: some View {
         List(selection: $state.selection) {
-            if isVisible(.pinned), !pinned.isEmpty {
-                Section("Pinned") {
-                    ForEach(pinned) { item in ItemRow(item: item, onRename: beginRename) }
+            Section {
+                ForEach(state.freeInstances) { instance in
+                    InstanceRow(instance: instance, onRename: beginRename)
                 }
-            }
-            if isVisible(.chats) {
-                Section("Chats") {
-                    ForEach(chats) { item in ItemRow(item: item, onRename: beginRename) }
+                if state.freeInstances.isEmpty {
+                    Text("⌘T opens a new terminal")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                 }
-            }
-            if isVisible(.terminals) {
-                Section("Terminals") {
-                    ForEach(terminals) { item in ItemRow(item: item, onRename: beginRename) }
-                }
-            }
-            if isVisible(.canvases) {
-                Section("Canvases") {
-                    ForEach(state.canvases) { board in
-                        Label(board.name, systemImage: "square.on.square.dashed")
-                            .tag(Selection.canvas(board.id))
-                            .dropDestination(for: String.self) { ids, _ in dropItems(ids, onto: board.id) }
-                            .contextMenu {
-                                Button("Rename…") {
-                                    renameDraft = board.name
-                                    renameTarget = .canvas(board)
-                                }
-                                Divider()
-                                Button("Delete Canvas", role: .destructive) {
-                                    state.deleteCanvas(board.id)
-                                }
-                            }
+            } header: {
+                // Dropping a canvas-resident row here frees it again.
+                Text("Terminals")
+                    .dropDestination(for: String.self) { ids, _ in
+                        for raw in ids {
+                            guard let id = UUID(uuidString: raw) else { continue }
+                            state.removeFromCanvas(id)
+                        }
+                        return true
                     }
-                    if state.canvases.isEmpty {
-                        Text("Drag a chat or terminal here")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                            .dropDestination(for: String.self) { ids, _ in dropItems(ids, onto: nil) }
+            }
+            ForEach(state.canvases) { board in
+                Section {
+                    CanvasRow(board: board, onRename: beginRenameCanvas)
+                    ForEach(state.residents(of: board)) { instance in
+                        InstanceRow(instance: instance, resident: true, onRename: beginRename)
                     }
                 }
             }
@@ -99,12 +70,6 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { bottomBar }
         .navigationTitle("Skylight")
-        .popover(isPresented: $showProfile, arrowEdge: .bottom) {
-            ProfileEditor().environmentObject(state)
-        }
-        .sheet(isPresented: $showNewPicker) {
-            NewItemPicker().environmentObject(state)
-        }
         .alert("Rename", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -112,7 +77,7 @@ struct SidebarView: View {
             TextField("Name", text: $renameDraft)
             Button("Rename") {
                 switch renameTarget {
-                case let .item(item): state.rename(item.id, to: renameDraft)
+                case let .instance(instance): state.rename(instance.id, to: renameDraft)
                 case let .canvas(board): state.renameCanvas(board.id, to: renameDraft)
                 case nil: break
                 }
@@ -122,27 +87,21 @@ struct SidebarView: View {
         }
     }
 
-    private func beginRename(_ item: WorkspaceItem) {
-        renameDraft = item.displayLabel
-        renameTarget = .item(item)
+    private func beginRename(_ instance: TerminalInstance) {
+        renameDraft = instance.name
+        renameTarget = .instance(instance)
+    }
+
+    private func beginRenameCanvas(_ board: CanvasBoard) {
+        renameDraft = board.name
+        renameTarget = .canvas(board)
     }
 
     private var bottomBar: some View {
-        HStack(spacing: 10) {
-            Button { showProfile = true } label: {
-                HStack(spacing: 8) {
-                    ProfileAvatar(profile: state.profile, size: 24)
-                    Text(state.profile.name)
-                        .font(.system(size: 13, weight: .medium))
-                        .lineLimit(1)
-                }
-            }
-            .buttonStyle(.pressable(scale: 0.97))
-
+        HStack {
             Spacer()
-
             Button {
-                showNewPicker = true
+                state.launch(TerminalSpec())
             } label: {
                 Image(systemName: "plus")
                     .font(.system(size: 14, weight: .semibold))
@@ -150,178 +109,157 @@ struct SidebarView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.pressable)
-            .help("New chat, terminal, or canvas")
-            .contextMenu {
-                Menu("Customize Sidebar") {
-                    ForEach(SidebarSection.allCases) { section in
-                        Toggle(isOn: Binding(
-                            get: { state.visibleSections.contains(section) },
-                            set: { _ in state.toggleSection(section) }
-                        )) {
-                            Label(section.title + (section.isLive ? "" : " (soon)"), systemImage: section.symbol)
-                        }
-                        .disabled(!section.isLive)
-                    }
-                }
-            }
+            .help("New Terminal (⌘T)")
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
         .background(.bar)
     }
-
-    private func dropItems(_ ids: [String], onto canvasID: UUID?) -> Bool {
-        var target = canvasID
-        for raw in ids {
-            guard let id = UUID(uuidString: raw), state.item(id) != nil else { continue }
-            state.addTile(itemID: id, to: target, at: nil)
-            if target == nil, case let .canvas(created)? = state.selection { target = created }
-        }
-        return true
-    }
 }
 
-// MARK: - Profile
+// MARK: - Rows
 
-struct ProfileAvatar: View {
-    let profile: UserProfile
-    var size: CGFloat = 24
-
-    private var initials: String {
-        let parts = profile.name.split(separator: " ")
-        let letters = parts.prefix(2).compactMap { $0.first }
-        return String(letters).uppercased()
-    }
-
-    var body: some View {
-        Circle()
-            .fill(Color(hex: profile.accentHex) ?? .accentColor)
-            .frame(width: size, height: size)
-            .overlay(
-                Text(initials.isEmpty ? "Y" : initials)
-                    .font(.system(size: size * 0.42, weight: .semibold))
-                    .foregroundStyle(.white)
-            )
-    }
-}
-
-struct ProfileEditor: View {
+struct InstanceRow: View {
     @EnvironmentObject private var state: AppState
-    @State private var draft = UserProfile()
-
-    private let swatches = ["#D97757", "#10A37F", "#3B82F6", "#8B5CF6", "#EF4444", "#111111"]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 12) {
-                ProfileAvatar(profile: draft, size: 44)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Your Profile").font(.headline)
-                    Text("Shown across Skylight").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-            TextField("Name", text: $draft.name)
-                .textFieldStyle(.roundedBorder)
-            HStack(spacing: 8) {
-                ForEach(swatches, id: \.self) { hex in
-                    Circle()
-                        .fill(Color(hex: hex) ?? .gray)
-                        .frame(width: 24, height: 24)
-                        .overlay(
-                            Circle().strokeBorder(Color.primary.opacity(draft.accentHex == hex ? 0.9 : 0), lineWidth: 2)
-                        )
-                        .onTapGesture { draft.accentHex = hex }
-                }
-            }
-        }
-        .padding(18)
-        .frame(width: 280)
-        .onAppear { draft = state.profile }
-        .onDisappear { state.updateProfile(draft) }
-    }
-}
-
-private struct ItemRow: View {
-    @EnvironmentObject private var state: AppState
-    let item: WorkspaceItem
-    var onRename: ((WorkspaceItem) -> Void)?
+    let instance: TerminalInstance
+    /// True when the row lives under a canvas group in the sidebar.
+    var resident = false
+    var onRename: ((TerminalInstance) -> Void)?
     @State private var confirmDelete = false
 
     var body: some View {
+        Group {
+            if resident {
+                // Resident rows open their canvas centered on the tile —
+                // they are actions, not selection targets.
+                Button { state.reveal(instance.id) } label: { label }
+                    .buttonStyle(.plain)
+            } else {
+                label.tag(Selection.item(instance.id))
+            }
+        }
+        .draggable(instance.id.uuidString)
+        .contextMenu { menu }
+        .confirmationDialog("Delete “\(instance.name)”?", isPresented: $confirmDelete) {
+            Button("Delete", role: .destructive) { state.deleteInstance(instance.id) }
+        } message: {
+            Text("The running session will end.")
+        }
+    }
+
+    private var label: some View {
         HStack(spacing: 8) {
-            if case let .assistant(provider) = item.kind {
-                BrandIcon(provider: provider, size: 18)
-            } else if let provider = item.terminalFlavor?.provider {
-                // Agent terminal: brand emblem with a small terminal badge.
-                BrandIcon(provider: provider, size: 18)
-                    .overlay(alignment: .bottomTrailing) {
-                        Image(systemName: "terminal.fill")
-                            .font(.system(size: 7, weight: .bold))
-                            .foregroundStyle(.secondary)
-                            .padding(1.5)
-                            .background(Circle().fill(.background))
-                            .offset(x: 4, y: 4)
-                    }
+            icon
+            if let terminal = state.sessions.existingTerminal(for: instance.id) {
+                TerminalRowLabel(instance: instance, terminal: terminal)
             } else {
-                Image(systemName: item.symbolName)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(iconTint)
-                    .frame(width: 18, height: 18)
+                Text(instance.name)
             }
-            if item.kind == .terminal, let terminal = state.sessions.existingTerminal(for: item.id) {
-                TerminalRowLabel(item: item, terminal: terminal)
-            } else {
-                Text(item.displayLabel)
-            }
-            if state.attention.contains(item.id) {
+            if state.attention.contains(instance.id) {
                 Spacer(minLength: 4)
                 AttentionDot()
             }
         }
         .padding(.vertical, 1)
-        .tag(Selection.item(item.id))
-        .draggable(item.id.uuidString)
-        .contextMenu {
-            Button(item.pinned ? "Unpin" : "Pin", systemImage: item.pinned ? "pin.slash" : "pin") {
-                state.togglePin(item.id)
+        .padding(.leading, resident ? 10 : 0)
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        if let brand = harnessBrand {
+            // Agent terminal: brand emblem with a small terminal badge.
+            BrandIcon(brand: brand, size: 18)
+                .overlay(alignment: .bottomTrailing) {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(1.5)
+                        .background(Circle().fill(.background))
+                        .offset(x: 4, y: 4)
+                }
+        } else {
+            Image(systemName: "terminal")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.secondary)
+                .frame(width: 18, height: 18)
+        }
+    }
+
+    private var harnessBrand: Brand? {
+        instance.spec.harness.flatMap { id in
+            Catalog.harnesses.first { $0.id == id }?.brand
+        }
+    }
+
+    @ViewBuilder
+    private var menu: some View {
+        Button("Rename…") { onRename?(instance) }
+        Divider()
+        if resident {
+            Button("Remove from Canvas") { state.removeFromCanvas(instance.id) }
+            if state.canvases.count > 1 {
+                Menu("Move to Canvas") {
+                    ForEach(state.canvases.filter { board in
+                        !board.tiles.contains { $0.itemID == instance.id }
+                    }) { board in
+                        Button(board.name) {
+                            state.addTile(itemID: instance.id, to: board.id, at: nil)
+                        }
+                    }
+                }
             }
-            Button("Rename…") { onRename?(item) }
-            Divider()
+        } else {
             Button("Add to New Canvas") {
-                state.addTile(itemID: item.id, to: nil, at: nil)
+                state.addTile(itemID: instance.id, to: nil, at: nil)
             }
             if !state.canvases.isEmpty {
                 Menu("Add to Canvas") {
                     ForEach(state.canvases) { board in
                         Button(board.name) {
-                            state.addTile(itemID: item.id, to: board.id, at: nil)
+                            state.addTile(itemID: instance.id, to: board.id, at: nil)
                         }
                     }
                 }
             }
-            Divider()
-            Button("Delete", role: .destructive) {
-                confirmDelete = true
-            }
         }
-        .confirmationDialog("Delete “\(item.displayLabel)”?", isPresented: $confirmDelete) {
-            Button("Delete", role: .destructive) { state.deleteItem(item.id) }
-        } message: {
-            Text(item.isChat ? "The conversation and its history will be removed." : "The running session will end.")
-        }
-    }
-
-    private var iconTint: Color {
-        switch item.kind {
-        case let .assistant(provider): provider.tint
-        case .terminal: .secondary
-        }
+        Divider()
+        Button("Delete", role: .destructive) { confirmDelete = true }
     }
 }
 
-/// A soft pulsing dot marking a terminal whose agent rang the bell — it's
-/// done or waiting for you — until you open it.
-private struct AttentionDot: View {
+struct CanvasRow: View {
+    @EnvironmentObject private var state: AppState
+    let board: CanvasBoard
+    let onRename: (CanvasBoard) -> Void
+    @State private var confirmDelete = false
+
+    var body: some View {
+        Label(board.name, systemImage: "square.on.square.dashed")
+            .font(.system(size: 13, weight: .semibold))
+            .tag(Selection.canvas(board.id))
+            .dropDestination(for: String.self) { ids, _ in
+                for raw in ids {
+                    guard let id = UUID(uuidString: raw) else { continue }
+                    state.addTile(itemID: id, to: board.id, at: nil)
+                }
+                return true
+            }
+            .contextMenu {
+                Button("Rename…") { onRename(board) }
+                Divider()
+                Button("Delete Canvas", role: .destructive) { confirmDelete = true }
+            }
+            .confirmationDialog("Delete “\(board.name)”?", isPresented: $confirmDelete) {
+                Button("Delete Canvas", role: .destructive) { state.deleteCanvas(board.id) }
+            } message: {
+                Text("Its terminals return to the sidebar — nothing is closed.")
+            }
+    }
+}
+
+/// A soft pulsing dot marking a terminal whose bell rang — it's done or
+/// waiting for you — until you open it.
+struct AttentionDot: View {
     @State private var pulse = false
 
     var body: some View {
@@ -338,19 +276,19 @@ private struct AttentionDot: View {
 
 /// Terminal row with a live activity caption from ghostty's reported title —
 /// glance at the sidebar and see what every session is doing.
-private struct TerminalRowLabel: View {
-    let item: WorkspaceItem
+struct TerminalRowLabel: View {
+    let instance: TerminalInstance
     @ObservedObject var terminal: TerminalViewState
 
     private var activity: String? {
         let title = terminal.title.trimmingCharacters(in: .whitespaces)
-        guard !title.isEmpty, title != item.displayLabel else { return nil }
+        guard !title.isEmpty, title != instance.name else { return nil }
         return title
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 1) {
-            Text(item.displayLabel)
+            Text(instance.name)
             if let activity {
                 Text(activity)
                     .font(.system(size: 10.5))
@@ -369,16 +307,16 @@ struct DetailView: View {
     var body: some View {
         switch state.selection {
         case let .item(id):
-            if let item = state.item(id) {
-                FullItemView(item: item)
-                    .id(item.id)
+            if let instance = state.instance(id) {
+                FullInstanceView(instance: instance)
+                    .id(id)
             } else {
                 EmptyDetail()
             }
         case let .canvas(id):
-            if let board = state.canvases.first(where: { $0.id == id }) {
-                CanvasView(boardID: board.id)
-                    .id(board.id)
+            if state.canvases.contains(where: { $0.id == id }) {
+                CanvasView(boardID: id)
+                    .id(id)
             } else {
                 EmptyDetail()
             }
@@ -388,34 +326,26 @@ struct DetailView: View {
     }
 }
 
-private struct EmptyDetail: View {
+struct EmptyDetail: View {
     var body: some View {
         ContentUnavailableView(
-            "Nothing Selected",
-            systemImage: "square.grid.2x2",
-            description: Text("Pick a chat, terminal, or canvas from the sidebar.")
+            "No Terminal Selected",
+            systemImage: "terminal",
+            description: Text("Pick a terminal or canvas from the sidebar, or press ⌘T.")
         )
     }
 }
 
-/// Full-window view of a single item — the clean, ChatGPT-app-style surface.
-struct FullItemView: View {
+/// Full-window view of a single instance.
+struct FullInstanceView: View {
     @EnvironmentObject private var state: AppState
-    let item: WorkspaceItem
+    let instance: TerminalInstance
 
     var body: some View {
-        Group {
-            switch item.kind {
-            case let .assistant(provider):
-                AssistantView(item: item, provider: provider)
-            case .terminal:
-                PersistentTerminalView(view: state.sessions.terminalHostView(for: item))
-                    .padding(6)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    .onAppear { state.sessions.deliverPendingInput(for: item) }
-            }
-        }
-        .navigationTitle(item.displayLabel)
+        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+            .padding(6)
+            .background(Color(nsColor: .textBackgroundColor))
+            .navigationTitle(instance.name)
     }
 }
 
@@ -427,69 +357,4 @@ struct PersistentTerminalView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalView { view }
     func updateNSView(_ nsView: TerminalView, context: Context) {}
-}
-
-/// One assistant, two surfaces behind a mode dropdown — Chat (the provider's
-/// full web experience, with Skylight's native history column) and Code/Codex
-/// (native CLI-backed chat). Mirrors the unified ChatGPT app's mode switcher.
-struct AssistantView: View {
-    @EnvironmentObject private var state: AppState
-    let item: WorkspaceItem
-    let provider: ChatProvider
-
-    var body: some View {
-        Group {
-            switch item.mode {
-            case .chat, .code:
-                // Both modes use our custom native chat — same composer and
-                // output rendering, differing only in which CLI/model backs it.
-                ProviderChatView(engine: state.sessions.chatEngine(for: item, provider: provider))
-            case .web:
-                WebChatDetailView(bridge: state.sessions.bridge(for: item, provider: provider))
-            }
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                if item.mode != .web {
-                    let engine = state.sessions.chatEngine(for: item, provider: provider)
-                    let others = ChatProvider.allCases.filter {
-                        $0 != provider && ProviderChatEngine.binary(for: $0) != nil
-                    }
-                    Menu {
-                        Button {
-                            state.handOff(from: item, provider: provider)
-                        } label: {
-                            Label("Continue in \(TerminalFlavor.forProvider(provider).displayName)",
-                                  systemImage: "terminal")
-                        }
-                        if !others.isEmpty {
-                            Divider()
-                            ForEach(others) { other in
-                                Button("Ask \(other.displayName) the same thing") {
-                                    state.askAnother(other, from: item, sourceProvider: provider)
-                                }
-                            }
-                        }
-                    } label: {
-                        Label("Actions", systemImage: "ellipsis.circle")
-                    }
-                    .disabled(engine.messages.isEmpty)
-                    .help("Continue this conversation in an agent, or ask another model the same question")
-                }
-            }
-            ToolbarItem(placement: .navigation) {
-                SlidingSegments(
-                    options: [
-                        (AssistantMode.chat, AssistantMode.chat.displayName(for: provider)),
-                        (AssistantMode.code, AssistantMode.code.displayName(for: provider)),
-                        (AssistantMode.web, AssistantMode.web.displayName(for: provider)),
-                    ],
-                    selection: Binding(
-                        get: { item.mode },
-                        set: { state.setMode($0, for: item.id) }
-                    )
-                )
-            }
-        }
-    }
 }

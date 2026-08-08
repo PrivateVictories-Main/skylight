@@ -1,80 +1,88 @@
 import Combine
 import Foundation
 import SwiftUI
-import WebKit
 import GhosttyTerminal
 import SkylightCore
 
+/// What the window is showing: one instance full-window, or a canvas.
+enum Selection: Hashable {
+    case item(UUID)
+    case canvas(UUID)
+}
+
 @MainActor
 final class AppState: ObservableObject {
-    @Published var items: [WorkspaceItem]
+    @Published var instances: [TerminalInstance]
     @Published var canvases: [CanvasBoard]
     @Published var selection: Selection?
-    @Published var visibleSections: Set<SidebarSection>
-    @Published var profile: UserProfile
-    /// Terminal items whose agent has rung the bell (finished / wants input)
-    /// since they were last viewed.
+    /// Instances whose terminal rang the bell while not being viewed.
     @Published var attention: Set<UUID> = []
+    /// Tile to center after opening a canvas from its sidebar row.
+    @Published var pendingReveal: UUID?
+    @Published private(set) var presets: [LaunchPreset]
+    @Published private(set) var usage: UsageLog
 
     let sessions = LiveSessionStore()
 
-    private static var stateURL: URL {
+    static weak var shared: AppState?
+    private var observers: Set<AnyCancellable> = []
+
+    private static let supportDir: URL = {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Skylight", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("workspace.json")
-    }
-
-    static weak var shared: AppState?
+        return dir
+    }()
+    private static var stateURL: URL { supportDir.appendingPathComponent("workspace.json") }
+    private static var presetsURL: URL { supportDir.appendingPathComponent("presets.json") }
+    private static var usageURL: URL { supportDir.appendingPathComponent("usage.json") }
 
     init() {
-        // A corrupt/incompatible workspace must never be silently clobbered:
-        // keep it as .bak so nothing is lost.
-        if let data = try? Data(contentsOf: Self.stateURL),
-           (try? JSONDecoder().decode(SavedState.self, from: data)) == nil {
-            try? FileManager.default.removeItem(at: Self.stateURL.appendingPathExtension("bak"))
-            try? FileManager.default.moveItem(
-                at: Self.stateURL,
-                to: Self.stateURL.appendingPathExtension("bak")
-            )
+        var saved: SavedState?
+        if let data = try? Data(contentsOf: Self.stateURL) {
+            saved = WorkspacePersistence.decode(data)
+            if saved == nil {
+                // Unreadable state is kept as .bak, never clobbered.
+                try? FileManager.default.removeItem(at: Self.stateURL.appendingPathExtension("bak"))
+                try? FileManager.default.moveItem(
+                    at: Self.stateURL,
+                    to: Self.stateURL.appendingPathExtension("bak"))
+            }
         }
-        if let data = try? Data(contentsOf: Self.stateURL),
-           let saved = try? JSONDecoder().decode(SavedState.self, from: data) {
-            items = saved.items
+
+        if let saved {
+            instances = saved.instances
             canvases = saved.canvases
-            visibleSections = saved.visibleSections ?? SidebarSection.defaultVisible
-            profile = saved.profile ?? UserProfile()
+            if let id = saved.selectedInstance, saved.instances.contains(where: { $0.id == id }) {
+                selection = .item(id)
+            } else if let id = saved.selectedCanvas,
+                      saved.canvases.contains(where: { $0.id == id }) {
+                selection = .canvas(id)
+            }
         } else {
-            let claude = WorkspaceItem(kind: .assistant(.claude), name: "Claude")
-            let chatgpt = WorkspaceItem(kind: .assistant(.chatgpt), name: "ChatGPT")
-            let term = WorkspaceItem(kind: .terminal, name: "Terminal 1")
-            items = [claude, chatgpt, term]
+            let first = TerminalInstance(name: "Terminal")
+            instances = [first]
             canvases = []
-            visibleSections = SidebarSection.defaultVisible
-            profile = UserProfile()
-        }
-        // Restore last selection; fall back to the first item.
-        let saved = (try? Data(contentsOf: Self.stateURL))
-            .flatMap { try? JSONDecoder().decode(SavedState.self, from: $0) }
-        if let id = saved?.selectedItem, items.contains(where: { $0.id == id }) {
-            selection = .item(id)
-        } else if let id = saved?.selectedCanvas, canvases.contains(where: { $0.id == id }) {
-            selection = .canvas(id)
-        } else if let first = items.first {
             selection = .item(first.id)
         }
-        sessions.renameChat = { [weak self] id, title in self?.setTitle(title, for: id) }
-        sessions.renameRefined = { [weak self] id, title in self?.setTitle(title, for: id, refine: true) }
+        presets = (try? Data(contentsOf: Self.presetsURL))
+            .flatMap { try? JSONDecoder().decode([LaunchPreset].self, from: $0) } ?? []
+        usage = (try? Data(contentsOf: Self.usageURL))
+            .flatMap { try? JSONDecoder().decode(UsageLog.self, from: $0) } ?? UsageLog()
+
+        // Every stored property is initialized before `self` is read.
+        if selection == nil { selection = instances.first.map { .item($0.id) } }
+
         sessions.onBell = { [weak self] id in
             guard let self, self.selection != .item(id) else { return }
             self.attention.insert(id)
         }
         Self.shared = self
-        // Save selection as it changes (cheap: whole-state persist).
+
         $selection
             .dropFirst()
             .sink { [weak self] selection in
-                // Viewing a terminal clears its pending attention.
+                // Viewing an instance clears its pending attention.
                 if case let .item(id)? = selection { self?.attention.remove(id) }
             }
             .store(in: &observers)
@@ -85,170 +93,95 @@ final class AppState: ObservableObject {
             .store(in: &observers)
     }
 
-    private var observers: Set<AnyCancellable> = []
-
-    private struct SavedState: Codable {
-        var items: [WorkspaceItem]
-        var canvases: [CanvasBoard]
-        var visibleSections: Set<SidebarSection>?
-        var profile: UserProfile?
-        var selectedItem: UUID?
-        var selectedCanvas: UUID?
-    }
+    // MARK: - Persistence
 
     func persist() {
-        var selectedItem: UUID?
+        var selectedInstance: UUID?
         var selectedCanvas: UUID?
         switch selection {
-        case let .item(id): selectedItem = id
+        case let .item(id): selectedInstance = id
         case let .canvas(id): selectedCanvas = id
         case nil: break
         }
-        let saved = SavedState(items: items, canvases: canvases,
-                               visibleSections: visibleSections, profile: profile,
-                               selectedItem: selectedItem, selectedCanvas: selectedCanvas)
-        if let data = try? JSONEncoder().encode(saved) {
+        let state = SavedState(instances: instances, canvases: canvases,
+                               selectedInstance: selectedInstance,
+                               selectedCanvas: selectedCanvas)
+        if let data = WorkspacePersistence.encode(state) {
             try? data.write(to: Self.stateURL, options: .atomic)
         }
     }
 
-    // MARK: - Customization
-
-    func toggleSection(_ section: SidebarSection) {
-        if visibleSections.contains(section) { visibleSections.remove(section) }
-        else { visibleSections.insert(section) }
-        persist()
-    }
-
-    func togglePin(_ itemID: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
-        items[index].pinned.toggle()
-        persist()
-    }
-
-    func updateProfile(_ profile: UserProfile) {
-        self.profile = profile
-        persist()
-    }
-
-    /// Set the auto-derived title for a chat. `refine` overwrites the initial
-    /// truncated title with a model-written summary.
-    func setTitle(_ title: String, for itemID: UUID, refine: Bool = false) {
-        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
-        // Never clobber a name the user typed themselves.
-        if items[index].titleIsManual == true { return }
-        guard refine || items[index].title == nil else { return }
-        items[index].title = title
-        persist()
-    }
-
-    func rename(_ itemID: UUID, to newName: String) {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let index = items.firstIndex(where: { $0.id == itemID }) else { return }
-        if items[index].isChat {
-            items[index].title = trimmed
-            items[index].titleIsManual = true
-        } else {
-            items[index].name = trimmed
+    private func persistUsage() {
+        if let data = try? JSONEncoder().encode(usage) {
+            try? data.write(to: Self.usageURL, options: .atomic)
         }
+    }
+
+    // MARK: - Lookup
+
+    func instance(_ id: UUID) -> TerminalInstance? {
+        instances.first { $0.id == id }
+    }
+
+    var freeInstances: [TerminalInstance] {
+        Residency.free(instances, boards: canvases)
+    }
+
+    func residents(of board: CanvasBoard) -> [TerminalInstance] {
+        Residency.residents(of: board, from: instances)
+    }
+
+    // MARK: - Instances
+
+    /// Launch a terminal from a spec — the single entry point shortcuts,
+    /// presets, and the New sheet all use. Records the combo locally so the
+    /// most-used launch can become a one-click recommendation.
+    func launch(_ spec: TerminalSpec, name: String? = nil) {
+        let base = name ?? Self.defaultName(for: spec)
+        let siblings = instances.filter {
+            $0.name == base || $0.name.hasPrefix("\(base) ")
+        }.count
+        let instance = TerminalInstance(
+            name: siblings == 0 ? base : "\(base) \(siblings + 1)", spec: spec)
+        instances.append(instance)
+        selection = .item(instance.id)
+        usage.record(spec)
+        persistUsage()
         persist()
     }
 
-    func renameCanvas(_ canvasID: UUID, to newName: String) {
+    static func defaultName(for spec: TerminalSpec) -> String {
+        if let harness = spec.harness {
+            return Catalog.harnesses.first { $0.id == harness }?.displayName ?? harness
+        }
+        if let shell = spec.shellPath { return (shell as NSString).lastPathComponent }
+        return "Terminal"
+    }
+
+    func rename(_ id: UUID, to newName: String) {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
-        canvases[index].name = trimmed
+        guard !trimmed.isEmpty,
+              let index = instances.firstIndex(where: { $0.id == id }) else { return }
+        instances[index].name = trimmed
         persist()
     }
 
-    func deleteItem(_ itemID: UUID) {
-        items.removeAll { $0.id == itemID }
+    func deleteInstance(_ id: UUID) {
+        instances.removeAll { $0.id == id }
         for index in canvases.indices {
-            canvases[index].tiles.removeAll { $0.itemID == itemID }
+            canvases[index].tiles.removeAll { $0.itemID == id }
         }
-        sessions.discard(itemID)
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Skylight", isDirectory: true)
-        try? FileManager.default.removeItem(at: support.appendingPathComponent("chats/\(itemID.uuidString).json"))
-        try? FileManager.default.removeItem(at: support.appendingPathComponent("webhistory/\(itemID.uuidString).json"))
-        if case let .item(selected)? = selection, selected == itemID {
-            selection = items.first.map { .item($0.id) }
+        sessions.discard(id)
+        attention.remove(id)
+        if case let .item(selected)? = selection, selected == id {
+            selection = instances.first.map { .item($0.id) }
         }
         persist()
     }
 
-    func deleteCanvas(_ canvasID: UUID) {
-        canvases.removeAll { $0.id == canvasID }
-        if case let .canvas(selected)? = selection, selected == canvasID {
-            selection = items.first.map { .item($0.id) }
-        }
-        persist()
-    }
+    // MARK: - Canvases
 
-    func item(_ id: UUID) -> WorkspaceItem? {
-        items.first { $0.id == id }
-    }
-
-    // MARK: - Mutations
-
-    /// The chat → agent handoff: spin up the matching agent terminal and queue
-    /// the conversation context to be typed into it once the CLI boots.
-    func handOff(from item: WorkspaceItem, provider: ChatProvider) {
-        let flavor: TerminalFlavor = switch provider {
-        case .claude: .claudeCode
-        case .chatgpt: .codex
-        case .gemini: .gemini
-        }
-        let engine = sessions.chatEngine(for: item, provider: provider)
-        let context = engine.handoffContext()
-        let title = item.title.map { String($0.prefix(24)) } ?? "chat"
-        let terminal = WorkspaceItem(kind: .terminal, name: "\(flavor.displayName) — \(title)",
-                                     terminalFlavor: flavor)
-        items.append(terminal)
-        sessions.pendingInput[terminal.id] = context
-        selection = .item(terminal.id)
-        persist()
-    }
-
-    /// New compare item: one child conversation per installed provider.
-    func addTerminal(_ flavor: TerminalFlavor = .shell, directory: String? = nil) {
-        let siblings = items.filter { $0.kind == .terminal && ($0.terminalFlavor ?? .shell) == flavor }.count
-        let base = flavor.displayName
-        let name = siblings == 0 ? base : "\(base) \(siblings + 1)"
-        let item = WorkspaceItem(kind: .terminal, name: name,
-                                 terminalFlavor: flavor, workingDirectory: directory)
-        items.append(item)
-        selection = .item(item.id)
-        persist()
-    }
-
-    /// Opt-in second opinion: open a fresh chat with another provider, seeded
-    /// with this conversation's latest user prompt. Only when you ask for it.
-    func askAnother(_ provider: ChatProvider, from item: WorkspaceItem, sourceProvider: ChatProvider) {
-        let sourceEngine = sessions.chatEngine(for: item, provider: sourceProvider)
-        guard let lastPrompt = sourceEngine.messages.last(where: { $0.role == .user })?.text else { return }
-        let new = WorkspaceItem(kind: .assistant(provider), name: provider.displayName)
-        items.append(new)
-        selection = .item(new.id)
-        persist()
-        sessions.chatEngine(for: new, provider: provider).send(lastPrompt, attachments: [])
-    }
-
-    func addAssistant(_ provider: ChatProvider) {
-        let count = items.filter { $0.kind == .assistant(provider) }.count
-        let name = count == 0 ? provider.displayName : "\(provider.displayName) \(count + 1)"
-        let item = WorkspaceItem(kind: .assistant(provider), name: name)
-        items.append(item)
-        selection = .item(item.id)
-        persist()
-    }
-
-    func setMode(_ mode: AssistantMode, for itemID: UUID) {
-        guard let index = items.firstIndex(where: { $0.id == itemID }) else { return }
-        items[index].mode = mode
-        persist()
-    }
-
+    @discardableResult
     func newCanvas() -> CanvasBoard {
         let board = CanvasBoard(name: "Canvas \(canvases.count + 1)")
         canvases.append(board)
@@ -256,32 +189,55 @@ final class AppState: ObservableObject {
         return board
     }
 
-    /// Drop an existing sidebar item onto a canvas (creating the canvas if needed).
-    func addTile(itemID: UUID, to canvasID: UUID?, at point: CGPoint?) {
-        let boardID: UUID
-        if let canvasID, canvases.contains(where: { $0.id == canvasID }) {
-            boardID = canvasID
-        } else {
-            boardID = newCanvas().id
-        }
-        guard let index = canvases.firstIndex(where: { $0.id == boardID }) else { return }
-
-        // Reference model: the same item may appear on one canvas once.
-        guard !canvases[index].tiles.contains(where: { $0.itemID == itemID }) else {
-            selection = .canvas(boardID)
-            return
-        }
-        let defaultSize = CGSize(width: 560, height: 400)
-        let origin = CanvasLayout.snapped(point.map { CGPoint(x: $0.x - defaultSize.width / 2, y: $0.y - 24) }
-            ?? CanvasLayout.staggeredOrigin(existing: canvases[index].tiles.count))
-        canvases[index].tiles.append(CanvasTile(itemID: itemID, origin: origin, size: defaultSize))
-        selection = .canvas(boardID)
+    func renameCanvas(_ id: UUID, to newName: String) {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let index = canvases.firstIndex(where: { $0.id == id }) else { return }
+        canvases[index].name = trimmed
         persist()
     }
 
-    func removeTile(_ tileID: UUID, from canvasID: UUID) {
-        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
-        canvases[index].tiles.removeAll { $0.id == tileID }
+    /// The board goes; its terminals return to the sidebar untouched.
+    func deleteCanvas(_ id: UUID) {
+        canvases.removeAll { $0.id == id }
+        if case let .canvas(selected)? = selection, selected == id {
+            selection = instances.first.map { .item($0.id) }
+        }
+        persist()
+    }
+
+    // MARK: - Tiles
+
+    /// Place an instance on a board — moving it off any other board first.
+    /// An instance lives in exactly one place; the sidebar mirrors that truth.
+    func addTile(itemID: UUID, to canvasID: UUID?, at point: CGPoint?) {
+        guard instance(itemID) != nil else { return }
+        let boardID = canvasID.flatMap { id in
+            canvases.contains { $0.id == id } ? id : nil
+        } ?? newCanvas().id
+        for index in canvases.indices where canvases[index].id != boardID {
+            canvases[index].tiles.removeAll { $0.itemID == itemID }
+        }
+        guard let index = canvases.firstIndex(where: { $0.id == boardID }) else { return }
+        if !canvases[index].tiles.contains(where: { $0.itemID == itemID }) {
+            let size = CanvasLayout.defaultTileSize
+            let origin = CanvasLayout.snapped(
+                point.map { CGPoint(x: $0.x - size.width / 2, y: $0.y - 24) }
+                    ?? CanvasLayout.staggeredOrigin(existing: canvases[index].tiles.count))
+            canvases[index].tiles.append(
+                CanvasTile(itemID: itemID, origin: origin, size: size))
+        }
+        selection = .canvas(boardID)
+        pendingReveal = itemID
+        persist()
+    }
+
+    /// Take an instance off its board: it is a full-window terminal again.
+    func removeFromCanvas(_ itemID: UUID) {
+        for index in canvases.indices {
+            canvases[index].tiles.removeAll { $0.itemID == itemID }
+        }
+        selection = .item(itemID)
         persist()
     }
 
@@ -294,142 +250,94 @@ final class AppState: ObservableObject {
         canvases[boardIndex].tiles.append(tile)
         persist()
     }
+
+    /// Open whatever an instance's sidebar row points at: its canvas,
+    /// centered on its tile — or itself full-window when it lives free.
+    func reveal(_ itemID: UUID) {
+        guard let boardID = Residency.board(of: itemID, in: canvases) else {
+            selection = .item(itemID)
+            return
+        }
+        selection = .canvas(boardID)
+        pendingReveal = itemID
+    }
 }
 
 // MARK: - Live sessions
 
-/// Keeps terminal surfaces and web views alive independent of SwiftUI view churn,
-/// so an item shows the same running state full-window, on a canvas, or after
-/// navigating away and back.
+/// Keeps each instance's terminal NSView (and thus its ghostty surface and
+/// shell/CLI process) alive independent of SwiftUI view churn: the same
+/// running session shows full-window, on a canvas, and after navigating
+/// away and back. SwiftUI only ever reparents these views.
 @MainActor
 final class LiveSessionStore {
     private var terminals: [UUID: TerminalViewState] = [:]
-    private var bridges: [UUID: WebChatBridge] = [:]
-    private var chatEngines: [UUID: ProviderChatEngine] = [:]
-
-    func bridge(for item: WorkspaceItem, provider: ChatProvider) -> WebChatBridge {
-        if let existing = bridges[item.id] { return existing }
-        let bridge = WebChatBridge(provider: provider, itemID: item.id)
-        bridges[item.id] = bridge
-        return bridge
-    }
-
-    /// Set by AppState so a chat can rename its sidebar item from the first message.
-    var renameChat: ((UUID, String) -> Void)?
-    /// Model-refined title, overwrites the truncated one.
-    var renameRefined: ((UUID, String) -> Void)?
-    /// Fired when a terminal rings the bell (agent done / needs input).
-    var onBell: ((UUID) -> Void)?
-    private var bellObservers: [UUID: AnyCancellable] = [:]
-    /// Text queued to be typed into a terminal once its CLI has booted
-    /// (chat → agent handoff). Not submitted — the user reviews and hits Enter.
-    var pendingInput: [UUID: String] = [:]
-    private var deliveryInFlight: Set<UUID> = []
-    /// One long-lived native terminal view per item: the ghostty surface (and
-    /// its shell/CLI process) belongs to the NSView, so the view must survive
-    /// SwiftUI navigation. AppTerminalView reattaches cleanly by design.
     private var terminalNSViews: [UUID: TerminalView] = [:]
+    private var bellObservers: [UUID: AnyCancellable] = [:]
 
-    func terminalHostView(for item: WorkspaceItem) -> TerminalView {
-        if let existing = terminalNSViews[item.id] { return existing }
-        let state = terminal(for: item)
+    /// Fired when a terminal rings the bell (a CLI is done / needs input).
+    var onBell: ((UUID) -> Void)?
+
+    func terminalHostView(for instance: TerminalInstance) -> TerminalView {
+        if let existing = terminalNSViews[instance.id] { return existing }
+        let state = terminal(for: instance)
         let view = TerminalView(frame: .zero)
         view.delegate = state
         view.controller = state.controller
         view.configuration = state.configuration
-        terminalNSViews[item.id] = view
+        terminalNSViews[instance.id] = view
         return view
     }
 
-    /// Deliver queued handoff text once the terminal can actually accept it,
-    /// retrying until the surface is attached (a fixed timer raced navigation
-    /// and silently dropped the context).
-    func deliverPendingInput(for item: WorkspaceItem) {
-        guard pendingInput[item.id] != nil, !deliveryInFlight.contains(item.id) else { return }
-        deliveryInFlight.insert(item.id)
-        let state = terminal(for: item)
-        Task { @MainActor [weak self] in
-            defer { self?.deliveryInFlight.remove(item.id) }
-            try? await Task.sleep(for: .seconds(3.5))   // let the CLI boot
-            for _ in 0 ..< 30 {
-                guard let self, let text = self.pendingInput[item.id] else { return }
-                if state.send(text) {
-                    self.pendingInput.removeValue(forKey: item.id)
-                    return
-                }
-                try? await Task.sleep(for: .seconds(1))
-            }
-        }
+    /// Non-creating: nil until the terminal has actually been opened once.
+    /// Sidebar rows use this so rendering a row never spawns a process.
+    func existingTerminal(for id: UUID) -> TerminalViewState? {
+        terminals[id]
     }
 
-    /// Tear down live state for a deleted item.
-    func discard(_ itemID: UUID) {
-        if let engine = chatEngines.removeValue(forKey: itemID) {
-            engine.discarded = true   // late termination must not re-save the transcript
-            engine.stop()
-        }
-        terminals.removeValue(forKey: itemID)
-        terminalNSViews.removeValue(forKey: itemID)   // frees the surface, ends the process
-        bellObservers.removeValue(forKey: itemID)
-        bridges.removeValue(forKey: itemID)
-        pendingInput.removeValue(forKey: itemID)
-    }
-
-    /// App quit: terminate every in-flight CLI so nothing is orphaned.
-    func stopAllEngines() {
-        for engine in chatEngines.values { engine.stop() }
-    }
-
-    /// Engine for one column of a compare item, keyed by the child id so each
-    /// provider keeps its own transcript and session.
-    func chatEngine(for item: WorkspaceItem, provider: ChatProvider) -> ProviderChatEngine {
-        if let existing = chatEngines[item.id] { return existing }
-        let engine = ProviderChatEngine(provider: provider, itemID: item.id)
-        engine.onTitle = { [weak self] title in self?.renameChat?(item.id, title) }
-        engine.onTitleRefined = { [weak self] title in self?.renameRefined?(item.id, title) }
-        // Backfill a title for a chat that already has history but no title yet.
-        if item.title == nil, let firstUser = engine.messages.first(where: { $0.role == .user }) {
-            renameChat?(item.id, ProviderChatEngine.deriveTitle(from: firstUser.text, attachments: firstUser.attachments))
-        }
-        chatEngines[item.id] = engine
-        return engine
-    }
-
-    /// Non-creating: nil until the terminal has actually been opened.
-    func existingTerminal(for itemID: UUID) -> TerminalViewState? {
-        terminals[itemID]
-    }
-
-    func terminal(for item: WorkspaceItem) -> TerminalViewState {
-        if let existing = terminals[item.id] { return existing }
+    func terminal(for instance: TerminalInstance) -> TerminalViewState {
+        if let existing = terminals[instance.id] { return existing }
         let state: TerminalViewState
-        let flavor = item.terminalFlavor ?? .shell
-        if let command = flavor.command, let binary = Self.resolveBinary(command) {
+        if let harness = instance.spec.harness, let binary = Self.resolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
-            state = TerminalViewState(configSource: .generated("command = \(binary)\n"))
+            let command = ([binary] + instance.spec.arguments).joined(separator: " ")
+            state = TerminalViewState(configSource: .generated("command = \(command)\n"))
+        } else if let shell = instance.spec.shellPath,
+                  FileManager.default.isExecutableFile(atPath: shell) {
+            // A shell that vanished since the spec was saved falls back to the
+            // login shell (the default branch); the banner says so (Task 9).
+            state = TerminalViewState(configSource: .generated("command = \(shell)\n"))
         } else {
             state = TerminalViewState()
         }
         state.configuration = TerminalSurfaceOptions(
             backend: .exec,
-            workingDirectory: item.workingDirectory ?? FileManager.default.homeDirectoryForCurrentUser.path
+            workingDirectory: instance.spec.workingDirectory
+                ?? FileManager.default.homeDirectoryForCurrentUser.path
         )
-        terminals[item.id] = state
+        terminals[instance.id] = state
         // The terminal bell is how agent CLIs signal "done / needs input".
-        let itemID = item.id
-        bellObservers[itemID] = state.$bellCount
+        let id = instance.id
+        bellObservers[id] = state.$bellCount
             .dropFirst()
-            .sink { [weak self] _ in self?.onBell?(itemID) }
+            .sink { [weak self] _ in self?.onBell?(id) }
         return state
     }
 
-    nonisolated static func resolveBinary(_ name: String) -> String? {
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        let candidates = ["\(home)/.local/bin/\(name)", "/usr/local/bin/\(name)", "/opt/homebrew/bin/\(name)"]
-        return candidates.first { FileManager.default.isExecutableFile(atPath: $0) }
+    /// Tear down live state for a deleted instance (frees the surface, ends
+    /// the process).
+    func discard(_ id: UUID) {
+        terminals.removeValue(forKey: id)
+        terminalNSViews.removeValue(forKey: id)
+        bellObservers.removeValue(forKey: id)
     }
 
-    func webView(for item: WorkspaceItem, provider: ChatProvider) -> WKWebView {
-        bridge(for: item, provider: provider).webView
+    static func resolveHarness(_ name: String) -> String? {
+        Catalog.resolve(
+            name,
+            pathVariable: ProcessInfo.processInfo.environment["PATH"],
+            home: FileManager.default.homeDirectoryForCurrentUser.path,
+            isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }
+        )
     }
 }
