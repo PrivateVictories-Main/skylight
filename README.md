@@ -1,18 +1,46 @@
-# Skylight (working name)
+# Skylight
 
-A macOS-native AI workspace: your Claude, ChatGPT, and Gemini subscriptions, real Ghostty terminals, and interactive agent sessions — one app, styled after the unified ChatGPT/Codex desktop app, with a canvas where everything becomes draggable live tiles.
+A macOS-native terminal canvas. Terminal instances live in a left sidebar;
+drag one and the window becomes an endless canvas where terminals are live,
+draggable, resizable tiles. Swift + SwiftUI, with real Ghostty terminals.
 
-**Chatting never goes through the web.** Native chat drives each vendor's own CLI (Claude Code, Codex, Gemini CLI) on your existing subscription — no API keys, no reverse engineering. The web surface exists only as an optional history view.
+## What it does
 
-## What works today
+- **Real terminals** — GhosttyKit surfaces running your actual shell (zsh,
+  bash, fish — whatever `/etc/shells` offers).
+- **Endless canvases** — as many boards as you like; pan forever; every tile
+  is a live session. Layout and pan position persist and restore instantly.
+- **Drag-reveals-canvas** — start dragging a sidebar row and the canvas
+  appears with a live ghost of where the tile will land. Drop it there; drag
+  it back out and it's a full-window terminal again. A session survives every
+  move.
+- **Focus mode** — expand any tile to the full window; ⌘. puts it back with
+  the canvas exactly as it was. (Escape belongs to the terminal — vim and
+  TUIs need it — so the exit is a real menu command.)
+- **Agent terminals** — a terminal can launch an agent CLI (Claude Code,
+  Codex, Gemini CLI, OpenCode) on your existing subscription. Skylight
+  detects what's installed and never fakes what isn't.
+- **A New sheet that learns** — shell → mode → harness in one tiered sheet;
+  your most-used combo becomes a one-click row; save any combo as a named
+  preset for one-button launches.
+- **Attention badges** — a background terminal that rings its bell gets a
+  pulsing sidebar dot until you look.
 
-- **Unified assistants** — one sidebar item per provider with a sliding Chat / Code / Web mode switcher
-- **Native chat** — custom composer (attachments via picker or drag-drop), streamed replies, markdown + code blocks with copy, starter suggestions, auto-titles refined by a background model call
-- **Models & effort** — only the newest generation + one previous per provider (ChatGPT list reads Codex's live model cache); reasoning effort as a draggable snapping slider, bounds adapting per model (Claude: low→max via `--effort`; GPT 5.6 Sol/Terra reach ultra)
-- **Real terminals** — GhosttyKit surfaces; plain zsh or agent sessions (Claude Code / Codex / Gemini CLI) with live activity captions in the sidebar
-- **Chat → agent handoff** — one button turns a conversation into a live agent session with context carried over (typed in, not auto-submitted)
-- **Canvas** — Freeform-style boards of draggable, resizable, snapping live tiles (chats, terminals, web); tiles lift and spring while grabbed
-- **ChatGPT-app-grade shell** — customizable sidebar (pin, rename, delete-with-confirm, show/hide sections), profile chip, new-item picker with brand tiles + install states, keyboard shortcuts, dark mode, generated app icon
+## What it deliberately isn't
+
+- No chat UI, no web views, no API keys, no network calls, no telemetry.
+  The launch statistics behind recommendations are one local JSON file.
+- One terminal engine: Ghostty, embedded via GhosttyKit. kitty and iTerm are
+  apps, not libraries — Skylight won't pretend to embed them.
+- No zoom (v1): scaling a live terminal blurs glyphs and breaks hit-testing.
+  Pan is endless and exact instead.
+
+## Keyboard
+
+- **⌘T** — New Terminal… (the tiered sheet)
+- **⇧⌘T** — new shell terminal, launched instantly
+- **⇧⌘N** — new canvas
+- **⌘.** — back to canvas (leave focus mode)
 
 ## Build & run
 
@@ -20,14 +48,19 @@ A macOS-native AI workspace: your Claude, ChatGPT, and Gemini subscriptions, rea
 ./scripts/make-app.sh && open build/Skylight.app
 ```
 
-Requires the vendor CLIs for native chat: `claude` (installed), `codex` (installed), `gemini` (`npm i -g @google/gemini-cli`).
+macOS 14+, Swift 6 toolchain. Debug appearance override:
+`SKYLIGHT_APPEARANCE=dark ./build/Skylight.app/Contents/MacOS/Skylight`
 
-Debug appearance: `SKYLIGHT_APPEARANCE=dark ./build/Skylight.app/Contents/MacOS/Skylight`
+## Architecture
 
-## Next
+Two targets, tests on the pure part:
 
-- Handoff timing hardening (detect CLI prompt-readiness before injecting)
-- Agent attention badges (waiting-for-input notifications)
-- Terminal session persistence across relaunch (zmx-style)
-- Ask-everyone: one prompt fanned to all providers as canvas tiles
-- Projects: group chats + agents + canvas per repo/working directory
+- **SkylightCore** — models, layout math, shell/harness detection,
+  recommendations, persistence + migration. No UI imports; unit-tested
+  (`swift test`).
+- **Skylight** — the SwiftUI app: `AppState` + `LiveSessionStore` (sessions
+  outlive view churn), sidebar / canvas / sheet views.
+
+The invariant everything obeys: **a running session survives every
+transition** — full-window ↔ canvas ↔ other canvas ↔ focus.
+`LiveSessionStore` owns each terminal NSView; SwiftUI only reparents it.
