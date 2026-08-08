@@ -72,7 +72,7 @@ struct CanvasView: View {
             }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
         .navigationTitle(board?.name ?? "Canvas")
         .overlay {
             if board?.tiles.isEmpty ?? true {

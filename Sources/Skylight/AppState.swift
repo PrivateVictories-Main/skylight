@@ -423,9 +423,16 @@ final class LiveSessionStore {
 
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
-        // Glass: a whisper of translucency so the canvas breathes through —
-        // never below 0.9, readability beats effect (spec Addendum A1).
-        var config = "background-opacity = 0.92\n"
+        // Glass + breathing room: translucency plus balanced inner padding so
+        // no row — least of all an agent's bottom status line — ever clips
+        // against the rounded chrome.
+        var config = """
+        background-opacity = 0.92
+        window-padding-x = 10
+        window-padding-y = 10
+        window-padding-balance = true
+
+        """
         if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
             let command = ([binary] + instance.spec.arguments).joined(separator: " ")

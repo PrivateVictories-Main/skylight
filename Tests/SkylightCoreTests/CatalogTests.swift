@@ -47,6 +47,9 @@ final class CatalogTests: XCTestCase {
         XCTAssertEqual(Catalog.harnesses.map(\.id),
                        ["claude", "codex", "gemini", "copilot", "cursor-agent",
                         "qwen", "amp", "opencode"])
+        XCTAssertEqual(Catalog.harnesses.map(\.brand),
+                       [.claudeCode, .openai, .gemini, .copilot, .cursor,
+                        .qwen, .amp, .opencode])
         XCTAssertEqual(Catalog.harnesses.first?.brand, .claudeCode)
         // Install commands are user-visible promises — pin them all.
         XCTAssertEqual(Catalog.harnesses.map(\.installCommand), [

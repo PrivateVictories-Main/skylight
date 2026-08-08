@@ -14,7 +14,7 @@ struct SkylightApp: App {
             ContentView()
                 .environmentObject(state)
         }
-        .windowStyle(.automatic)
+        .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(after: .newItem) {
                 Button("New Terminal…") { state.newSheetShown = true }

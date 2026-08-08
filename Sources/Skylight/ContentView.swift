@@ -13,6 +13,7 @@ struct ContentView: View {
             DetailView()
         }
         .frame(minWidth: 1080, minHeight: 700)
+        .background(WindowBlur().ignoresSafeArea())
         // Owned by the split view, not the sidebar: a collapsed sidebar must
         // never strand ⌘T with nowhere to present.
         .sheet(isPresented: $state.newSheetShown) {
@@ -106,16 +107,24 @@ struct SidebarView: View {
 
     private var bottomBar: some View {
         HStack {
-            Spacer()
             Button {
                 state.newSheetShown = true
             } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 14, weight: .semibold))
-                    .frame(width: 24, height: 24)
+                Label("New", systemImage: "plus")
+                    .font(.system(size: 13, weight: .semibold))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 30)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.pressable)
+            .buttonStyle(.pressable(scale: 0.97))
+            .background(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .fill(Color.accentColor.opacity(0.14))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.3))
+            )
             .help("New Terminal (⌘T)")
         }
         .padding(.horizontal, 14)
@@ -392,8 +401,9 @@ struct FullInstanceView: View {
                     )
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(10)
-            .navigationTitle(instance.name)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+            .padding(.top, 4)
     }
 }
 
@@ -421,8 +431,9 @@ struct FocusView: View {
                     )
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(10)
-            .navigationTitle(instance.name)
+            .padding(.horizontal, 10)
+            .padding(.bottom, 10)
+            .padding(.top, 4)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {
@@ -484,4 +495,18 @@ struct PersistentTerminalView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> TerminalView { view }
     func updateNSView(_ nsView: TerminalView, context: Context) {}
+}
+
+/// The whole window carries a soft blur so the app reads as one piece of
+/// glass — sidebar, canvas, and terminals all sit on it.
+struct WindowBlur: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
