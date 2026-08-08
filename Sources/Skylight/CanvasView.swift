@@ -270,12 +270,16 @@ struct TileView: View {
                 }
                 .onEnded { value in
                     var updated = tile
-                    updated.origin = CanvasLayout.snapped(
-                        CGPoint(
-                            x: tile.origin.x + value.translation.width,
-                            y: tile.origin.y + value.translation.height
-                        )
+                    let proposed = CGRect(
+                        x: tile.origin.x + value.translation.width,
+                        y: tile.origin.y + value.translation.height,
+                        width: tile.size.width,
+                        height: tile.size.height
                     )
+                    let others = (state.canvases.first { $0.id == boardID }?.tiles ?? [])
+                        .filter { $0.id != tile.id }
+                        .map(\.frame)
+                    updated.origin = CanvasLayout.magnetSnapped(proposed, against: others)
                     dragOffset = .zero
                     grabbing = false
                     state.updateTile(updated, in: boardID)

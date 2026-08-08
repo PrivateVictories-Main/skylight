@@ -24,6 +24,38 @@ public enum CanvasLayout {
         )
     }
 
+    /// Rectangle-style magnet: when a dragged frame's edge comes within
+    /// `threshold` of another tile's edge, snap to align or abut it (nearest
+    /// candidate wins; axes are independent). Grid snap is the fallback on
+    /// any axis where no magnet fires — aligning to a neighbor deliberately
+    /// beats the grid.
+    public static func magnetSnapped(_ frame: CGRect, against others: [CGRect],
+                                     threshold: CGFloat = 12) -> CGPoint {
+        var x = frame.origin.x
+        var y = frame.origin.y
+        var bestDX = threshold
+        var bestDY = threshold
+        for other in others {
+            // Align left-left, right-right; abut right-of, left-of.
+            let xCandidates = [other.minX, other.maxX - frame.width,
+                               other.maxX, other.minX - frame.width]
+            for candidate in xCandidates {
+                let distance = abs(frame.origin.x - candidate)
+                if distance < bestDX { bestDX = distance; x = candidate }
+            }
+            let yCandidates = [other.minY, other.maxY - frame.height,
+                               other.maxY, other.minY - frame.height]
+            for candidate in yCandidates {
+                let distance = abs(frame.origin.y - candidate)
+                if distance < bestDY { bestDY = distance; y = candidate }
+            }
+        }
+        return CGPoint(
+            x: bestDX < threshold ? x : (frame.origin.x / grid).rounded() * grid,
+            y: bestDY < threshold ? y : (frame.origin.y / grid).rounded() * grid
+        )
+    }
+
     public static func staggeredOrigin(existing: Int) -> CGPoint {
         CGPoint(x: 48 + CGFloat(existing) * 64, y: 48 + CGFloat(existing) * 48)
     }
