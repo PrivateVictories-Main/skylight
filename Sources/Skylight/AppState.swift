@@ -422,19 +422,20 @@ final class LiveSessionStore {
 
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
-        let state: TerminalViewState
+        // Glass: a whisper of translucency so the canvas breathes through —
+        // never below 0.9, readability beats effect (spec Addendum A1).
+        var config = "background-opacity = 0.92\n"
         if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
             let command = ([binary] + instance.spec.arguments).joined(separator: " ")
-            state = TerminalViewState(configSource: .generated("command = \(command)\n"))
+            config += "command = \(command)\n"
         } else if let shell = instance.spec.shellPath,
                   FileManager.default.isExecutableFile(atPath: shell) {
             // A shell that vanished since the spec was saved falls back to the
             // login shell (the default branch); the banner says so (Task 9).
-            state = TerminalViewState(configSource: .generated("command = \(shell)\n"))
-        } else {
-            state = TerminalViewState()
+            config += "command = \(shell)\n"
         }
+        let state = TerminalViewState(configSource: .generated(config))
         state.configuration = TerminalSurfaceOptions(
             backend: .exec,
             workingDirectory: instance.spec.workingDirectory

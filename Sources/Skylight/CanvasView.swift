@@ -234,13 +234,20 @@ struct TileView: View {
             header
             PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
         .overlay(
             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .strokeBorder(grabbing ? Color.accentColor.opacity(0.5) : Color.primary.opacity(0.1),
-                              lineWidth: grabbing ? 1.5 : 1)
+                .strokeBorder(
+                    grabbing
+                        ? AnyShapeStyle(Color.accentColor.opacity(0.5))
+                        : AnyShapeStyle(LinearGradient(
+                            colors: [.white.opacity(0.28), .white.opacity(0.05),
+                                     .black.opacity(0.12)],
+                            startPoint: .top, endPoint: .bottom)),
+                    lineWidth: grabbing ? 1.5 : 1
+                )
         )
         .shadow(color: .black.opacity(grabbing ? 0.28 : 0.14),
                 radius: grabbing ? 22 : 12, y: grabbing ? 12 : 5)

@@ -376,9 +376,21 @@ struct FullInstanceView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
-            .padding(6)
-            .background(Color(nsColor: .textBackgroundColor))
+            .padding(10)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.28), .white.opacity(0.05),
+                                     .black.opacity(0.12)],
+                            startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1
+                    )
+            )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+            .padding(10)
             .navigationTitle(instance.name)
     }
 }
@@ -393,9 +405,21 @@ struct FocusView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
-            .padding(6)
-            .background(Color(nsColor: .textBackgroundColor))
+            .padding(10)
+            .background(.ultraThinMaterial)
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(
+                        LinearGradient(
+                            colors: [.white.opacity(0.28), .white.opacity(0.05),
+                                     .black.opacity(0.12)],
+                            startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1
+                    )
+            )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+            .padding(10)
             .navigationTitle(instance.name)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
