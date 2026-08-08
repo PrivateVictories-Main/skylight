@@ -1,0 +1,70 @@
+import Foundation
+
+public struct Shell: Identifiable, Equatable, Sendable {
+    public var id: String { path }
+    public let path: String
+    public var name: String { (path as NSString).lastPathComponent }
+
+    public init(path: String) { self.path = path }
+}
+
+public struct Harness: Identifiable, Equatable, Sendable {
+    public let id: String            // the binary name, e.g. "claude"
+    public let displayName: String
+    public let installCommand: String
+    public let brand: Brand?         // nil = no official vector mark; UI uses a glyph
+
+    public init(id: String, displayName: String, installCommand: String, brand: Brand?) {
+        self.id = id
+        self.displayName = displayName
+        self.installCommand = installCommand
+        self.brand = brand
+    }
+}
+
+public enum Catalog {
+    /// The agent CLIs the New sheet offers. Install state is detected live;
+    /// an uninstalled harness renders dimmed with its install command.
+    public static let harnesses: [Harness] = [
+        Harness(id: "claude", displayName: "Claude Code",
+                installCommand: "npm i -g @anthropic-ai/claude-code", brand: .claude),
+        Harness(id: "codex", displayName: "Codex",
+                installCommand: "npm i -g @openai/codex", brand: .openai),
+        Harness(id: "gemini", displayName: "Gemini CLI",
+                installCommand: "npm i -g @google/gemini-cli", brand: .gemini),
+        Harness(id: "opencode", displayName: "OpenCode",
+                installCommand: "npm i -g opencode-ai", brand: nil),
+    ]
+
+    /// /etc/shells → shell paths, comments and blank lines stripped.
+    public static func parseShellsFile(_ contents: String) -> [String] {
+        contents.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("#") }
+    }
+
+    /// Installed shells, one per name (first path listed wins).
+    public static func installedShells(fromShellsFile contents: String,
+                                       isExecutable: (String) -> Bool) -> [Shell] {
+        var seen = Set<String>()
+        return parseShellsFile(contents)
+            .filter { isExecutable($0) && seen.insert(($0 as NSString).lastPathComponent).inserted }
+            .map(Shell.init)
+    }
+
+    /// The user's login shell from the environment; nil when unset.
+    public static func loginShell(environment: [String: String]) -> String? {
+        environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 }
+    }
+
+    /// Resolve a binary name against PATH plus the usual user-install dirs.
+    public static func resolve(_ name: String, pathVariable: String?, home: String,
+                               isExecutable: (String) -> Bool) -> String? {
+        var dirs = (pathVariable ?? "").split(separator: ":").map(String.init)
+        dirs += ["\(home)/.local/bin", "/usr/local/bin", "/opt/homebrew/bin"]
+        var seen = Set<String>()
+        return dirs.filter { !$0.isEmpty && seen.insert($0).inserted }
+            .map { "\($0)/\(name)" }
+            .first(where: isExecutable)
+    }
+}
