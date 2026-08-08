@@ -101,7 +101,7 @@ public enum CanvasLayout {
         if shifted.minX < margin { newPan.x += margin - shifted.minX }
         if shifted.minY < margin { newPan.y += margin - shifted.minY }
 
-        if scale >= 1, newPan == pan { return nil }
+        if newPan == pan, newTiles == tiles { return nil }
         return (newTiles, newPan)
     }
 

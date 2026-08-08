@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 import UniformTypeIdentifiers
 import GhosttyTerminal
@@ -9,9 +10,12 @@ import SkylightCore
 struct CanvasView: View {
     @EnvironmentObject private var state: AppState
     let boardID: UUID
+    /// The drag-preview copy of a board must never rearrange it.
+    var reflowEnabled = true
 
     @State private var pan: CGPoint = .zero
     @State private var viewport: CGSize = .zero
+    @StateObject private var reflowCoalescer = ReflowCoalescer()
 
     private var board: CanvasBoard? {
         state.canvases.first { $0.id == boardID }
@@ -50,13 +54,14 @@ struct CanvasView: View {
             .onAppear {
                 viewport = geo.size
                 pan = board?.pan ?? .zero
+                reflowCoalescer.onFire = { size in applyReflow(in: size) }
                 revealIfPending(in: geo.size)
             }
             .onChange(of: geo.size) { old, size in
                 viewport = size
                 // Reflow only when the window shrinks — growing never rearranges.
                 if size.width < old.width || size.height < old.height {
-                    applyReflow()
+                    if reflowEnabled { reflowCoalescer.send(size) }
                 }
             }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
@@ -92,7 +97,7 @@ struct CanvasView: View {
     }
 
     /// Window shrank: keep the arrangement visible (spec Addendum A3).
-    private func applyReflow() {
+    private func applyReflow(in viewport: CGSize) {
         guard let board,
               let result = CanvasLayout.reflowed(tiles: board.tiles, pan: pan,
                                                  viewport: viewport) else { return }
@@ -385,7 +390,7 @@ struct CanvasDropOverlay: View {
                         // NSViews (one superview each). Let the base show through.
                         Color.clear
                     } else {
-                        CanvasView(boardID: board.id)
+                        CanvasView(boardID: board.id, reflowEnabled: false)
                             .allowsHitTesting(false)
                             .background(Color(nsColor: .windowBackgroundColor))
                     }
@@ -498,4 +503,24 @@ struct GhostDropDelegate: DropDelegate {
         drop(info.location)
         return true
     }
+}
+
+// MARK: - Reflow coalescing
+
+/// Turns a stream of shrink events into one trailing reflow — a live window
+/// drag settles once instead of scaling per event (which compounds the min-
+/// clamp into permanent over-compression and storms the pty with resizes).
+@MainActor
+final class ReflowCoalescer: ObservableObject {
+    private let events = PassthroughSubject<CGSize, Never>()
+    private var subscription: AnyCancellable?
+    var onFire: ((CGSize) -> Void)?
+
+    init() {
+        subscription = events
+            .debounce(for: .seconds(0.25), scheduler: RunLoop.main)
+            .sink { [weak self] size in self?.onFire?(size) }
+    }
+
+    func send(_ size: CGSize) { events.send(size) }
 }

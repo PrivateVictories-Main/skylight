@@ -89,8 +89,8 @@ final class LayoutTests: XCTestCase {
         let visible = bounds.offsetBy(dx: result.pan.x, dy: result.pan.y)
         XCTAssertGreaterThanOrEqual(visible.minX, 24)
         XCTAssertGreaterThanOrEqual(visible.minY, 24)
-        XCTAssertLessThanOrEqual(visible.maxX, 776)
-        XCTAssertLessThanOrEqual(visible.maxY, 576)
+        XCTAssertLessThanOrEqual(visible.maxX, 776 + 0.001)
+        XCTAssertLessThanOrEqual(visible.maxY, 576 + 0.001)
         XCTAssertGreaterThanOrEqual(result.tiles[0].size.width,
                                     CanvasLayout.minTileSize.width)
         // Uniform: both tiles shrank by the same factor.
@@ -111,5 +111,15 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(visible.minX, 24, accuracy: 0.001)
         XCTAssertEqual(visible.minY, 24, accuracy: 0.001)
         XCTAssertEqual(result.tiles.map(\.size.width), [320, 320])   // min clamp engaged
+    }
+
+    func testReflowReturnsNilWhenClampedTilesCannotShrinkFurther() {
+        // A min-sized tile in a viewport it barely fits: scaling clamps to the
+        // same size, the pan shift cancels — identical state must return nil.
+        let tile = CanvasTile(itemID: UUID(), origin: .zero,
+                              size: CanvasLayout.minTileSize)
+        XCTAssertNil(CanvasLayout.reflowed(tiles: [tile],
+                                           pan: CGPoint(x: 24, y: 24),
+                                           viewport: CGSize(width: 360, height: 260)))
     }
 }

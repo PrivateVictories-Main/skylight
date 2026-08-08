@@ -318,11 +318,12 @@ final class AppState: ObservableObject {
         persist()
     }
 
-    /// Reflow support: replace a board's tiles wholesale (persists once).
+    /// Reflow support: replace a board's tiles wholesale. The write is
+    /// coalesced — a live window drag settles into one save, not one per event.
     func setTiles(_ tiles: [CanvasTile], for canvasID: UUID) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
         canvases[index].tiles = tiles
-        persist()
+        persistSoon()
     }
 
     /// Open whatever an instance's sidebar row points at: its canvas,
