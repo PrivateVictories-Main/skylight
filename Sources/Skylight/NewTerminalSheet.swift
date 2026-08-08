@@ -19,6 +19,9 @@ struct NewTerminalSheet: View {
     @State private var presetName = ""
     @State private var shells: [Shell] = []
     @State private var installed: [String: String] = [:]   // harness id → binary path
+    /// True once install state has been sampled — the one-click rows wait for
+    /// it rather than flashing as ready before anything has been checked.
+    @State private var loaded = false
 
     private var spec: TerminalSpec {
         TerminalSpec(
@@ -37,10 +40,10 @@ struct NewTerminalSheet: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
-            if let usual = state.usage.topCombo() {
+            if let usual = state.usage.topCombo(), loaded {
                 recommendationRow(usual)
             }
-            if !state.presets.isEmpty {
+            if !state.presets.isEmpty, loaded {
                 presetRows
             }
             shellSection
@@ -62,6 +65,7 @@ struct NewTerminalSheet: View {
     }
 
     private func load() {
+        state.sessions.invalidateHarnessCache()
         let fm = FileManager.default
         let contents = (try? String(contentsOfFile: "/etc/shells", encoding: .utf8)) ?? ""
         shells = Catalog.installedShells(fromShellsFile: contents,
@@ -69,6 +73,7 @@ struct NewTerminalSheet: View {
         installed = Dictionary(uniqueKeysWithValues: Catalog.harnesses.compactMap { harness in
             LiveSessionStore.resolveHarness(harness.id).map { (harness.id, $0) }
         })
+        loaded = true
     }
 
     private func launch(_ spec: TerminalSpec, name: String? = nil) {
@@ -283,6 +288,8 @@ struct NewTerminalSheet: View {
                             .foregroundStyle(Color.accentColor)
                     }
                 }
+                .padding(.vertical, 7)
+                .padding(.leading, 10)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -296,8 +303,7 @@ struct NewTerminalSheet: View {
                 .help("Copy the install command")
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 7)
+        .padding(.trailing, 10)
         .opacity(path == nil ? 0.55 : 1)
         .hoverHighlight(active: harnessID == harness.id)
     }
@@ -369,7 +375,7 @@ struct NewTerminalSheet: View {
                 Button("Create") { launch(spec) }
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(agentMode && harnessID == nil)
+                    .disabled(agentMode && (harnessID == nil || harnessID.flatMap { installed[$0] } == nil))
             }
         }
     }

@@ -391,6 +391,10 @@ final class LiveSessionStore {
         return resolved
     }
 
+    /// The sheet re-samples install state; drop the cache so a CLI installed
+    /// mid-run is honored by the next launch too.
+    func invalidateHarnessCache() { resolvedHarnesses.removeAll() }
+
     func terminalHostView(for instance: TerminalInstance) -> TerminalView {
         if let existing = terminalNSViews[instance.id] { return existing }
         let state = terminal(for: instance)
