@@ -300,6 +300,7 @@ final class AppState: ObservableObject {
 
     /// Take an instance off its board: it is a full-window terminal again.
     func removeFromCanvas(_ itemID: UUID) {
+        guard instance(itemID) != nil else { return }
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == itemID }
         }

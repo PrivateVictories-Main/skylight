@@ -78,6 +78,9 @@ public struct CanvasBoard: Identifiable, Codable, Equatable, Sendable {
         name = try container.decode(String.self, forKey: .name)
         tiles = try container.decode([CanvasTile].self, forKey: .tiles)
         // Boards saved before pan existed decode with the origin view.
+        // NOTE: any new persisted property must be decoded HERE as well —
+        // the synthesized encoder writes it, but this initializer silently
+        // drops what it doesn't read.
         pan = try container.decodeIfPresent(CGPoint.self, forKey: .pan) ?? .zero
     }
 }

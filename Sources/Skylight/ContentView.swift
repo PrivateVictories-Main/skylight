@@ -53,8 +53,10 @@ struct SidebarView: View {
                         .foregroundStyle(.tertiary)
                 }
             } header: {
-                // Dropping a canvas-resident row here frees it again.
-                Text("Terminals")
+                // Dropping a canvas-resident row here frees it again. The
+                // whole header row is the target, not just the word.
+                HStack { Text("Terminals"); Spacer() }
+                    .contentShape(Rectangle())
                     .dropDestination(for: String.self) { ids, _ in
                         for raw in ids {
                             guard let id = UUID(uuidString: raw) else { continue }

@@ -44,6 +44,11 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Reflow: shrink the window with tiles near the right edge → they shift/
       scale to stay visible and the terminal text rewraps (nothing clipped);
       growing the window back never rearranges anything.
+- [ ] Resize a tile by its corner handle: smooth, snaps to the 16pt grid on release, terminal reflows to the new cells.
+- [ ] Pan a canvas until a tile is fully off-screen, then click where it would be (over the sidebar / empty canvas): nothing invisible responds. If an unseen tile reacts, report it — the fix is a contentShape after .clipped.
+- [ ] Drop a terminal onto an already-visible canvas: judge the recenter — the board pans to center the new tile. If that feels like a yank, say so.
+- [ ] With an agent terminal whose CLI is NOT installed (or temporarily renamed away): the tile runs your shell and a capsule banner says which CLI is missing and how to install it.
+- [ ] Magnet check at distance: a tile far away VERTICALLY still magnets your X axis — judge whether that helps or surprises.
 - [ ] Idle CPU ≈ 0% in Activity Monitor with 3 idle terminals after a
       minute; drag a tile in circles — smooth the whole way on the 45".
 - [ ] `SKYLIGHT_APPEARANCE=dark` and `=light` both look clean.
