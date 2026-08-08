@@ -15,6 +15,9 @@ struct CanvasView: View {
 
     @State private var pan: CGPoint = .zero
     @State private var viewport: CGSize = .zero
+    /// True while a tile is being moved or resized — a reflow must never land
+    /// in the middle of a gesture.
+    @State private var tileInteracting = false
     @StateObject private var reflowCoalescer = ReflowCoalescer()
 
     private var board: CanvasBoard? {
@@ -35,7 +38,8 @@ struct CanvasView: View {
                     .allowsHitTesting(false)
                 ForEach(board?.tiles ?? []) { tile in
                     if let instance = state.instance(tile.itemID) {
-                        TileView(tile: tile, instance: instance, boardID: boardID, pan: pan)
+                        TileView(tile: tile, instance: instance, boardID: boardID, pan: pan,
+                                 interacting: $tileInteracting)
                     }
                 }
             }
@@ -54,15 +58,17 @@ struct CanvasView: View {
             .onAppear {
                 viewport = geo.size
                 pan = board?.pan ?? .zero
-                reflowCoalescer.onFire = { size in applyReflow(in: size) }
                 revealIfPending(in: geo.size)
             }
             .onChange(of: geo.size) { old, size in
                 viewport = size
                 // Reflow only when the window shrinks — growing never rearranges.
                 if size.width < old.width || size.height < old.height {
-                    if reflowEnabled { reflowCoalescer.send(size) }
+                    if reflowEnabled { reflowCoalescer.send() }
                 }
+            }
+            .onReceive(reflowCoalescer.output) {
+                if !tileInteracting { applyReflow(in: viewport) }
             }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
         }
@@ -105,7 +111,7 @@ struct CanvasView: View {
             pan = result.pan
         }
         state.setPan(result.pan, for: boardID)
-        state.setTiles(result.tiles, for: boardID)   // persists once, with the new pan
+        state.setTiles(result.tiles, for: boardID)   // state now, disk write coalesced
     }
 }
 
@@ -206,6 +212,9 @@ struct TileView: View {
     let instance: TerminalInstance
     let boardID: UUID
     let pan: CGPoint
+    /// Raised for the life of a move or resize gesture so the canvas can hold
+    /// a queued reflow until the hands are off.
+    @Binding var interacting: Bool
 
     @State private var dragOffset: CGSize = .zero
     @State private var resizeDelta: CGSize = .zero
@@ -289,6 +298,7 @@ struct TileView: View {
             DragGesture()
                 .onChanged {
                     if !grabbing { grabbing = true }
+                    if !interacting { interacting = true }
                     dragOffset = $0.translation
                 }
                 .onEnded { value in
@@ -305,6 +315,7 @@ struct TileView: View {
                     updated.origin = CanvasLayout.magnetSnapped(proposed, against: others)
                     dragOffset = .zero
                     grabbing = false
+                    interacting = false
                     state.updateTile(updated, in: boardID)
                 }
         )
@@ -328,7 +339,10 @@ struct TileView: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture()
-                    .onChanged { resizeDelta = $0.translation }
+                    .onChanged {
+                        if !interacting { interacting = true }
+                        resizeDelta = $0.translation
+                    }
                     .onEnded { value in
                         var updated = tile
                         updated.size = CanvasLayout.snapped(
@@ -338,6 +352,7 @@ struct TileView: View {
                             )
                         )
                         resizeDelta = .zero
+                        interacting = false
                         state.updateTile(updated, in: boardID)
                     }
             )
@@ -507,20 +522,21 @@ struct GhostDropDelegate: DropDelegate {
 
 // MARK: - Reflow coalescing
 
-/// Turns a stream of shrink events into one trailing reflow — a live window
-/// drag settles once instead of scaling per event (which compounds the min-
-/// clamp into permanent over-compression and storms the pty with resizes).
+/// Turns a stream of shrink events into one trailing reflow tick — a live
+/// window drag settles once instead of scaling per event. The tick carries
+/// no size: the subscriber reads the live viewport at fire time, so a
+/// shrink that grew back before the debounce fires reflows against the
+/// real window (and correctly no-ops).
 @MainActor
 final class ReflowCoalescer: ObservableObject {
-    private let events = PassthroughSubject<CGSize, Never>()
-    private var subscription: AnyCancellable?
-    var onFire: ((CGSize) -> Void)?
+    private let events = PassthroughSubject<Void, Never>()
+    let output: AnyPublisher<Void, Never>
 
     init() {
-        subscription = events
+        output = events
             .debounce(for: .seconds(0.25), scheduler: RunLoop.main)
-            .sink { [weak self] size in self?.onFire?(size) }
+            .eraseToAnyPublisher()
     }
 
-    func send(_ size: CGSize) { events.send(size) }
+    func send() { events.send(()) }
 }
