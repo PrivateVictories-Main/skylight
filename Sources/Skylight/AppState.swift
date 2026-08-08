@@ -376,9 +376,20 @@ final class LiveSessionStore {
     private var terminals: [UUID: TerminalViewState] = [:]
     private var terminalNSViews: [UUID: TerminalView] = [:]
     private var bellObservers: [UUID: AnyCancellable] = [:]
+    private var resolvedHarnesses: [String: String?] = [:]
 
     /// Fired when a terminal rings the bell (a CLI is done / needs input).
     var onBell: ((UUID) -> Void)?
+
+    /// Cached PATH resolution — resolving stats the filesystem, and tile
+    /// bodies ask for it during pan. Cache lives for the app run, matching
+    /// the session config it feeds.
+    func cachedResolveHarness(_ name: String) -> String? {
+        if let cached = resolvedHarnesses[name] { return cached }
+        let resolved = Self.resolveHarness(name)
+        resolvedHarnesses[name] = resolved
+        return resolved
+    }
 
     func terminalHostView(for instance: TerminalInstance) -> TerminalView {
         if let existing = terminalNSViews[instance.id] { return existing }
@@ -400,7 +411,7 @@ final class LiveSessionStore {
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
         let state: TerminalViewState
-        if let harness = instance.spec.harness, let binary = Self.resolveHarness(harness) {
+        if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
             let command = ([binary] + instance.spec.arguments).joined(separator: " ")
             state = TerminalViewState(configSource: .generated("command = \(command)\n"))

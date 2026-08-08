@@ -55,6 +55,10 @@ struct NewTerminalSheet: View {
         .padding(20)
         .frame(width: 440)
         .onAppear(perform: load)
+        // Come back from a terminal where you just installed a CLI and the
+        // row lights up — no reopen needed.
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in load() }
     }
 
     private func load() {
@@ -85,14 +89,17 @@ struct NewTerminalSheet: View {
                     .foregroundStyle(.tertiary)
             }
             .buttonStyle(.pressable(scale: 0.85))
+            .keyboardShortcut(.cancelAction)
         }
     }
 
     // MARK: - Recommendation + presets
 
-    /// One click, straight into the combo you actually use.
+    /// One click, straight into the combo you actually use — unless the CLI it
+    /// needs has since been uninstalled, in which case it dims and says so.
     private func recommendationRow(_ usual: TerminalSpec) -> some View {
-        Button { launch(usual) } label: {
+        let ready = isReady(usual)
+        return Button { if ready { launch(usual) } } label: {
             HStack(spacing: 10) {
                 harnessIcon(for: usual.harness, size: 22)
                 VStack(alignment: .leading, spacing: 1) {
@@ -103,10 +110,17 @@ struct NewTerminalSheet: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Text("Start")
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+                if ready {
+                    Text("Start")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                } else {
+                    Text(installCommand(for: usual.harness) ?? "")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                }
             }
+            .opacity(ready ? 1 : 0.55)
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -123,16 +137,24 @@ struct NewTerminalSheet: View {
     private var presetRows: some View {
         VStack(spacing: 4) {
             ForEach(state.presets) { preset in
-                Button { launch(preset.spec, name: preset.name) } label: {
+                let ready = isReady(preset.spec)
+                Button { if ready { launch(preset.spec, name: preset.name) } } label: {
                     HStack(spacing: 10) {
                         harnessIcon(for: preset.spec.harness, size: 18)
                         Text(preset.name)
                             .font(.system(size: 13, weight: .medium))
                         Spacer()
-                        Text(subtitle(for: preset.spec))
-                            .font(.system(size: 11))
-                            .foregroundStyle(.tertiary)
+                        if ready {
+                            Text(subtitle(for: preset.spec))
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            Text(installCommand(for: preset.spec.harness) ?? "")
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
                     }
+                    .opacity(ready ? 1 : 0.55)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 7)
                 }
@@ -235,42 +257,48 @@ struct NewTerminalSheet: View {
         }
     }
 
+    /// Copy sits beside the row button, not inside its label: a Button nested
+    /// in another Button's label swallows clicks unpredictably on macOS.
     private func harnessRow(_ harness: Harness) -> some View {
         let path = installed[harness.id]
-        return Button {
-            if path != nil { harnessID = harness.id }
-        } label: {
-            HStack(spacing: 10) {
-                harnessIcon(for: harness.id, size: 18)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(harness.displayName)
-                        .font(.system(size: 13, weight: .medium))
-                    if path == nil {
-                        Text(harness.installCommand)
-                            .font(.system(size: 10.5, design: .monospaced))
-                            .foregroundStyle(.tertiary)
+        return HStack(spacing: 10) {
+            Button {
+                if path != nil { harnessID = harness.id }
+            } label: {
+                HStack(spacing: 10) {
+                    harnessIcon(for: harness.id, size: 18)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(harness.displayName)
+                            .font(.system(size: 13, weight: .medium))
+                        if path == nil {
+                            Text(harness.installCommand)
+                                .font(.system(size: 10.5, design: .monospaced))
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    Spacer()
+                    if path != nil, harnessID == harness.id {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.accentColor)
                     }
                 }
-                Spacer()
-                if path == nil {
-                    Button("Copy") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(harness.installCommand, forType: .string)
-                    }
-                    .buttonStyle(.pressable(scale: 0.94))
-                    .font(.system(size: 11, weight: .medium))
-                    .help("Copy the install command")
-                } else if harnessID == harness.id {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 13))
-                        .foregroundStyle(Color.accentColor)
-                }
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 7)
-            .opacity(path == nil ? 0.55 : 1)
+            .buttonStyle(.plain)
+            if path == nil {
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(harness.installCommand, forType: .string)
+                }
+                .buttonStyle(.pressable(scale: 0.94))
+                .font(.system(size: 11, weight: .medium))
+                .help("Copy the install command")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .opacity(path == nil ? 0.55 : 1)
         .hoverHighlight(active: harnessID == harness.id)
     }
 
@@ -321,11 +349,10 @@ struct NewTerminalSheet: View {
                     TextField("Preset name", text: $presetName)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12))
-                    Button("Save") {
-                        state.savePreset(named: presetName, spec: spec)
-                        presetName = ""
-                        savingPreset = false
-                    }
+                        // Return in this field saves the preset; it must not
+                        // fall through to Create and launch a terminal.
+                        .onSubmit { commitPreset() }
+                    Button("Save") { commitPreset() }
                     .buttonStyle(.pressable(scale: 0.96))
                     .disabled(presetName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
@@ -347,6 +374,14 @@ struct NewTerminalSheet: View {
         }
     }
 
+    private func commitPreset() {
+        let trimmed = presetName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        state.savePreset(named: trimmed, spec: spec)
+        presetName = ""
+        savingPreset = false
+    }
+
     // MARK: - Shared bits
 
     @ViewBuilder
@@ -359,6 +394,16 @@ struct NewTerminalSheet: View {
                 .foregroundStyle(.secondary)
                 .frame(width: size, height: size)
         }
+    }
+
+    /// A one-click row is only offered when what it needs is actually there.
+    private func isReady(_ spec: TerminalSpec) -> Bool {
+        guard let harness = spec.harness else { return true }
+        return installed[harness] != nil
+    }
+
+    private func installCommand(for harnessID: String?) -> String? {
+        harnessID.flatMap { id in Catalog.harnesses.first { $0.id == id }?.installCommand }
     }
 
     private func subtitle(for spec: TerminalSpec) -> String {

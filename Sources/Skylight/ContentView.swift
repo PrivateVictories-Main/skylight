@@ -13,6 +13,11 @@ struct ContentView: View {
             DetailView()
         }
         .frame(minWidth: 1080, minHeight: 700)
+        // Owned by the split view, not the sidebar: a collapsed sidebar must
+        // never strand ⌘T with nowhere to present.
+        .sheet(isPresented: $state.newSheetShown) {
+            NewTerminalSheet().environmentObject(state)
+        }
     }
 }
 
@@ -70,9 +75,6 @@ struct SidebarView: View {
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { bottomBar }
         .navigationTitle("Skylight")
-        .sheet(isPresented: $state.newSheetShown) {
-            NewTerminalSheet().environmentObject(state)
-        }
         .alert("Rename", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
@@ -414,11 +416,12 @@ struct FocusView: View {
 /// the surface falls back to the login shell (LiveSessionStore already
 /// does), and this banner says so instead of failing silently.
 struct MissingHarnessBanner: View {
+    @EnvironmentObject private var state: AppState
     let instance: TerminalInstance
 
     private var message: String? {
         if let id = instance.spec.harness,
-           LiveSessionStore.resolveHarness(id) == nil {
+           state.sessions.cachedResolveHarness(id) == nil {
             let harness = Catalog.harnesses.first { $0.id == id }
             let name = harness?.displayName ?? id
             let install = harness.map { " Install: \($0.installCommand)" } ?? ""
@@ -435,11 +438,14 @@ struct MissingHarnessBanner: View {
         if let message {
             Label(message, systemImage: "exclamationmark.triangle")
                 .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 5)
                 .background(Capsule().fill(.bar))
                 .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
                 .padding(.top, 8)
+                .allowsHitTesting(false)
         }
     }
 }
