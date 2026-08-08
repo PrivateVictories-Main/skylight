@@ -27,13 +27,21 @@ public enum Catalog {
     /// an uninstalled harness renders dimmed with its install command.
     public static let harnesses: [Harness] = [
         Harness(id: "claude", displayName: "Claude Code",
-                installCommand: "npm i -g @anthropic-ai/claude-code", brand: .claude),
+                installCommand: "npm i -g @anthropic-ai/claude-code", brand: .claudeCode),
         Harness(id: "codex", displayName: "Codex",
                 installCommand: "npm i -g @openai/codex", brand: .openai),
         Harness(id: "gemini", displayName: "Gemini CLI",
                 installCommand: "npm i -g @google/gemini-cli", brand: .gemini),
+        Harness(id: "copilot", displayName: "Copilot CLI",
+                installCommand: "npm i -g @github/copilot", brand: .copilot),
+        Harness(id: "cursor-agent", displayName: "Cursor CLI",
+                installCommand: "curl https://cursor.com/install -fsS | bash", brand: .cursor),
+        Harness(id: "qwen", displayName: "Qwen Code",
+                installCommand: "npm i -g @qwen-code/qwen-code", brand: .qwen),
+        Harness(id: "amp", displayName: "Amp",
+                installCommand: "npm i -g @sourcegraph/amp", brand: .amp),
         Harness(id: "opencode", displayName: "OpenCode",
-                installCommand: "npm i -g opencode-ai", brand: nil),
+                installCommand: "npm i -g opencode-ai", brand: .opencode),
     ]
 
     /// /etc/shells → shell paths, comments and blank lines stripped.

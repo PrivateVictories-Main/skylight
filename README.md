@@ -18,8 +18,9 @@ draggable, resizable tiles. Swift + SwiftUI, with real Ghostty terminals.
   the canvas exactly as it was. (Escape belongs to the terminal — vim and
   TUIs need it — so the exit is a real menu command.)
 - **Agent terminals** — a terminal can launch an agent CLI (Claude Code,
-  Codex, Gemini CLI, OpenCode) on your existing subscription. Skylight
-  detects what's installed and never fakes what isn't.
+  Codex, Gemini CLI, Copilot CLI, Cursor CLI, Qwen Code, Amp, OpenCode) on
+  your existing subscription, each row wearing its vendor's own mark.
+  Skylight detects what's installed and never fakes what isn't.
 - **A New sheet that learns** — shell → mode → harness in one tiered sheet;
   your most-used combo becomes a one-click row; save any combo as a named
   preset for one-button launches.

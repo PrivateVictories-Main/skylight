@@ -44,8 +44,21 @@ final class CatalogTests: XCTestCase {
     }
 
     func testHarnessCatalogShape() {
-        XCTAssertEqual(Catalog.harnesses.map(\.id), ["claude", "codex", "gemini", "opencode"])
-        XCTAssertEqual(Catalog.harnesses.first?.brand, .claude)
-        XCTAssertNil(Catalog.harnesses.last?.brand)                       // opencode: no official mark
+        XCTAssertEqual(Catalog.harnesses.map(\.id),
+                       ["claude", "codex", "gemini", "copilot", "cursor-agent",
+                        "qwen", "amp", "opencode"])
+        XCTAssertEqual(Catalog.harnesses.first?.brand, .claudeCode)
+        // Install commands are user-visible promises — pin them all.
+        XCTAssertEqual(Catalog.harnesses.map(\.installCommand), [
+            "npm i -g @anthropic-ai/claude-code",
+            "npm i -g @openai/codex",
+            "npm i -g @google/gemini-cli",
+            "npm i -g @github/copilot",
+            "curl https://cursor.com/install -fsS | bash",
+            "npm i -g @qwen-code/qwen-code",
+            "npm i -g @sourcegraph/amp",
+            "npm i -g opencode-ai",
+        ])
+        XCTAssertTrue(Catalog.harnesses.allSatisfy { $0.brand != nil })
     }
 }

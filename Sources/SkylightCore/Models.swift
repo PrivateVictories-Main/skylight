@@ -1,9 +1,9 @@
 import CoreGraphics
 import Foundation
 
-/// Vendor mark identity for the few harnesses with official vector logos.
+/// Vendor mark identity for the harnesses with official vector logos.
 public enum Brand: String, Codable, Sendable {
-    case claude, openai, gemini
+    case claudeCode, openai, gemini, copilot, cursor, qwen, amp, opencode
 }
 
 /// Everything that defines what a terminal runs. `shellPath` nil = login

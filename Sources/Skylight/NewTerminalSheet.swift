@@ -254,12 +254,17 @@ struct NewTerminalSheet: View {
         .padding(.horizontal, 10)
     }
 
+    /// Eight agent CLIs is taller than the sheet should ever be, so the list
+    /// scrolls inside a fixed window and the sheet stays compact.
     private var harnessSection: some View {
-        VStack(spacing: 4) {
-            ForEach(Catalog.harnesses) { harness in
-                harnessRow(harness)
+        ScrollView {
+            VStack(spacing: 4) {
+                ForEach(Catalog.harnesses) { harness in
+                    harnessRow(harness)
+                }
             }
         }
+        .frame(maxHeight: 292)
     }
 
     /// Copy sits beside the row button, not inside its label: a Button nested
