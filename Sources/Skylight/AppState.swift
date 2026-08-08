@@ -435,7 +435,8 @@ final class LiveSessionStore {
             // login shell (the default branch); the banner says so (Task 9).
             config += "command = \(shell)\n"
         }
-        let state = TerminalViewState(configSource: .generated(config))
+        let state = TerminalViewState(configSource: .generated(config),
+                                      terminalConfiguration: .default)
         state.configuration = TerminalSurfaceOptions(
             backend: .exec,
             workingDirectory: instance.spec.workingDirectory
