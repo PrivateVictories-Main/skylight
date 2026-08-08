@@ -71,3 +71,8 @@ Skylight once had an AI-chat layer. Its data is still on disk at
 `~/Library/Application Support/Skylight/` (`chats/`, `webhistory/`) — the app
 ignores it and will never delete it. Remove those folders manually if you
 want the space back.
+
+## License
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md) — free for any personal or
+noncommercial use; commercial use requires a separate license from the author.
