@@ -316,13 +316,19 @@ struct DetailView: View {
 
     var body: some View {
         ZStack {
-            base
+            if let focusID = state.focusedInstance, let instance = state.instance(focusID) {
+                FocusView(instance: instance)
+                    .transition(.opacity.combined(with: .scale(scale: 0.98)))
+            } else {
+                base
+            }
             if let dragID = state.draggingItemID {
                 CanvasDropOverlay(itemID: dragID)
                     .transition(.opacity)
             }
         }
         .animation(.easeOut(duration: 0.18), value: state.draggingItemID)
+        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: state.focusedInstance)
     }
 
     @ViewBuilder
@@ -368,6 +374,32 @@ struct FullInstanceView: View {
             .padding(6)
             .background(Color(nsColor: .textBackgroundColor))
             .navigationTitle(instance.name)
+    }
+}
+
+/// Focus mode: one canvas tile borrows the whole window. Esc or the toolbar
+/// button hands it back — the canvas is exactly as you left it.
+struct FocusView: View {
+    @EnvironmentObject private var state: AppState
+    let instance: TerminalInstance
+
+    var body: some View {
+        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+            .padding(6)
+            .background(Color(nsColor: .textBackgroundColor))
+            .navigationTitle(instance.name)
+            .toolbar {
+                ToolbarItem(placement: .navigation) {
+                    Button {
+                        state.endFocus()
+                    } label: {
+                        Label("Back to Canvas", systemImage: "chevron.left")
+                    }
+                    .buttonStyle(.pressable(scale: 0.94))
+                    .help("Back to the canvas (Esc)")
+                }
+            }
+            .onExitCommand { state.endFocus() }
     }
 }
 

@@ -17,6 +17,9 @@ final class AppState: ObservableObject {
     @Published var selection: Selection?
     /// Instances whose terminal rang the bell while not being viewed.
     @Published var attention: Set<UUID> = []
+    /// Instance temporarily filling the window (focus mode). Leaving focus
+    /// returns to whatever was selected — the canvas is untouched.
+    @Published var focusedInstance: UUID?
     /// Tile to center after opening a canvas from its sidebar row.
     @Published var pendingReveal: UUID?
     /// Non-nil while a sidebar row is mid-drag; the detail area shows the
@@ -86,8 +89,10 @@ final class AppState: ObservableObject {
         $selection
             .dropFirst()
             .sink { [weak self] selection in
-                // Whatever just became visible stops asking for attention.
+                // Whatever just became visible stops asking for attention,
+                // and any navigation leaves focus mode.
                 guard let self else { return }
+                self.focusedInstance = nil
                 switch selection {
                 case let .item(id)?:
                     self.attention.remove(id)
@@ -145,9 +150,11 @@ final class AppState: ObservableObject {
         instances.first { $0.id == id }
     }
 
-    /// True when an instance is on screen right now — selected full-window,
-    /// or a tile on the currently displayed canvas.
+    /// True when an instance is on screen right now — focused, selected
+    /// full-window, or a tile on the currently displayed canvas (which a
+    /// focused instance would cover).
     private func isVisible(_ id: UUID) -> Bool {
+        if let focusedInstance { return focusedInstance == id }
         switch selection {
         case let .item(selected): return selected == id
         case let .canvas(boardID): return Residency.board(of: id, in: canvases) == boardID
@@ -177,6 +184,7 @@ final class AppState: ObservableObject {
             name: siblings == 0 ? base : "\(base) \(siblings + 1)", spec: spec)
         instances.append(instance)
         selection = .item(instance.id)
+        focusedInstance = nil
         usage.record(spec)
         persistUsage()
         persist()
@@ -205,6 +213,7 @@ final class AppState: ObservableObject {
         }
         sessions.discard(id)
         attention.remove(id)
+        if focusedInstance == id { focusedInstance = nil }
         if case let .item(selected)? = selection, selected == id {
             selection = (freeInstances.first ?? instances.first).map { .item($0.id) }
         }
@@ -286,6 +295,7 @@ final class AppState: ObservableObject {
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == itemID }
         }
+        focusedInstance = nil
         selection = .item(itemID)
         persist()
     }
@@ -309,6 +319,17 @@ final class AppState: ObservableObject {
         }
         selection = .canvas(boardID)
         pendingReveal = itemID
+    }
+
+    /// Esc / Back: leave focus. Whatever the window now shows stops asking
+    /// for attention.
+    func endFocus() {
+        focusedInstance = nil
+        if case let .canvas(boardID)? = selection {
+            for tile in canvases.first(where: { $0.id == boardID })?.tiles ?? [] {
+                attention.remove(tile.itemID)
+            }
+        }
     }
 
     // MARK: - Sidebar drag session

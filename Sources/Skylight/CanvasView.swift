@@ -235,6 +235,17 @@ struct TileView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             Button {
+                state.focusedInstance = instance.id
+            } label: {
+                Image(systemName: "arrow.up.backward.and.arrow.down.forward")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable(scale: 0.8))
+            .help("Focus — fill the window (Esc returns)")
+            Button {
                 state.removeFromCanvas(instance.id)
             } label: {
                 Image(systemName: "xmark")
@@ -269,6 +280,7 @@ struct TileView: View {
                     state.updateTile(updated, in: boardID)
                 }
         )
+        .onTapGesture(count: 2) { state.focusedInstance = instance.id }
     }
 
     private var harnessBrand: Brand? {
