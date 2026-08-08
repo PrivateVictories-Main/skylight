@@ -329,7 +329,15 @@ struct CanvasDropOverlay: View {
         if case let .canvas(id) = state.selection {
             return state.canvases.first { $0.id == id }
         }
-        return state.canvases.last
+        // Never preview a board that hosts the instance the base is showing
+        // full-window — a live terminal view can't be in two places at once.
+        var candidates = state.canvases
+        if case let .item(selected) = state.selection {
+            candidates.removeAll { board in
+                board.tiles.contains { $0.itemID == selected }
+            }
+        }
+        return candidates.last
     }
 
     var body: some View {

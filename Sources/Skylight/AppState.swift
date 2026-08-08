@@ -206,7 +206,7 @@ final class AppState: ObservableObject {
         sessions.discard(id)
         attention.remove(id)
         if case let .item(selected)? = selection, selected == id {
-            selection = instances.first.map { .item($0.id) }
+            selection = (freeInstances.first ?? instances.first).map { .item($0.id) }
         }
         persist()
     }
@@ -233,7 +233,7 @@ final class AppState: ObservableObject {
     func deleteCanvas(_ id: UUID) {
         canvases.removeAll { $0.id == id }
         if case let .canvas(selected)? = selection, selected == id {
-            selection = instances.first.map { .item($0.id) }
+            selection = (freeInstances.first ?? instances.first).map { .item($0.id) }
         }
         persist()
     }
