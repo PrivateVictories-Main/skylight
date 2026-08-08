@@ -226,6 +226,12 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    /// Remember where a canvas is panned; persisted on gesture end, not per tick.
+    func setPan(_ pan: CGPoint, for canvasID: UUID) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        canvases[index].pan = pan
+    }
+
     // MARK: - Tiles
 
     /// Place an instance on a board — moving it off any other board first.

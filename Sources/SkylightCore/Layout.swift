@@ -7,9 +7,14 @@ public enum CanvasLayout {
 
     public static func snapped(_ point: CGPoint) -> CGPoint {
         CGPoint(
-            x: max(0, (point.x / grid).rounded() * grid),
-            y: max(0, (point.y / grid).rounded() * grid)
+            x: (point.x / grid).rounded() * grid,
+            y: (point.y / grid).rounded() * grid
         )
+    }
+
+    /// The pan offset that centers a tile in a viewport.
+    public static func panToCenter(_ tile: CGRect, in viewport: CGSize) -> CGPoint {
+        CGPoint(x: viewport.width / 2 - tile.midX, y: viewport.height / 2 - tile.midY)
     }
 
     public static func snapped(_ size: CGSize) -> CGSize {

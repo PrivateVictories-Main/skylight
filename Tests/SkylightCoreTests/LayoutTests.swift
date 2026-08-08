@@ -7,9 +7,17 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(CanvasLayout.snapped(CGPoint(x: 8, y: 8)), CGPoint(x: 16, y: 16))
     }
 
-    func testSnappedPointClampsToZero() {
-        // Current behavior; Task 6 (endless pan) removes the clamp and updates this test.
-        XCTAssertEqual(CanvasLayout.snapped(CGPoint(x: -40, y: -5)), CGPoint(x: 0, y: 0))
+    func testSnappedPointAllowsNegativeCoordinates() {
+        // The canvas is endless: tiles can live left of and above the origin.
+        XCTAssertEqual(CanvasLayout.snapped(CGPoint(x: -40, y: -5)), CGPoint(x: -48, y: 0))
+        // -0.5 and -1.5 both round away from zero: -8 → -16, -24 → -32.
+        XCTAssertEqual(CanvasLayout.snapped(CGPoint(x: -8, y: -24)), CGPoint(x: -16, y: -32))
+    }
+
+    func testPanToCenterCentersTheTileInTheViewport() {
+        let tile = CGRect(x: 200, y: 100, width: 400, height: 200)   // center (400, 200)
+        let pan = CanvasLayout.panToCenter(tile, in: CGSize(width: 1000, height: 800))
+        XCTAssertEqual(pan, CGPoint(x: 100, y: 200))                 // 500-400, 400-200
     }
 
     func testSnapsSizeToGridWithMinimum() {
