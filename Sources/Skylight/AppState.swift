@@ -318,6 +318,13 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    /// Reflow support: replace a board's tiles wholesale (persists once).
+    func setTiles(_ tiles: [CanvasTile], for canvasID: UUID) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        canvases[index].tiles = tiles
+        persist()
+    }
+
     /// Open whatever an instance's sidebar row points at: its canvas,
     /// centered on its tile — or itself full-window when it lives free.
     func reveal(_ itemID: UUID) {

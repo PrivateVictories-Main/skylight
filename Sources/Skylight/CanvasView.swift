@@ -52,7 +52,13 @@ struct CanvasView: View {
                 pan = board?.pan ?? .zero
                 revealIfPending(in: geo.size)
             }
-            .onChange(of: geo.size) { _, size in viewport = size }
+            .onChange(of: geo.size) { old, size in
+                viewport = size
+                // Reflow only when the window shrinks — growing never rearranges.
+                if size.width < old.width || size.height < old.height {
+                    applyReflow()
+                }
+            }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
         }
         .background(Color(nsColor: .windowBackgroundColor))
@@ -83,6 +89,18 @@ struct CanvasView: View {
         }
         state.pendingReveal = nil
         commitPan()
+    }
+
+    /// Window shrank: keep the arrangement visible (spec Addendum A3).
+    private func applyReflow() {
+        guard let board,
+              let result = CanvasLayout.reflowed(tiles: board.tiles, pan: pan,
+                                                 viewport: viewport) else { return }
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            pan = result.pan
+        }
+        state.setPan(result.pan, for: boardID)
+        state.setTiles(result.tiles, for: boardID)   // persists once, with the new pan
     }
 }
 
