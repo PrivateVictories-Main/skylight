@@ -34,6 +34,7 @@ struct CanvasView: View {
                     }
                 }
             }
+            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
             .dropDestination(for: String.self) { ids, location in
                 for raw in ids {
@@ -48,10 +49,10 @@ struct CanvasView: View {
             .onAppear {
                 viewport = geo.size
                 pan = board?.pan ?? .zero
-                revealIfPending()
+                revealIfPending(in: geo.size)
             }
             .onChange(of: geo.size) { _, size in viewport = size }
-            .onChange(of: state.pendingReveal) { _, _ in revealIfPending() }
+            .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .navigationTitle(board?.name ?? "Canvas")
@@ -73,7 +74,7 @@ struct CanvasView: View {
     }
 
     /// Center the tile a sidebar row asked for.
-    private func revealIfPending() {
+    private func revealIfPending(in viewport: CGSize) {
         guard let itemID = state.pendingReveal,
               let tile = board?.tiles.first(where: { $0.itemID == itemID }) else { return }
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
@@ -109,10 +110,17 @@ struct PanSurface: NSViewRepresentable {
         var onPan: ((CGSize) -> Void)?
         var onPanEnded: (() -> Void)?
         private var dragOrigin: CGPoint?
+        private var dragged = false
 
         override func scrollWheel(with event: NSEvent) {
-            onPan?(CGSize(width: event.scrollingDeltaX, height: event.scrollingDeltaY))
-            if event.phase == .ended || event.momentumPhase == .ended {
+            // Trackpads report precise point deltas with phases; mouse wheels
+            // report line-unit deltas with no phase at all — scale them and
+            // treat each event as self-terminating so the pan still commits.
+            let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 14
+            onPan?(CGSize(width: event.scrollingDeltaX * scale,
+                          height: event.scrollingDeltaY * scale))
+            if event.phase == .ended || event.momentumPhase == .ended
+                || (event.phase == [] && event.momentumPhase == []) {
                 onPanEnded?()
             }
         }
@@ -123,6 +131,7 @@ struct PanSurface: NSViewRepresentable {
 
         override func mouseDragged(with event: NSEvent) {
             guard let origin = dragOrigin else { return }
+            dragged = true
             let p = event.locationInWindow
             // Window coords are bottom-up; SwiftUI's are top-down.
             onPan?(CGSize(width: p.x - origin.x, height: origin.y - p.y))
@@ -130,8 +139,9 @@ struct PanSurface: NSViewRepresentable {
         }
 
         override func mouseUp(with event: NSEvent) {
+            if dragged { onPanEnded?() }
             dragOrigin = nil
-            onPanEnded?()
+            dragged = false
         }
     }
 }
