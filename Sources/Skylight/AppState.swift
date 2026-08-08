@@ -74,7 +74,7 @@ final class AppState: ObservableObject {
         if selection == nil { selection = instances.first.map { .item($0.id) } }
 
         sessions.onBell = { [weak self] id in
-            guard let self, self.selection != .item(id) else { return }
+            guard let self, !self.isVisible(id) else { return }
             self.attention.insert(id)
         }
         Self.shared = self
@@ -82,8 +82,18 @@ final class AppState: ObservableObject {
         $selection
             .dropFirst()
             .sink { [weak self] selection in
-                // Viewing an instance clears its pending attention.
-                if case let .item(id)? = selection { self?.attention.remove(id) }
+                // Whatever just became visible stops asking for attention.
+                guard let self else { return }
+                switch selection {
+                case let .item(id)?:
+                    self.attention.remove(id)
+                case let .canvas(boardID)?:
+                    for tile in self.canvases.first(where: { $0.id == boardID })?.tiles ?? [] {
+                        self.attention.remove(tile.itemID)
+                    }
+                case nil:
+                    break
+                }
             }
             .store(in: &observers)
         $selection
@@ -121,6 +131,16 @@ final class AppState: ObservableObject {
 
     func instance(_ id: UUID) -> TerminalInstance? {
         instances.first { $0.id == id }
+    }
+
+    /// True when an instance is on screen right now — selected full-window,
+    /// or a tile on the currently displayed canvas.
+    private func isVisible(_ id: UUID) -> Bool {
+        switch selection {
+        case let .item(selected): return selected == id
+        case let .canvas(boardID): return Residency.board(of: id, in: canvases) == boardID
+        case nil: return false
+        }
     }
 
     var freeInstances: [TerminalInstance] {
