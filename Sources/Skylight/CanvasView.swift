@@ -73,7 +73,8 @@ struct CanvasView: View {
                     onMagnifyEnded: { endZoomGesture() },
                     contextMenu: { viewPoint in
                         spawnMenu(at: contentPoint(viewPoint))
-                    }
+                    },
+                    installsMagnifyMonitor: reflowEnabled
                 )
                 DotGrid(pan: pan, zoom: zoom)
                     .allowsHitTesting(false)
@@ -319,12 +320,16 @@ struct CanvasView: View {
     private func applyReflow(in viewport: CGSize) {
         guard let board else { return }
         // Zoom-out sees more content; zoom-in must never shrink real tiles.
-        let z = min(1, safeZoom)
-        let contentViewport = CGSize(width: viewport.width / z, height: viewport.height / z)
-        let contentPan = CGPoint(x: pan.x / z, y: pan.y / z)
+        // Viewport clamp keeps zoom-in from shrinking tiles; the pan maps
+        // through the REAL zoom so the settled arrangement lands where the
+        // renderer draws it.
+        let scaleClamp = min(1, safeZoom)
+        let contentViewport = CGSize(width: viewport.width / scaleClamp,
+                                     height: viewport.height / scaleClamp)
+        let contentPan = CGPoint(x: pan.x / safeZoom, y: pan.y / safeZoom)
         guard let result = CanvasLayout.reflowed(tiles: board.tiles, pan: contentPan,
                                                  viewport: contentViewport) else { return }
-        let screenPan = CGPoint(x: result.pan.x * z, y: result.pan.y * z)
+        let screenPan = CGPoint(x: result.pan.x * safeZoom, y: result.pan.y * safeZoom)
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             pan = screenPan
         }
@@ -354,6 +359,10 @@ struct PanSurface: NSViewRepresentable {
     let onMagnifyEnded: () -> Void
     /// Builds the right-click menu for a point in CONTENT coordinates.
     let contextMenu: (CGPoint) -> NSMenu
+    /// Preview canvases (drop overlay) are pictures — a local monitor would
+    /// bypass their allowsHitTesting(false) and misroute pinches onto an
+    /// invisible board.
+    var installsMagnifyMonitor = true
 
     func makeNSView(context: Context) -> PanView {
         let view = PanView()
@@ -371,6 +380,7 @@ struct PanSurface: NSViewRepresentable {
         view.onMagnify = onMagnify
         view.onMagnifyEnded = onMagnifyEnded
         view.contextMenu = contextMenu
+        view.installsMagnifyMonitor = installsMagnifyMonitor
     }
 
     final class PanView: NSView {
@@ -379,6 +389,7 @@ struct PanSurface: NSViewRepresentable {
         var onMagnify: ((CGFloat, CGPoint) -> Void)?
         var onMagnifyEnded: (() -> Void)?
         var contextMenu: ((CGPoint) -> NSMenu)?
+        var installsMagnifyMonitor = true
         private var dragOrigin: CGPoint?
         private var dragged = false
         /// Nonisolated, Sendable storage: a `deinit` runs outside the main
@@ -408,7 +419,7 @@ struct PanSurface: NSViewRepresentable {
                 NSEvent.removeMonitor(monitor)
                 magnify.monitor = nil
             }
-            guard window != nil else { return }
+            guard window != nil, installsMagnifyMonitor else { return }
             magnify.monitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) {
                 [weak self] event in
                 guard let self, event.window === self.window else { return event }
