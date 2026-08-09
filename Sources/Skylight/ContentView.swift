@@ -35,6 +35,18 @@ struct ContentView: View {
         .sheet(isPresented: $state.newSheetShown) {
             NewTerminalSheet().environmentObject(state)
         }
+        // ⌘= is what a US keyboard produces without reaching for shift, and it
+        // is what hands expect for Zoom In. The menu keeps ⌘+ as its label;
+        // this is a zero-sized shortcut mirror, not a control.
+        .background {
+            Button("Zoom In") { state.requestZoom(.zoomIn) }
+                .keyboardShortcut("=", modifiers: [.command])
+                .disabled(!state.canvasZoomAvailable)
+                .buttonStyle(.plain)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
+        }
     }
 }
 
@@ -93,11 +105,6 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { bottomBar }
-        // Behind the rows, never in front of them: rows still select, rename,
-        // and drag; empty sidebar space moves the window. Applied to the whole
-        // column (list + bottom bar) so the margins around the New chip are a
-        // handle too.
-        .background(WindowDragArea())
         .navigationTitle("Skylight")
         .alert("Rename", isPresented: Binding(
             get: { renameTarget != nil },
@@ -155,6 +162,10 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
+        // The bottom bar doubles as the window's handle — always present while
+        // the sidebar is open. Behind the chip, so New still clicks; the empty
+        // band around it drags the window.
+        .background(WindowDragArea())
         // No flat band behind the chip — it floats on the window glass, so
         // there is not a single square-cornered surface left in the sidebar.
     }
@@ -356,6 +367,7 @@ struct TerminalRowLabel: View {
 
 struct DetailView: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
 
     var body: some View {
         ZStack {
@@ -372,6 +384,16 @@ struct DetailView: View {
         }
         .animation(.easeOut(duration: 0.18), value: state.draggingItemID)
         .animation(.spring(response: 0.3, dampingFraction: 0.85), value: state.focusedInstance)
+        // With the sidebar hidden its bottom-bar handle goes with it. The 30pt
+        // band the content already steps below is empty by design — so it
+        // becomes the handle, and the window is never without one.
+        .overlay(alignment: .top) {
+            if sidebarCollapsed {
+                WindowDragArea()
+                    .frame(height: 30)
+                    .ignoresSafeArea(edges: .top)
+            }
+        }
     }
 
     @ViewBuilder
@@ -619,13 +641,15 @@ private final class TransparentWindowEffectView: NSVisualEffectView {
         // The window never moves itself. Without this, AppKit's titlebar band
         // (invisible here, but still a drag region) steals the first inches of
         // every tile drag near the top of the canvas and walks the window
-        // instead. The sidebar is the handle — see WindowDragArea.
+        // instead. Two explicit handles replace it — the sidebar's bottom bar,
+        // and a strip across the reserved top band when the sidebar is hidden
+        // — so there is always exactly one place that moves the window.
         window?.isMovable = false
     }
 }
 
-/// The sidebar is the window's handle: grab any empty part of it to move the
-/// window (the canvas never moves it — tiles always win there).
+/// A region that moves the window: grab any empty part of it and drag (the
+/// canvas never moves the window — tiles always win there).
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DragView { DragView() }
     func updateNSView(_ nsView: DragView, context: Context) {}

@@ -5,6 +5,37 @@ import UniformTypeIdentifiers
 import GhosttyTerminal
 import SkylightCore
 
+/// One set of magnification limits for the whole canvas. A second, disagreeing
+/// floor somewhere else is exactly how a "safe" divisor stops being safe.
+private enum CanvasZoom {
+    /// Endless in feel, bounded in fact: below 0.2 tiles are unreadable specks,
+    /// above 3 a terminal is a wall of pixels.
+    static let minimum: CGFloat = 0.2
+    static let maximum: CGFloat = 3.0
+    /// How close to 100% still counts as 100%. Inside this band zoom snaps to
+    /// exactly 1 — that exactness is what re-arms typing and dragging.
+    static let snapTolerance: CGFloat = 0.02
+
+    /// Never divide by a raw zoom: a zero or NaN would send every coordinate on
+    /// the board to infinity, and the clamp is one bad edit away.
+    static func safe(_ zoom: CGFloat) -> CGFloat {
+        guard zoom.isFinite, zoom > minimum else { return minimum }
+        return zoom
+    }
+
+    static func clamped(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return 1 }
+        return min(maximum, max(minimum, value))
+    }
+
+    /// Anything within a hair of 100% *is* 100% — hit-testing keys off the
+    /// exact value, so near-misses would leave the canvas subtly untypable.
+    static func snapped(_ value: CGFloat) -> CGFloat {
+        let value = clamped(value)
+        return abs(value - 1) < snapTolerance ? 1 : value
+    }
+}
+
 /// An endless board of live tiles. There is no content frame — tiles live at
 /// absolute coordinates and the whole plane translates and scales under one
 /// viewport transform: `screen = content × zoom + pan`.
@@ -22,14 +53,6 @@ struct CanvasView: View {
     /// in the middle of a gesture.
     @State private var tileInteracting = false
     @StateObject private var reflowCoalescer = ReflowCoalescer()
-
-    /// Endless in feel, bounded in fact: below 0.2 tiles are unreadable specks,
-    /// above 3 a terminal is a wall of pixels.
-    private static let minZoom: CGFloat = 0.2
-    private static let maxZoom: CGFloat = 3.0
-    /// How close to 100% still counts as 100%. Inside this band zoom snaps to
-    /// exactly 1 — that exactness is what re-arms typing and dragging.
-    private static let snapTolerance: CGFloat = 0.02
 
     private var board: CanvasBoard? {
         state.canvases.first { $0.id == boardID }
@@ -77,7 +100,7 @@ struct CanvasView: View {
             .onAppear {
                 viewport = geo.size
                 pan = board?.pan ?? .zero
-                zoom = snappedZoom(board?.zoom ?? 1)
+                zoom = CanvasZoom.snapped(board?.zoom ?? 1)
                 revealIfPending(in: geo.size)
             }
             .onChange(of: geo.size) { old, size in
@@ -135,28 +158,11 @@ struct CanvasView: View {
 
     // MARK: - Viewport transform
 
-    /// Never divide by the raw zoom: a zero or NaN would send every coordinate
-    /// on the board to infinity, and the clamp is one bad edit away.
-    private var safeZoom: CGFloat {
-        guard zoom.isFinite, zoom > Self.minZoom else { return Self.minZoom }
-        return zoom
-    }
+    private var safeZoom: CGFloat { CanvasZoom.safe(zoom) }
 
     /// Screen (viewport) point → content point.
     private func contentPoint(_ point: CGPoint) -> CGPoint {
         CGPoint(x: (point.x - pan.x) / safeZoom, y: (point.y - pan.y) / safeZoom)
-    }
-
-    private func clampedZoom(_ value: CGFloat) -> CGFloat {
-        guard value.isFinite else { return 1 }
-        return min(Self.maxZoom, max(Self.minZoom, value))
-    }
-
-    /// Anything within a hair of 100% *is* 100% — hit-testing keys off the
-    /// exact value, so near-misses would leave the canvas subtly untypable.
-    private func snappedZoom(_ value: CGFloat) -> CGFloat {
-        let clamped = clampedZoom(value)
-        return abs(clamped - 1) < Self.snapTolerance ? 1 : clamped
     }
 
     private var viewportCenter: CGPoint {
@@ -173,14 +179,14 @@ struct CanvasView: View {
     }
 
     private func zoomBy(factor: CGFloat, around anchor: CGPoint) {
-        let target = clampedZoom(zoom * factor)
+        let target = CanvasZoom.clamped(zoom * factor)
         guard target != zoom else { return }
         setZoom(target, around: anchor)
     }
 
     /// Pinch ended: settle onto exactly 100% if we are close, then persist.
     private func endZoomGesture() {
-        let settled = snappedZoom(zoom)
+        let settled = CanvasZoom.snapped(zoom)
         if settled != zoom { setZoom(settled, around: viewportCenter) }
         commitViewport()
     }
@@ -196,9 +202,9 @@ struct CanvasView: View {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
             switch action {
             case .zoomIn:
-                setZoom(snappedZoom(zoom + 0.25), around: viewportCenter)
+                setZoom(CanvasZoom.snapped(zoom + 0.25), around: viewportCenter)
             case .zoomOut:
-                setZoom(snappedZoom(zoom - 0.25), around: viewportCenter)
+                setZoom(CanvasZoom.snapped(zoom - 0.25), around: viewportCenter)
             case .actual:
                 setZoom(1, around: viewportCenter)
             case .fit:
@@ -206,9 +212,9 @@ struct CanvasView: View {
                     setZoom(1, around: viewportCenter)
                     break
                 }
-                let target = snappedZoom(
+                let target = CanvasZoom.snapped(
                     CanvasLayout.fitZoom(bounds: bounds, viewport: viewport,
-                                         minZoom: Self.minZoom))
+                                         minZoom: CanvasZoom.minimum))
                 zoom = target
                 pan = CanvasLayout.centeringPan(bounds: bounds, viewport: viewport,
                                                 zoom: target)
@@ -229,8 +235,8 @@ struct CanvasView: View {
             && onScreen.maxX <= viewport.width - margin
             && onScreen.maxY <= viewport.height - margin
         if fits { return false }
-        let target = snappedZoom(CanvasLayout.fitZoom(bounds: bounds, viewport: viewport,
-                                                     minZoom: Self.minZoom))
+        let target = CanvasZoom.snapped(CanvasLayout.fitZoom(bounds: bounds, viewport: viewport,
+                                                     minZoom: CanvasZoom.minimum))
         let targetPan = CanvasLayout.centeringPan(bounds: bounds, viewport: viewport,
                                                   zoom: target)
         withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
@@ -312,7 +318,8 @@ struct CanvasView: View {
     /// the pan travels in and out of content space with it.
     private func applyReflow(in viewport: CGSize) {
         guard let board else { return }
-        let z = safeZoom
+        // Zoom-out sees more content; zoom-in must never shrink real tiles.
+        let z = min(1, safeZoom)
         let contentViewport = CGSize(width: viewport.width / z, height: viewport.height / z)
         let contentPan = CGPoint(x: pan.x / z, y: pan.y / z)
         guard let result = CanvasLayout.reflowed(tiles: board.tiles, pan: contentPan,
@@ -374,6 +381,16 @@ struct PanSurface: NSViewRepresentable {
         var contextMenu: ((CGPoint) -> NSMenu)?
         private var dragOrigin: CGPoint?
         private var dragged = false
+        /// Nonisolated, Sendable storage: a `deinit` runs outside the main
+        /// actor's guarantees, and it is the last chance to let the monitor go.
+        private final class MonitorBox: @unchecked Sendable {
+            var monitor: Any?
+        }
+        private let magnify = MonitorBox()
+
+        deinit {
+            if let monitor = magnify.monitor { NSEvent.removeMonitor(monitor) }
+        }
 
         /// The view is unflipped; SwiftUI's viewport space is top-left.
         private func viewportPoint(_ locationInWindow: CGPoint) -> CGPoint {
@@ -381,8 +398,35 @@ struct PanSurface: NSViewRepresentable {
             return CGPoint(x: p.x, y: bounds.height - p.y)
         }
 
+        /// A pinch over a tile is delivered to the terminal's view, and the
+        /// responder chain walks up through its ancestors — never sideways to
+        /// this sibling. A window-local monitor sees the event first, so the
+        /// canvas zooms wherever the cursor is, not only over empty space.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor = magnify.monitor {
+                NSEvent.removeMonitor(monitor)
+                magnify.monitor = nil
+            }
+            guard window != nil else { return }
+            magnify.monitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) {
+                [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                let p = self.convert(event.locationInWindow, from: nil)
+                guard self.bounds.contains(p) else { return event }
+                self.handleMagnify(event, at: p)
+                return nil   // consumed — no double handling via the responder chain
+            }
+        }
+
+        /// Harmless when the monitor already consumed the event; this is the
+        /// path for any pinch that reaches us the ordinary way.
         override func magnify(with event: NSEvent) {
-            onMagnify?(event.magnification, viewportPoint(event.locationInWindow))
+            handleMagnify(event, at: convert(event.locationInWindow, from: nil))
+        }
+
+        private func handleMagnify(_ event: NSEvent, at p: CGPoint) {
+            onMagnify?(event.magnification, CGPoint(x: p.x, y: bounds.height - p.y))
             if event.phase == .ended || event.phase == .cancelled {
                 onMagnifyEnded?()
             }
@@ -440,10 +484,10 @@ private struct DotGrid: View {
 
     var body: some View {
         Canvas { context, size in
-            let step = CanvasLayout.grid * 4 * (zoom.isFinite ? max(0.05, zoom) : 1)
+            let step = CanvasLayout.grid * 4 * CanvasZoom.safe(zoom)
             // Zoomed far out the dots crowd into noise — a plain field reads
             // better than a grey haze.
-            guard step >= 8 else { return }
+            guard step >= 16 else { return }
             let startX = pan.x.truncatingRemainder(dividingBy: step) - step
             let startY = pan.y.truncatingRemainder(dividingBy: step) - step
             var x = startX
@@ -490,8 +534,7 @@ struct TileView: View {
 
     /// Gestures arrive in screen points; the board thinks in content points.
     private var safeZoom: CGFloat {
-        guard zoom.isFinite, zoom > 0.05 else { return 0.05 }
-        return zoom
+        CanvasZoom.safe(zoom)
     }
 
     private var liveFrame: CGRect {
@@ -768,7 +811,7 @@ struct CanvasDropOverlay: View {
     /// zero zoom the way CanvasView's own conversion is.
     private static func contentPoint(_ point: CGPoint, pan: CGPoint,
                                      zoom: CGFloat) -> CGPoint {
-        let z = (zoom.isFinite && zoom > 0.05) ? zoom : 0.05
+        let z = CanvasZoom.safe(zoom)
         return CGPoint(x: (point.x - pan.x) / z, y: (point.y - pan.y) / z)
     }
 
@@ -776,7 +819,7 @@ struct CanvasDropOverlay: View {
     /// repositioned tile's real size, and the same free-space dodge a new
     /// tile's drop will take. Content-space placement, screen-space rectangle.
     private func ghostFrame(at location: CGPoint, pan: CGPoint, zoom: CGFloat) -> CGRect {
-        let z = (zoom.isFinite && zoom > 0.05) ? zoom : 0.05
+        let z = CanvasZoom.safe(zoom)
         let resident = targetBoard?.tiles.first { $0.itemID == itemID }
         let size = resident?.size ?? CanvasLayout.defaultTileSize
         let content = Self.contentPoint(location, pan: pan, zoom: zoom)

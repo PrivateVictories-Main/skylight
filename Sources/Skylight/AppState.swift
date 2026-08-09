@@ -195,6 +195,12 @@ final class AppState: ObservableObject {
         return nil
     }
 
+    /// True only when a canvas is both selected AND actually on screen — focus
+    /// mode covers it, and a zoom you cannot see is a silent no-op.
+    var canvasZoomAvailable: Bool {
+        selectedCanvasID != nil && focusedInstance == nil
+    }
+
     var freeInstances: [TerminalInstance] {
         Residency.free(instances, boards: canvases)
     }
