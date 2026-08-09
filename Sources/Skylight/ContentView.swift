@@ -122,11 +122,11 @@ struct SidebarView: View {
                     .frame(height: 30)
                     .contentShape(Rectangle())
                     .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.primary.opacity(0.07))
                     )
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .strokeBorder(Color.primary.opacity(0.14))
                     )
             }
@@ -135,7 +135,8 @@ struct SidebarView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 9)
-        .background(.bar)
+        // No flat band behind the chip — it floats on the window glass, so
+        // there is not a single square-cornered surface left in the sidebar.
     }
 }
 
@@ -395,14 +396,14 @@ struct FullInstanceView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
-                               cornerRadius: 12)
+                               cornerRadius: 16)
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
             .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
@@ -410,7 +411,7 @@ struct FullInstanceView: View {
             // outline reads, sidebar-row style. Six points, not four: the
             // window's own corner mask must clear our corners or it slices
             // them — R_window − inset ≤ R_panel, sized for this OS's rounder
-            // windows: inset 8 + radius 12 nests under radii up to 20.
+            // windows: inset 8 + radius 16 nests under radii up to 24.
             .padding(8)
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
@@ -429,12 +430,12 @@ struct FocusView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
-                               cornerRadius: 12)
+                               cornerRadius: 16)
             // Same Ghostty-style top-riding text as FullInstanceView.
             .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
-                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }

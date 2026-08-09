@@ -307,14 +307,14 @@ struct TileView: View {
         VStack(spacing: 0) {
             header
             PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
-                                   cornerRadius: 12,
+                                   cornerRadius: 16,
                                    maskedCorners: [.layerMinXMinYCorner, .layerMaxXMinYCorner])
         }
         .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
         .overlay(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
                     grabbing
                         ? AnyShapeStyle(Color.accentColor.opacity(0.5))
@@ -498,10 +498,10 @@ struct CanvasDropOverlay: View {
                 }
                 if let ghost {
                     let frame = ghostFrame(at: ghost, pan: targetBoard?.pan ?? .zero)
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Color.accentColor.opacity(0.06))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
                                 .strokeBorder(Color.accentColor.opacity(0.7),
                                               style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
                         )
@@ -566,7 +566,6 @@ struct CanvasDropOverlay: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(.bar)
     }
 
     private func chip(_ title: String, active: Bool) -> some View {
