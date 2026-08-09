@@ -403,18 +403,9 @@ struct FullInstanceView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [.white.opacity(0.28), .white.opacity(0.05),
-                                     .black.opacity(0.12)],
-                            startPoint: .top, endPoint: .bottom),
-                        lineWidth: 1
-                    )
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
-            .padding(.top, 4)
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
             .toolbarBackground(.hidden, for: .windowToolbar)
@@ -439,18 +430,9 @@ struct FocusView: View {
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(
-                        LinearGradient(
-                            colors: [.white.opacity(0.28), .white.opacity(0.05),
-                                     .black.opacity(0.12)],
-                            startPoint: .top, endPoint: .bottom),
-                        lineWidth: 1
-                    )
+                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(.horizontal, 10)
-            .padding(.bottom, 10)
-            .padding(.top, 4)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {
