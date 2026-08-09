@@ -394,19 +394,19 @@ struct FullInstanceView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
-            // The glass rises to the window top, but AppKit still owns the top
-            // ~28pt as a titlebar drag region: text starting up there would be
-            // unclickable. The inset keeps the first row honest.
-            .padding(.top, 34)
-            // Terminal-toned backing (not material): the strip above the text
-            // reads as the same white surface, Ghostty-style, in both modes.
+            // Text rides to the very top, Ghostty-style: the terminal NSView
+            // handles its own mouseDown, so AppKit yields the titlebar band
+            // to it instead of dragging the window (drag by the sidebar).
             .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+            // A sliver of window glass around all four sides so the hairline
+            // outline reads, sidebar-row style — every other pixel is terminal.
+            .padding(4)
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
             .toolbarBackground(.hidden, for: .windowToolbar)
@@ -424,17 +424,15 @@ struct FocusView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
-            // Same drag-region clearance as FullInstanceView.
-            .padding(.top, 34)
-            // Terminal-toned backing (not material): the strip above the text
-            // reads as the same white surface, Ghostty-style, in both modes.
+            // Same Ghostty-style top-riding text as FullInstanceView.
             .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5)
+                    .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+            .padding(4)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {
