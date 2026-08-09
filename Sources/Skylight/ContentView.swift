@@ -398,8 +398,9 @@ struct FullInstanceView: View {
             // ~28pt as a titlebar drag region: text starting up there would be
             // unclickable. The inset keeps the first row honest.
             .padding(.top, 34)
-            .padding(10)
-            .background(.ultraThinMaterial)
+            // Terminal-toned backing (not material): the strip above the text
+            // reads as the same white surface, Ghostty-style, in both modes.
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -425,8 +426,9 @@ struct FocusView: View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
             // Same drag-region clearance as FullInstanceView.
             .padding(.top, 34)
-            .padding(10)
-            .background(.ultraThinMaterial)
+            // Terminal-toned backing (not material): the strip above the text
+            // reads as the same white surface, Ghostty-style, in both modes.
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
