@@ -405,8 +405,10 @@ struct FullInstanceView: View {
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
             // A sliver of window glass around all four sides so the hairline
-            // outline reads, sidebar-row style — every other pixel is terminal.
-            .padding(4)
+            // outline reads, sidebar-row style. Six points, not four: the
+            // window's own corner mask (radius ~16 on this OS) must clear our
+            // radius-10 corners or it slices them — R_window − inset = R_panel.
+            .padding(6)
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
             .toolbarBackground(.hidden, for: .windowToolbar)
@@ -432,7 +434,7 @@ struct FocusView: View {
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(4)
+            .padding(6)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {
