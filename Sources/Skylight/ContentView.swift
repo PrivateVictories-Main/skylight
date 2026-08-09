@@ -1,3 +1,4 @@
+import QuartzCore
 import SwiftUI
 import GhosttyTerminal
 import SkylightCore
@@ -393,22 +394,24 @@ struct FullInstanceView: View {
     let instance: TerminalInstance
 
     var body: some View {
-        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+                               cornerRadius: 12)
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
             // A sliver of window glass around all four sides so the hairline
             // outline reads, sidebar-row style. Six points, not four: the
-            // window's own corner mask (radius ~16 on this OS) must clear our
-            // radius-10 corners or it slices them — R_window − inset = R_panel.
-            .padding(6)
+            // window's own corner mask must clear our corners or it slices
+            // them — R_window − inset ≤ R_panel, sized for this OS's rounder
+            // windows: inset 8 + radius 12 nests under radii up to 20.
+            .padding(8)
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
             .toolbarBackground(.hidden, for: .windowToolbar)
@@ -425,16 +428,17 @@ struct FocusView: View {
     let instance: TerminalInstance
 
     var body: some View {
-        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+                               cornerRadius: 12)
             // Same Ghostty-style top-riding text as FullInstanceView.
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.92))
-            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(6)
+            .padding(8)
             .toolbar {
                 ToolbarItem(placement: .navigation) {
                     Button {
@@ -497,9 +501,29 @@ struct MissingHarnessBanner: View {
 /// only reparents it.
 struct PersistentTerminalView: NSViewRepresentable {
     let view: TerminalView
+    /// Rounding lives on the terminal's OWN layer, not a SwiftUI clip: a
+    /// SwiftUI mask lags the Metal surface during live resize and slices the
+    /// corners; the AppKit layer mask moves atomically with the view.
+    var cornerRadius: CGFloat = 0
+    var maskedCorners: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
+                                       .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
 
-    func makeNSView(context: Context) -> TerminalView { view }
-    func updateNSView(_ nsView: TerminalView, context: Context) {}
+    func makeNSView(context: Context) -> TerminalView {
+        applyRounding(view)
+        return view
+    }
+
+    func updateNSView(_ nsView: TerminalView, context: Context) {
+        applyRounding(nsView)
+    }
+
+    private func applyRounding(_ v: TerminalView) {
+        v.wantsLayer = true
+        v.layer?.cornerRadius = cornerRadius
+        v.layer?.cornerCurve = .continuous
+        v.layer?.maskedCorners = maskedCorners
+        v.layer?.masksToBounds = cornerRadius > 0
+    }
 }
 
 /// The whole window carries a soft blur so the app reads as one piece of

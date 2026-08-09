@@ -306,7 +306,9 @@ struct TileView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+                                   cornerRadius: 12,
+                                   maskedCorners: [.layerMinXMinYCorner, .layerMaxXMinYCorner])
         }
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
