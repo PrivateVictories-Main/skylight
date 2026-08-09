@@ -27,6 +27,37 @@ final class LayoutTests: XCTestCase {
                        CGSize(width: 512, height: 400))
     }
 
+    func testResizeFarEdgeNeverSlides() {
+        let frame = CGRect(x: 96, y: 96, width: 608, height: 400)
+        // Sweep half-grid ties and past-min drags on the left edge: the right
+        // edge must stay at exactly 704 through every one of them.
+        for dx in stride(from: -64.0, through: 64.0, by: 0.5) {
+            let commit = CanvasLayout.resizeCommit(frame,
+                by: CanvasLayout.EdgeDeltas(left: dx))
+            XCTAssertEqual(commit.maxX, 704, "left drag dx=\(dx) slid the right edge")
+        }
+        for dx in stride(from: -400.0, through: 64.0, by: 0.5) {
+            let commit = CanvasLayout.resizeCommit(frame,
+                by: CanvasLayout.EdgeDeltas(right: dx))
+            XCTAssertEqual(commit.minX, 96, "right drag dx=\(dx) slid the left edge")
+        }
+    }
+
+    func testResizeClampStopsOriginAtMinimum() {
+        let frame = CGRect(x: 96, y: 96, width: 608, height: 400)
+        let live = CanvasLayout.resized(frame, by: CanvasLayout.EdgeDeltas(left: 500))
+        XCTAssertEqual(live.width, CanvasLayout.minTileSize.width)
+        XCTAssertEqual(live.maxX, 704)   // far edge pinned even past the min
+    }
+
+    func testResizeNoOpWhenClampedToZero() {
+        // Min-width tile, off-grid origin, inward left drag: nothing may move.
+        let frame = CGRect(x: 105, y: 96, width: 320, height: 400)
+        let commit = CanvasLayout.resizeCommit(frame,
+            by: CanvasLayout.EdgeDeltas(left: 30))
+        XCTAssertEqual(commit, frame)
+    }
+
     func testStaggeredOriginWalksDiagonally() {
         XCTAssertEqual(CanvasLayout.staggeredOrigin(existing: 0), CGPoint(x: 48, y: 48))
         XCTAssertEqual(CanvasLayout.staggeredOrigin(existing: 2), CGPoint(x: 176, y: 144))

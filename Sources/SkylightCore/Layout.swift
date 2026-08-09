@@ -56,6 +56,60 @@ public enum CanvasLayout {
         )
     }
 
+    // MARK: - Window-style edge resize
+
+    /// Per-edge deltas for a window-style resize. Left/top move the origin
+    /// and shrink the size; right/bottom only grow it.
+    public struct EdgeDeltas: Equatable, Sendable {
+        public var left: CGFloat
+        public var right: CGFloat
+        public var top: CGFloat
+        public var bottom: CGFloat
+
+        public init(left: CGFloat = 0, right: CGFloat = 0,
+                    top: CGFloat = 0, bottom: CGFloat = 0) {
+            self.left = left
+            self.right = right
+            self.top = top
+            self.bottom = bottom
+        }
+
+        public var isZero: Bool { self == EdgeDeltas() }
+    }
+
+    /// The live frame during an edge resize: clamps keep either edge from
+    /// pushing past the minimum, and a clamped edge stops the ORIGIN too —
+    /// the far edge never slides. (min-floor at 0: a right/bottom drag can
+    /// never move the left/top origin.)
+    public static func resized(_ frame: CGRect, by edges: EdgeDeltas) -> CGRect {
+        let minW = minTileSize.width
+        let minH = minTileSize.height
+        let left = min(edges.left, max(0, frame.width - minW + edges.right))
+        let top = min(edges.top, max(0, frame.height - minH + edges.bottom))
+        return CGRect(
+            x: frame.origin.x + left,
+            y: frame.origin.y + top,
+            width: max(minW, frame.width + edges.right - left),
+            height: max(minH, frame.height + edges.bottom - top)
+        )
+    }
+
+    /// Commit snapping for an edge resize: each edge that MOVED snaps to the
+    /// grid; edges that did not move stay byte-exact (independent origin/size
+    /// rounding slides the stationary edge on half-grid ties).
+    public static func resizeCommit(_ frame: CGRect, by edges: EdgeDeltas) -> CGRect {
+        let live = resized(frame, by: edges)
+        let leftMoved = min(edges.left, max(0, frame.width - minTileSize.width + edges.right)) != 0
+        let topMoved = min(edges.top, max(0, frame.height - minTileSize.height + edges.bottom)) != 0
+        let x0 = leftMoved ? (live.minX / grid).rounded() * grid : frame.minX
+        let y0 = topMoved ? (live.minY / grid).rounded() * grid : frame.minY
+        let x1 = edges.right != 0 ? (live.maxX / grid).rounded() * grid : frame.maxX
+        let y1 = edges.bottom != 0 ? (live.maxY / grid).rounded() * grid : frame.maxY
+        return CGRect(x: x0, y: y0,
+                      width: max(minTileSize.width, x1 - x0),
+                      height: max(minTileSize.height, y1 - y0))
+    }
+
     /// Window-shrink reflow: keep the whole arrangement visible and readable.
     /// First shifts pan so the tiles' bounding box sits inside the viewport;
     /// if the box no longer fits, scales positions AND sizes proportionally

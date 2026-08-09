@@ -534,16 +534,6 @@ struct TileView: View {
     /// Tapping a minified tile flies the canvas to it at 100%.
     var onOverviewTap: () -> Void = {}
 
-    /// Live per-edge resize deltas (content-space). Left/top move the origin
-    /// AND shrink the size; right/bottom only grow the size.
-    private struct EdgeDeltas: Equatable {
-        var left: CGFloat = 0
-        var right: CGFloat = 0
-        var top: CGFloat = 0
-        var bottom: CGFloat = 0
-        var isZero: Bool { self == EdgeDeltas() }
-    }
-
     /// Which grab strip a gesture came from. No two opposite edges are ever
     /// live at once — a corner drives one horizontal and one vertical edge.
     private enum ResizeEdge {
@@ -552,7 +542,9 @@ struct TileView: View {
     }
 
     @State private var dragOffset: CGSize = .zero
-    @State private var edges = EdgeDeltas()
+    /// Live per-edge resize deltas, in content space. The geometry itself
+    /// lives in SkylightCore, where it is testable.
+    @State private var edges = CanvasLayout.EdgeDeltas()
     @State private var grabbing = false
 
     /// AppKit hit-tests by untransformed frames, so a scaled-down terminal
@@ -565,21 +557,16 @@ struct TileView: View {
         CanvasZoom.safe(zoom)
     }
 
-    /// The clamps are the whole correctness story. `left` is how far the ORIGIN
-    /// moves, so it is capped at the point where the tile hits its minimum —
-    /// past that the origin stops dead and the far edge never slides. The `0`
-    /// floor is the mirror case: dragging the RIGHT edge left past the minimum
-    /// must pin the width, never haul the origin backwards with it.
+    /// The moved frame: the header drag translates it, the ring resizes it.
+    /// The clamps that stop an origin at the minimum — so the far edge never
+    /// slides — are `CanvasLayout.resized`'s job, under test.
     private var liveFrame: CGRect {
-        let minW = CanvasLayout.minTileSize.width
-        let minH = CanvasLayout.minTileSize.height
-        let left = min(edges.left, max(0, tile.size.width - minW + edges.right))
-        let top = min(edges.top, max(0, tile.size.height - minH + edges.bottom))
-        return CGRect(
-            x: tile.origin.x + dragOffset.width + left,
-            y: tile.origin.y + dragOffset.height + top,
-            width: max(minW, tile.size.width + edges.right - left),
-            height: max(minH, tile.size.height + edges.bottom - top)
+        CanvasLayout.resized(
+            CGRect(x: tile.origin.x + dragOffset.width,
+                   y: tile.origin.y + dragOffset.height,
+                   width: tile.size.width,
+                   height: tile.size.height),
+            by: edges
         )
     }
 
@@ -626,6 +613,15 @@ struct TileView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.origin)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.size)
         .zIndex(grabbing ? 1 : 0)
+        // Belt and braces for the same teardown: whatever route the ring took
+        // out of existence, half-finished deltas and a latched `interacting`
+        // must not outlive it.
+        .onChange(of: interactive) { _, isInteractive in
+            if !isInteractive {
+                edges = .init()
+                interacting = false
+            }
+        }
     }
 
     /// In overview the whole tile is one button: tap it and the canvas flies
@@ -732,7 +728,9 @@ struct TileView: View {
             .padding(5)
             .contentShape(Rectangle())
             .gesture(
-                DragGesture()
+                // Same 1pt threshold as the ring: two grab affordances that
+                // start at different distances feel like two different tools.
+                DragGesture(minimumDistance: 1)
                     .onChanged { applyResize(.bottomRight, translation: $0.translation) }
                     .onEnded { _ in commitResize() }
             )
@@ -811,27 +809,27 @@ struct TileView: View {
         }
     }
 
-    /// One commit path for the ring AND the corner button: grid-snap the
-    /// resulting frame (origin and size), clamp to minimums, persist once.
+    /// One commit path for the ring AND the corner button: snap the edges this
+    /// gesture actually moved, leave the rest byte-exact, persist once.
     private func commitResize() {
-        // A gesture that ended without ever moving must not silently re-snap a
-        // magnet-aligned origin onto the grid — a click is not a resize.
+        // A gesture that ended without ever moving is a click, not a resize.
         guard !edges.isZero else {
             interacting = false
             return
         }
+        let commit = CanvasLayout.resizeCommit(tile.frame, by: edges)
+        // Clamped to a standstill (already at the minimum, dragged further in):
+        // writing an identical tile back would still cost a persist and a
+        // spring, so end the gesture and leave the board alone.
+        guard commit != tile.frame else {
+            edges = .init()
+            interacting = false
+            return
+        }
         var updated = tile
-        let frame = liveFrame
-        let snappedOrigin = CanvasLayout.snapped(frame.origin)
-        // Snap an axis only when this gesture actually moved that origin edge.
-        // A bottom-right drag must not quietly re-grid an origin the move
-        // magnets deliberately aligned to a neighbour.
-        updated.origin = CGPoint(
-            x: edges.left != 0 ? snappedOrigin.x : tile.origin.x,
-            y: edges.top != 0 ? snappedOrigin.y : tile.origin.y
-        )
-        updated.size = CanvasLayout.snapped(frame.size)
-        edges = EdgeDeltas()
+        updated.origin = commit.origin
+        updated.size = commit.size
+        edges = .init()
         interacting = false
         state.updateTile(updated, in: boardID)
     }
@@ -877,9 +875,12 @@ private struct ResizeZone: View {
                         onEnded()
                     }
             )
-            // The ring is torn down whenever the canvas leaves 100%. Without
-            // this, zooming out mid-hover would strand a resize cursor.
+            // The ring is torn down whenever the canvas leaves 100%. A gesture
+            // in flight gets its end path run anyway — otherwise the drag's
+            // deltas and the board-wide `interacting` latch both survive a
+            // view that no longer exists, and reflow never un-pauses.
             .onDisappear {
+                if dragging { onEnded() }
                 hovering = false
                 dragging = false
                 syncCursor()
