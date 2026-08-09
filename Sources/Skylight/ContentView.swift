@@ -3,16 +3,31 @@ import SwiftUI
 import GhosttyTerminal
 import SkylightCore
 
+/// True while the sidebar is collapsed — the window controls then float over
+/// the detail area, and content must step below them instead of underlapping.
+private struct SidebarCollapsedKey: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    var sidebarCollapsed: Bool {
+        get { self[SidebarCollapsedKey.self] }
+        set { self[SidebarCollapsedKey.self] = newValue }
+    }
+}
+
 struct ContentView: View {
     @EnvironmentObject private var state: AppState
+    @State private var columnVisibility: NavigationSplitViewVisibility = .all
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             SidebarView()
                 .navigationSplitViewColumnWidth(min: 220, ideal: 248)
         } detail: {
             DetailView()
         }
+        .environment(\.sidebarCollapsed, columnVisibility == .detailOnly)
         .frame(minWidth: 1080, minHeight: 700)
         .background(WindowBlur().ignoresSafeArea())
         // Owned by the split view, not the sidebar: a collapsed sidebar must
@@ -378,6 +393,8 @@ struct DetailView: View {
 }
 
 struct EmptyDetail: View {
+    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
+
     var body: some View {
         ContentUnavailableView(
             "No Terminal Selected",
@@ -385,13 +402,14 @@ struct EmptyDetail: View {
             description: Text("Pick a terminal or canvas from the sidebar, or press ⌘T.")
         )
         .toolbarBackground(.hidden, for: .windowToolbar)
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
     }
 }
 
 /// Full-window view of a single instance.
 struct FullInstanceView: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let instance: TerminalInstance
 
     var body: some View {
@@ -420,7 +438,9 @@ struct FullInstanceView: View {
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
             .toolbarBackground(.hidden, for: .windowToolbar)
-            .ignoresSafeArea(edges: .top)
+            // Collapsed sidebar = traffic lights float over the detail area;
+            // step below them, reclaim the top when the sidebar returns.
+            .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
     }
 }
 
@@ -430,6 +450,7 @@ struct FullInstanceView: View {
 /// `.onExitCommand` only fires in the rare case nothing consumed the key.
 struct FocusView: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let instance: TerminalInstance
 
     var body: some View {
@@ -463,7 +484,9 @@ struct FocusView: View {
             // The Back button floats over the glass instead of reserving a
             // toolbar band, and the panel rises into the title-bar strip.
             .toolbarBackground(.hidden, for: .windowToolbar)
-            .ignoresSafeArea(edges: .top)
+            // Collapsed sidebar = traffic lights float over the detail area;
+            // step below them, reclaim the top when the sidebar returns.
+            .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
     }
 }
 

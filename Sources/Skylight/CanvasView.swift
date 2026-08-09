@@ -9,6 +9,7 @@ import SkylightCore
 /// absolute coordinates and the whole plane translates under a pan offset.
 struct CanvasView: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let boardID: UUID
     /// The drag-preview copy of a board must never rearrange it.
     var reflowEnabled = true
@@ -81,7 +82,7 @@ struct CanvasView: View {
         // The dot grid reaches the window top: no toolbar band, no safe-area
         // gap between the glass and the traffic lights.
         .toolbarBackground(.hidden, for: .windowToolbar)
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
         .overlay {
             if board?.tiles.isEmpty ?? true {
                 ContentUnavailableView(
@@ -460,6 +461,9 @@ final class DragToken: NSItemProvider, @unchecked Sendable {
 /// for every other canvas and a new one.
 struct CanvasDropOverlay: View {
     @EnvironmentObject private var state: AppState
+    // Must mirror CanvasView's safe-area claim exactly, or the drag ghost
+    // and the landed tile disagree by the titlebar height when collapsed.
+    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let itemID: UUID
     @State private var ghost: CGPoint?
 
@@ -523,7 +527,7 @@ struct CanvasDropOverlay: View {
         // Same origin as the CanvasView underneath it: if the overlay kept the
         // safe-area inset the canvas gave up, every ghost would sit ~28pt above
         // where the tile actually lands.
-        .ignoresSafeArea(edges: .top)
+        .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
     }
 
     /// Mirror of addTile's placement so the ghost never lies — including a
