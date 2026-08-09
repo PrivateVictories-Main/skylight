@@ -402,6 +402,10 @@ struct FullInstanceView: View {
             // to it instead of dragging the window (drag by the sidebar).
             .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            // Hard clip on top of the layer mask: ghostty's Metal surface is
+            // sized in whole cells and overhangs a few pixels on the right —
+            // the layer mask misses that sliver, this catches it.
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
@@ -434,6 +438,10 @@ struct FocusView: View {
             // Same Ghostty-style top-riding text as FullInstanceView.
             .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            // Hard clip on top of the layer mask: ghostty's Metal surface is
+            // sized in whole cells and overhangs a few pixels on the right —
+            // the layer mask misses that sliver, this catches it.
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
