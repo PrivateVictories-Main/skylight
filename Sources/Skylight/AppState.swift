@@ -186,11 +186,6 @@ final class AppState: ObservableObject {
     /// presets, and the New sheet all use. Records the combo locally so the
     /// most-used launch can become a one-click recommendation.
     func launch(_ spec: TerminalSpec, name: String? = nil) {
-        if let spawn = pendingSpawn {
-            pendingSpawn = nil
-            launchTile(spec, name: name, on: spawn.canvasID, at: spawn.point)
-            return
-        }
         let base = name ?? Self.defaultName(for: spec)
         let siblings = instances.filter {
             $0.name == base || $0.name.hasPrefix("\(base) ")
@@ -203,6 +198,17 @@ final class AppState: ObservableObject {
         usage.record(spec)
         persistUsage()
         persist()
+    }
+
+    /// The sheet's launches honor a right-click spawn target; every other
+    /// entry point (⇧⌘T, command menu) never does.
+    func launchFromSheet(_ spec: TerminalSpec, name: String? = nil) {
+        if let spawn = pendingSpawn {
+            pendingSpawn = nil
+            launchTile(spec, name: name, on: spawn.canvasID, at: spawn.point)
+            return
+        }
+        launch(spec, name: name)
     }
 
     /// Create a new instance directly as a tile on a canvas, at a content

@@ -84,7 +84,7 @@ struct NewTerminalSheet: View {
     }
 
     private func launch(_ spec: TerminalSpec, name: String? = nil) {
-        state.launch(spec, name: name)
+        state.launchFromSheet(spec, name: name)
         dismiss()
     }
 
