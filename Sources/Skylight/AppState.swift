@@ -10,6 +10,19 @@ enum Selection: Hashable {
     case canvas(UUID)
 }
 
+/// A menu-driven zoom on the visible canvas.
+enum CanvasZoomAction: Equatable {
+    case zoomIn, zoomOut, fit, actual
+}
+
+/// One zoom command, addressed to a board. `id` makes two identical requests
+/// distinct so `.onChange` fires for a second ⌘+ in a row.
+struct CanvasZoomRequest: Equatable {
+    let id = UUID()
+    let canvasID: UUID
+    let action: CanvasZoomAction
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var instances: [TerminalInstance]
@@ -22,6 +35,9 @@ final class AppState: ObservableObject {
     @Published var focusedInstance: UUID?
     /// Tile to center after opening a canvas from its sidebar row.
     @Published var pendingReveal: UUID?
+    /// Menu/keyboard zoom aimed at a canvas — the visible CanvasView owns the
+    /// live transform, so commands travel to it the way reveals do.
+    @Published var canvasZoomRequest: CanvasZoomRequest?
     /// Non-nil while a sidebar row is mid-drag; the detail area shows the
     /// canvas drop surface for exactly that long.
     @Published var draggingItemID: UUID?
@@ -172,6 +188,13 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// The canvas on screen right now, if any — zoom commands are dead
+    /// keystrokes without one.
+    var selectedCanvasID: UUID? {
+        if case let .canvas(id)? = selection { return id }
+        return nil
+    }
+
     var freeInstances: [TerminalInstance] {
         Residency.free(instances, boards: canvases)
     }
@@ -299,6 +322,19 @@ final class AppState: ObservableObject {
     func setPan(_ pan: CGPoint, for canvasID: UUID) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
         canvases[index].pan = pan
+    }
+
+    /// Zoom persists like pan: state now, disk write coalesced.
+    func setZoom(_ zoom: CGFloat, for canvasID: UUID) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        canvases[index].zoom = zoom
+    }
+
+    /// Aim a zoom command at whatever canvas is on screen. No canvas, no-op —
+    /// the menu items are disabled in that state anyway.
+    func requestZoom(_ action: CanvasZoomAction) {
+        guard let id = selectedCanvasID else { return }
+        canvasZoomRequest = CanvasZoomRequest(canvasID: id, action: action)
     }
 
     // MARK: - Tiles

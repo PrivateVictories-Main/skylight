@@ -93,6 +93,11 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { bottomBar }
+        // Behind the rows, never in front of them: rows still select, rename,
+        // and drag; empty sidebar space moves the window. Applied to the whole
+        // column (list + bottom bar) so the margins around the New chip are a
+        // handle too.
+        .background(WindowDragArea())
         .navigationTitle("Skylight")
         .alert("Rename", isPresented: Binding(
             get: { renameTarget != nil },
@@ -402,7 +407,9 @@ struct EmptyDetail: View {
             description: Text("Pick a terminal or canvas from the sidebar, or press ⌘T.")
         )
         .toolbarBackground(.hidden, for: .windowToolbar)
-        .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
+        .padding(.top, sidebarCollapsed ? 30 : 0)
+        .ignoresSafeArea(edges: .top)
+        .animation(.easeOut(duration: 0.22), value: sidebarCollapsed)
     }
 }
 
@@ -439,54 +446,84 @@ struct FullInstanceView: View {
             // side can own every pixel of height — no dead band up top.
             .toolbarBackground(.hidden, for: .windowToolbar)
             // Collapsed sidebar = traffic lights float over the detail area;
-            // step below them, reclaim the top when the sidebar returns.
-            .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
+            // step below them, reclaim the top when the sidebar returns. An
+            // animatable inset rather than a safe-area flip: the content
+            // travels WITH the sidebar's slide instead of snapping at its end.
+            .padding(.top, sidebarCollapsed ? 30 : 0)
+            .ignoresSafeArea(edges: .top)
+            .animation(.easeOut(duration: 0.22), value: sidebarCollapsed)
     }
 }
 
-/// Focus mode: one canvas tile borrows the whole window. ⌘. or the toolbar
-/// button hands it back — the canvas is exactly as you left it. The terminal
-/// eats Escape (vim and TUIs need it), so the menu command is the real exit;
-/// `.onExitCommand` only fires in the rare case nothing consumed the key.
+/// Focus mode: one canvas tile borrows the whole window. ⌘., the header's Back
+/// chip, or a double-click on the header hands it back — the canvas is exactly
+/// as you left it. The terminal eats Escape (vim and TUIs need it), so the menu
+/// command is the real exit; `.onExitCommand` only fires in the rare case
+/// nothing consumed the key.
 struct FocusView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let instance: TerminalInstance
 
     var body: some View {
-        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
-                               cornerRadius: 16)
-            // Same Ghostty-style top-riding text as FullInstanceView.
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
-                        in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-            // Hard clip on top of the layer mask: ghostty's Metal surface is
-            // sized in whole cells and overhangs a few pixels on the right —
-            // the layer mask misses that sliver, this catches it.
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
-            )
-            .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-            .padding(8)
-            .toolbar {
-                ToolbarItem(placement: .navigation) {
-                    Button {
-                        state.endFocus()
-                    } label: {
-                        Label("Back to Canvas", systemImage: "chevron.left")
-                    }
-                    .buttonStyle(.pressable(scale: 0.94))
-                    .help("Back to the canvas (⌘.)")
+        VStack(spacing: 0) {
+            header
+            // cornerRadius 0: the VStack is clipped as one shape below, and a
+            // second rounding on the terminal's own layer would double-round
+            // the bottom corners.
+            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+                                   cornerRadius: 0)
+        }
+        // Same chain as FullInstanceView: terminal-toned fill, hard clip for
+        // ghostty's whole-cell overhang, hairline outline, glass margin.
+        .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
+                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
+        )
+        .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+        .padding(8)
+        .onExitCommand { state.endFocus() }
+        // No toolbar band: the header IS the chrome, and it belongs to the
+        // panel rather than floating over the text.
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .padding(.top, sidebarCollapsed ? 30 : 0)
+        .ignoresSafeArea(edges: .top)
+        .animation(.easeOut(duration: 0.22), value: sidebarCollapsed)
+    }
+
+    /// A slim bar the width of the panel — nothing ever sits on top of the
+    /// terminal's text, the way the old floating Back button did.
+    private var header: some View {
+        HStack(spacing: 8) {
+            Button {
+                state.endFocus()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "chevron.left")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("Canvas")
+                        .font(.system(size: 11.5, weight: .medium))
                 }
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .contentShape(Capsule())
             }
-            .onExitCommand { state.endFocus() }
-            // The Back button floats over the glass instead of reserving a
-            // toolbar band, and the panel rises into the title-bar strip.
-            .toolbarBackground(.hidden, for: .windowToolbar)
-            // Collapsed sidebar = traffic lights float over the detail area;
-            // step below them, reclaim the top when the sidebar returns.
-            .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
+            .buttonStyle(.pressable(scale: 0.95))
+            .help("Back to the canvas (⌘.)")
+            Text(instance.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(.secondary)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .frame(height: 28)
+        .background(.bar)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { state.endFocus() }
     }
 }
 
@@ -579,5 +616,31 @@ private final class TransparentWindowEffectView: NSVisualEffectView {
         super.viewDidMoveToWindow()
         window?.isOpaque = false
         window?.backgroundColor = .clear
+        // The window never moves itself. Without this, AppKit's titlebar band
+        // (invisible here, but still a drag region) steals the first inches of
+        // every tile drag near the top of the canvas and walks the window
+        // instead. The sidebar is the handle — see WindowDragArea.
+        window?.isMovable = false
+    }
+}
+
+/// The sidebar is the window's handle: grab any empty part of it to move the
+/// window (the canvas never moves it — tiles always win there).
+struct WindowDragArea: NSViewRepresentable {
+    func makeNSView(context: Context) -> DragView { DragView() }
+    func updateNSView(_ nsView: DragView, context: Context) {}
+
+    final class DragView: NSView {
+        override func mouseDown(with event: NSEvent) {
+            guard let window else { return }
+            // The window is deliberately immovable so the canvas can never
+            // walk it; lend it movability for exactly this drag. performDrag
+            // tracks the mouse modally and returns on mouse-up, so the loan
+            // is over by the next line.
+            let wasMovable = window.isMovable
+            window.isMovable = true
+            window.performDrag(with: event)
+            window.isMovable = wasMovable
+        }
     }
 }

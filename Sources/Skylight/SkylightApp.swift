@@ -28,6 +28,21 @@ struct SkylightApp: App {
                 Button("Back to Canvas") { state.endFocus() }
                     .keyboardShortcut(".", modifiers: [.command])
                     .disabled(state.focusedInstance == nil)
+                Divider()
+                // Zoom is a property of the visible canvas — nothing else in
+                // the app has a magnification to change.
+                Button("Zoom In") { state.requestZoom(.zoomIn) }
+                    .keyboardShortcut("+", modifiers: [.command])
+                    .disabled(state.selectedCanvasID == nil)
+                Button("Zoom Out") { state.requestZoom(.zoomOut) }
+                    .keyboardShortcut("-", modifiers: [.command])
+                    .disabled(state.selectedCanvasID == nil)
+                Button("Zoom to Fit") { state.requestZoom(.fit) }
+                    .keyboardShortcut("0", modifiers: [.command])
+                    .disabled(state.selectedCanvasID == nil)
+                Button("Actual Size") { state.requestZoom(.actual) }
+                    .keyboardShortcut("1", modifiers: [.command])
+                    .disabled(state.selectedCanvasID == nil)
             }
         }
     }

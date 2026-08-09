@@ -6,7 +6,8 @@ import GhosttyTerminal
 import SkylightCore
 
 /// An endless board of live tiles. There is no content frame — tiles live at
-/// absolute coordinates and the whole plane translates under a pan offset.
+/// absolute coordinates and the whole plane translates and scales under one
+/// viewport transform: `screen = content × zoom + pan`.
 struct CanvasView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
@@ -15,11 +16,20 @@ struct CanvasView: View {
     var reflowEnabled = true
 
     @State private var pan: CGPoint = .zero
+    @State private var zoom: CGFloat = 1
     @State private var viewport: CGSize = .zero
     /// True while a tile is being moved or resized — a reflow must never land
     /// in the middle of a gesture.
     @State private var tileInteracting = false
     @StateObject private var reflowCoalescer = ReflowCoalescer()
+
+    /// Endless in feel, bounded in fact: below 0.2 tiles are unreadable specks,
+    /// above 3 a terminal is a wall of pixels.
+    private static let minZoom: CGFloat = 0.2
+    private static let maxZoom: CGFloat = 3.0
+    /// How close to 100% still counts as 100%. Inside this band zoom snaps to
+    /// exactly 1 — that exactness is what re-arms typing and dragging.
+    private static let snapTolerance: CGFloat = 0.02
 
     private var board: CanvasBoard? {
         state.canvases.first { $0.id == boardID }
@@ -33,18 +43,23 @@ struct CanvasView: View {
                         pan.x += delta.width
                         pan.y += delta.height
                     },
-                    onPanEnded: { commitPan() },
+                    onPanEnded: { commitViewport() },
+                    onMagnify: { magnification, viewPoint in
+                        zoomBy(factor: 1 + magnification, around: viewPoint)
+                    },
+                    onMagnifyEnded: { endZoomGesture() },
                     contextMenu: { viewPoint in
-                        spawnMenu(at: CGPoint(x: viewPoint.x - pan.x,
-                                              y: viewPoint.y - pan.y))
+                        spawnMenu(at: contentPoint(viewPoint))
                     }
                 )
-                DotGrid(pan: pan)
+                DotGrid(pan: pan, zoom: zoom)
                     .allowsHitTesting(false)
                 ForEach(board?.tiles ?? []) { tile in
                     if let instance = state.instance(tile.itemID) {
-                        TileView(tile: tile, instance: instance, boardID: boardID, pan: pan,
-                                 interacting: $tileInteracting)
+                        TileView(tile: tile, instance: instance, boardID: boardID,
+                                 pan: pan, zoom: zoom,
+                                 interacting: $tileInteracting,
+                                 onOverviewTap: { navigate(to: tile) })
                     }
                 }
             }
@@ -55,14 +70,14 @@ struct CanvasView: View {
                     guard let id = UUID(uuidString: raw),
                           state.instance(id) != nil else { continue }
                     // Viewport → content coordinates.
-                    state.addTile(itemID: id, to: boardID,
-                                  at: CGPoint(x: location.x - pan.x, y: location.y - pan.y))
+                    state.addTile(itemID: id, to: boardID, at: contentPoint(location))
                 }
                 return true
             }
             .onAppear {
                 viewport = geo.size
                 pan = board?.pan ?? .zero
+                zoom = snappedZoom(board?.zoom ?? 1)
                 revealIfPending(in: geo.size)
             }
             .onChange(of: geo.size) { old, size in
@@ -76,13 +91,24 @@ struct CanvasView: View {
                 if !tileInteracting { applyReflow(in: viewport) }
             }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
+            .onChange(of: board?.tiles.count ?? 0) { old, new in
+                // The board grew: if the arrangement no longer fits, the canvas
+                // zooms itself out to show all of it. A fit supersedes centering
+                // on the newcomer — it already includes it.
+                guard new > old, reflowEnabled else { return }
+                if autoFit(in: viewport) { state.pendingReveal = nil }
+            }
+            .onChange(of: state.canvasZoomRequest) { _, request in
+                guard let request, request.canvasID == boardID else { return }
+                apply(request.action, in: viewport)
+                state.canvasZoomRequest = nil
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
         .navigationTitle(board?.name ?? "Canvas")
         // The dot grid reaches the window top: no toolbar band, no safe-area
         // gap between the glass and the traffic lights.
         .toolbarBackground(.hidden, for: .windowToolbar)
-        .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
         .overlay {
             if board?.tiles.isEmpty ?? true {
                 ContentUnavailableView(
@@ -93,11 +119,135 @@ struct CanvasView: View {
                 .allowsHitTesting(false)
             }
         }
+        // Collapsed sidebar = traffic lights float over the detail area. An
+        // animatable inset, not a safe-area flip: the content slides with the
+        // sidebar instead of jumping a frame ahead of it.
+        .padding(.top, sidebarCollapsed ? 30 : 0)
+        .ignoresSafeArea(edges: .top)
+        .animation(.easeOut(duration: 0.22), value: sidebarCollapsed)
     }
 
-    private func commitPan() {
+    private func commitViewport() {
         state.setPan(pan, for: boardID)
+        state.setZoom(zoom, for: boardID)
         state.persistSoon()
+    }
+
+    // MARK: - Viewport transform
+
+    /// Never divide by the raw zoom: a zero or NaN would send every coordinate
+    /// on the board to infinity, and the clamp is one bad edit away.
+    private var safeZoom: CGFloat {
+        guard zoom.isFinite, zoom > Self.minZoom else { return Self.minZoom }
+        return zoom
+    }
+
+    /// Screen (viewport) point → content point.
+    private func contentPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(x: (point.x - pan.x) / safeZoom, y: (point.y - pan.y) / safeZoom)
+    }
+
+    private func clampedZoom(_ value: CGFloat) -> CGFloat {
+        guard value.isFinite else { return 1 }
+        return min(Self.maxZoom, max(Self.minZoom, value))
+    }
+
+    /// Anything within a hair of 100% *is* 100% — hit-testing keys off the
+    /// exact value, so near-misses would leave the canvas subtly untypable.
+    private func snappedZoom(_ value: CGFloat) -> CGFloat {
+        let clamped = clampedZoom(value)
+        return abs(clamped - 1) < Self.snapTolerance ? 1 : clamped
+    }
+
+    private var viewportCenter: CGPoint {
+        CGPoint(x: viewport.width / 2, y: viewport.height / 2)
+    }
+
+    /// Re-zoom keeping `anchor` (a screen point) pinned to the same content —
+    /// the cursor stays on the thing it is pointing at.
+    private func setZoom(_ newZoom: CGFloat, around anchor: CGPoint) {
+        let ratio = newZoom / safeZoom
+        pan = CGPoint(x: anchor.x - (anchor.x - pan.x) * ratio,
+                      y: anchor.y - (anchor.y - pan.y) * ratio)
+        zoom = newZoom
+    }
+
+    private func zoomBy(factor: CGFloat, around anchor: CGPoint) {
+        let target = clampedZoom(zoom * factor)
+        guard target != zoom else { return }
+        setZoom(target, around: anchor)
+    }
+
+    /// Pinch ended: settle onto exactly 100% if we are close, then persist.
+    private func endZoomGesture() {
+        let settled = snappedZoom(zoom)
+        if settled != zoom { setZoom(settled, around: viewportCenter) }
+        commitViewport()
+    }
+
+    /// The whole arrangement's content-space bounding box.
+    private var contentBounds: CGRect? {
+        let frames = board?.tiles.map(\.frame) ?? []
+        guard let first = frames.first else { return nil }
+        return frames.dropFirst().reduce(first) { $0.union($1) }
+    }
+
+    private func apply(_ action: CanvasZoomAction, in viewport: CGSize) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            switch action {
+            case .zoomIn:
+                setZoom(snappedZoom(zoom + 0.25), around: viewportCenter)
+            case .zoomOut:
+                setZoom(snappedZoom(zoom - 0.25), around: viewportCenter)
+            case .actual:
+                setZoom(1, around: viewportCenter)
+            case .fit:
+                guard let bounds = contentBounds else {
+                    setZoom(1, around: viewportCenter)
+                    break
+                }
+                let target = snappedZoom(
+                    CanvasLayout.fitZoom(bounds: bounds, viewport: viewport,
+                                         minZoom: Self.minZoom))
+                zoom = target
+                pan = CanvasLayout.centeringPan(bounds: bounds, viewport: viewport,
+                                                zoom: target)
+            }
+        }
+        commitViewport()
+    }
+
+    /// Drop the whole board back into view when it has outgrown the window.
+    /// Returns true when it actually moved the viewport.
+    @discardableResult
+    private func autoFit(in viewport: CGSize, margin: CGFloat = 24) -> Bool {
+        guard let bounds = contentBounds,
+              viewport.width > margin * 2, viewport.height > margin * 2 else { return false }
+        let onScreen = CGRect(x: bounds.minX * zoom + pan.x, y: bounds.minY * zoom + pan.y,
+                              width: bounds.width * zoom, height: bounds.height * zoom)
+        let fits = onScreen.minX >= margin && onScreen.minY >= margin
+            && onScreen.maxX <= viewport.width - margin
+            && onScreen.maxY <= viewport.height - margin
+        if fits { return false }
+        let target = snappedZoom(CanvasLayout.fitZoom(bounds: bounds, viewport: viewport,
+                                                     minZoom: Self.minZoom))
+        let targetPan = CanvasLayout.centeringPan(bounds: bounds, viewport: viewport,
+                                                  zoom: target)
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            zoom = target
+            pan = targetPan
+        }
+        commitViewport()
+        return true
+    }
+
+    /// Overview → work: a tap on a scaled-down tile flies to it at 100%.
+    private func navigate(to tile: CanvasTile) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+            zoom = 1
+            pan = CanvasLayout.centeringPan(bounds: tile.frame, viewport: viewport, zoom: 1)
+        }
+        commitViewport()
     }
 
     /// The right-click spawn menu: everything launchable, one click, landing
@@ -143,26 +293,35 @@ struct CanvasView: View {
         return menu
     }
 
-    /// Center the tile a sidebar row asked for.
+    /// Center the tile a sidebar row asked for — at whatever zoom the canvas
+    /// is currently at, so revealing never silently changes magnification.
     private func revealIfPending(in viewport: CGSize) {
         guard let itemID = state.pendingReveal,
               let tile = board?.tiles.first(where: { $0.itemID == itemID }) else { return }
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
-            pan = CanvasLayout.panToCenter(tile.frame, in: viewport)
-        }
         state.pendingReveal = nil
-        commitPan()
+        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+            pan = CanvasLayout.centeringPan(bounds: tile.frame, viewport: viewport,
+                                            zoom: zoom)
+        }
+        commitViewport()
     }
 
-    /// Window shrank: keep the arrangement visible (spec Addendum A3).
+    /// Window shrank: keep the arrangement visible (spec Addendum A3). The
+    /// reflow math is content-space, so the viewport it is handed is the
+    /// content-space viewport — what is actually VISIBLE at this zoom — and
+    /// the pan travels in and out of content space with it.
     private func applyReflow(in viewport: CGSize) {
-        guard let board,
-              let result = CanvasLayout.reflowed(tiles: board.tiles, pan: pan,
-                                                 viewport: viewport) else { return }
+        guard let board else { return }
+        let z = safeZoom
+        let contentViewport = CGSize(width: viewport.width / z, height: viewport.height / z)
+        let contentPan = CGPoint(x: pan.x / z, y: pan.y / z)
+        guard let result = CanvasLayout.reflowed(tiles: board.tiles, pan: contentPan,
+                                                 viewport: contentViewport) else { return }
+        let screenPan = CGPoint(x: result.pan.x * z, y: result.pan.y * z)
         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-            pan = result.pan
+            pan = screenPan
         }
-        state.setPan(result.pan, for: boardID)
+        state.setPan(screenPan, for: boardID)
         state.setTiles(result.tiles, for: boardID)   // state now, disk write coalesced
     }
 }
@@ -183,29 +342,51 @@ final class MenuAction: NSObject {
 struct PanSurface: NSViewRepresentable {
     let onPan: (CGSize) -> Void
     let onPanEnded: () -> Void
+    /// Pinch: (magnification delta, cursor point in VIEWPORT coordinates).
+    let onMagnify: (CGFloat, CGPoint) -> Void
+    let onMagnifyEnded: () -> Void
     /// Builds the right-click menu for a point in CONTENT coordinates.
     let contextMenu: (CGPoint) -> NSMenu
 
     func makeNSView(context: Context) -> PanView {
         let view = PanView()
-        view.onPan = onPan
-        view.onPanEnded = onPanEnded
-        view.contextMenu = contextMenu
+        apply(to: view)
         return view
     }
 
     func updateNSView(_ nsView: PanView, context: Context) {
-        nsView.onPan = onPan
-        nsView.onPanEnded = onPanEnded
-        nsView.contextMenu = contextMenu
+        apply(to: nsView)
+    }
+
+    private func apply(to view: PanView) {
+        view.onPan = onPan
+        view.onPanEnded = onPanEnded
+        view.onMagnify = onMagnify
+        view.onMagnifyEnded = onMagnifyEnded
+        view.contextMenu = contextMenu
     }
 
     final class PanView: NSView {
         var onPan: ((CGSize) -> Void)?
         var onPanEnded: (() -> Void)?
+        var onMagnify: ((CGFloat, CGPoint) -> Void)?
+        var onMagnifyEnded: (() -> Void)?
         var contextMenu: ((CGPoint) -> NSMenu)?
         private var dragOrigin: CGPoint?
         private var dragged = false
+
+        /// The view is unflipped; SwiftUI's viewport space is top-left.
+        private func viewportPoint(_ locationInWindow: CGPoint) -> CGPoint {
+            let p = convert(locationInWindow, from: nil)
+            return CGPoint(x: p.x, y: bounds.height - p.y)
+        }
+
+        override func magnify(with event: NSEvent) {
+            onMagnify?(event.magnification, viewportPoint(event.locationInWindow))
+            if event.phase == .ended || event.phase == .cancelled {
+                onMagnifyEnded?()
+            }
+        }
 
         override func scrollWheel(with event: NSEvent) {
             // Trackpads report precise point deltas with phases; mouse wheels
@@ -245,10 +426,8 @@ struct PanSurface: NSViewRepresentable {
         // right-click here, and the pan gesture's state is left untouched.
         override func rightMouseDown(with event: NSEvent) {
             guard let contextMenu else { return }
-            let p = convert(event.locationInWindow, from: nil)
-            // The view is unflipped; SwiftUI's content space is top-left.
-            let viewPoint = CGPoint(x: p.x, y: bounds.height - p.y)
-            NSMenu.popUpContextMenu(contextMenu(viewPoint), with: event, for: self)
+            NSMenu.popUpContextMenu(contextMenu(viewportPoint(event.locationInWindow)),
+                                    with: event, for: self)
         }
     }
 }
@@ -257,10 +436,14 @@ struct PanSurface: NSViewRepresentable {
 /// reads as an infinite plane.
 private struct DotGrid: View {
     let pan: CGPoint
+    let zoom: CGFloat
 
     var body: some View {
         Canvas { context, size in
-            let step = CanvasLayout.grid * 4
+            let step = CanvasLayout.grid * 4 * (zoom.isFinite ? max(0.05, zoom) : 1)
+            // Zoomed far out the dots crowd into noise — a plain field reads
+            // better than a grey haze.
+            guard step >= 8 else { return }
             let startX = pan.x.truncatingRemainder(dividingBy: step) - step
             let startY = pan.y.truncatingRemainder(dividingBy: step) - step
             var x = startX
@@ -287,13 +470,29 @@ struct TileView: View {
     let instance: TerminalInstance
     let boardID: UUID
     let pan: CGPoint
+    /// The board's magnification. Exactly 1 means "work here"; anything else
+    /// means "overview" — see `interactive`.
+    let zoom: CGFloat
     /// Raised for the life of a move or resize gesture so the canvas can hold
     /// a queued reflow until the hands are off.
     @Binding var interacting: Bool
+    /// Tapping a minified tile flies the canvas to it at 100%.
+    var onOverviewTap: () -> Void = {}
 
     @State private var dragOffset: CGSize = .zero
     @State private var resizeDelta: CGSize = .zero
     @State private var grabbing = false
+
+    /// AppKit hit-tests by untransformed frames, so a scaled-down terminal
+    /// cannot reliably receive a click anyway. Below/above 100% the tile is a
+    /// thumbnail you navigate to, not a surface you type in.
+    private var interactive: Bool { zoom == 1 }
+
+    /// Gestures arrive in screen points; the board thinks in content points.
+    private var safeZoom: CGFloat {
+        guard zoom.isFinite, zoom > 0.05 else { return 0.05 }
+        return zoom
+    }
 
     private var liveFrame: CGRect {
         CGRect(
@@ -326,16 +525,38 @@ struct TileView: View {
                     lineWidth: grabbing ? 1.5 : 1
                 )
         )
-        .shadow(color: .black.opacity(grabbing ? 0.28 : 0.14),
-                radius: grabbing ? 22 : 12, y: grabbing ? 12 : 5)
+        // Lift is stroke and shadow only. A scale on a live Metal surface
+        // resamples every glyph — the tile shimmers exactly while you are
+        // watching it move.
+        .shadow(color: .black.opacity(grabbing ? 0.30 : 0.14),
+                radius: grabbing ? 24 : 12, y: grabbing ? 14 : 5)
         .overlay(alignment: .bottomTrailing) { resizeHandle }
+        // The tile keeps its 100% LAYOUT size at every zoom: the pty is never
+        // resized, the layer transform does the minifying.
         .frame(width: liveFrame.width, height: liveFrame.height)
-        .scaleEffect(grabbing ? 1.015 : 1, anchor: .center)
-        .offset(x: liveFrame.minX + pan.x, y: liveFrame.minY + pan.y)
+        .allowsHitTesting(interactive)
+        .overlay { overviewTapTarget }
+        .scaleEffect(zoom, anchor: .topLeading)
+        .offset(x: liveFrame.minX * zoom + pan.x, y: liveFrame.minY * zoom + pan.y)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: grabbing)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.origin)
         .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.size)
         .zIndex(grabbing ? 1 : 0)
+    }
+
+    /// In overview the whole tile is one button: tap it and the canvas flies
+    /// there at 100%, where it becomes a terminal again.
+    @ViewBuilder
+    private var overviewTapTarget: some View {
+        if !interactive {
+            Button(action: onOverviewTap) {
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help("Open “\(instance.name)” at 100%")
+        }
     }
 
     private var header: some View {
@@ -380,16 +601,19 @@ struct TileView: View {
         .contentShape(Rectangle())
         .gesture(
             DragGesture()
+                // Nothing but the offset moves here: any extra state written
+                // per event is a stutter you can see.
                 .onChanged {
                     if !grabbing { grabbing = true }
                     if !interacting { interacting = true }
-                    dragOffset = $0.translation
+                    dragOffset = CGSize(width: $0.translation.width / safeZoom,
+                                        height: $0.translation.height / safeZoom)
                 }
                 .onEnded { value in
                     var updated = tile
                     let proposed = CGRect(
-                        x: tile.origin.x + value.translation.width,
-                        y: tile.origin.y + value.translation.height,
+                        x: tile.origin.x + value.translation.width / safeZoom,
+                        y: tile.origin.y + value.translation.height / safeZoom,
                         width: tile.size.width,
                         height: tile.size.height
                     )
@@ -425,14 +649,15 @@ struct TileView: View {
                 DragGesture()
                     .onChanged {
                         if !interacting { interacting = true }
-                        resizeDelta = $0.translation
+                        resizeDelta = CGSize(width: $0.translation.width / safeZoom,
+                                             height: $0.translation.height / safeZoom)
                     }
                     .onEnded { value in
                         var updated = tile
                         updated.size = CanvasLayout.snapped(
                             CGSize(
-                                width: tile.size.width + value.translation.width,
-                                height: tile.size.height + value.translation.height
+                                width: tile.size.width + value.translation.width / safeZoom,
+                                height: tile.size.height + value.translation.height / safeZoom
                             )
                         )
                         resizeDelta = .zero
@@ -492,7 +717,12 @@ struct CanvasDropOverlay: View {
                         // NSViews (one superview each). Let the base show through.
                         Color.clear
                     } else {
+                        // The overlay already took the top inset; telling the
+                        // embedded copy the sidebar is open keeps it from
+                        // taking a second one and sliding every tile 30pt away
+                        // from the ghost.
                         CanvasView(boardID: board.id, reflowEnabled: false)
+                            .environment(\.sidebarCollapsed, false)
                             .allowsHitTesting(false)
                             .background(Color(nsColor: .windowBackgroundColor))
                     }
@@ -501,7 +731,8 @@ struct CanvasDropOverlay: View {
                         .background(Color(nsColor: .windowBackgroundColor))
                 }
                 if let ghost {
-                    let frame = ghostFrame(at: ghost, pan: targetBoard?.pan ?? .zero)
+                    let frame = ghostFrame(at: ghost, pan: targetBoard?.pan ?? .zero,
+                                           zoom: targetBoard?.zoom ?? 1)
                     RoundedRectangle(cornerRadius: 16, style: .continuous)
                         .fill(Color.accentColor.opacity(0.06))
                         .overlay(
@@ -517,27 +748,39 @@ struct CanvasDropOverlay: View {
             .onDrop(of: [.text], delegate: GhostDropDelegate(
                 ghost: $ghost,
                 drop: { location in
-                    let pan = targetBoard?.pan ?? .zero
                     state.addTile(itemID: itemID, to: targetBoard?.id,
-                                  at: CGPoint(x: location.x - pan.x, y: location.y - pan.y))
+                                  at: Self.contentPoint(location,
+                                                        pan: targetBoard?.pan ?? .zero,
+                                                        zoom: targetBoard?.zoom ?? 1))
                     state.endSidebarDrag()
                 }))
             chipBar
         }
-        // Same origin as the CanvasView underneath it: if the overlay kept the
-        // safe-area inset the canvas gave up, every ghost would sit ~28pt above
-        // where the tile actually lands.
-        .ignoresSafeArea(edges: sidebarCollapsed ? [] : .top)
+        // Same origin as the CanvasView underneath it: if the overlay took a
+        // different inset, every ghost would sit 30pt from where the tile
+        // actually lands.
+        .padding(.top, sidebarCollapsed ? 30 : 0)
+        .ignoresSafeArea(edges: .top)
+        .animation(.easeOut(duration: 0.22), value: sidebarCollapsed)
+    }
+
+    /// Screen → content under a board's viewport transform, guarded against a
+    /// zero zoom the way CanvasView's own conversion is.
+    private static func contentPoint(_ point: CGPoint, pan: CGPoint,
+                                     zoom: CGFloat) -> CGPoint {
+        let z = (zoom.isFinite && zoom > 0.05) ? zoom : 0.05
+        return CGPoint(x: (point.x - pan.x) / z, y: (point.y - pan.y) / z)
     }
 
     /// Mirror of addTile's placement so the ghost never lies — including a
     /// repositioned tile's real size, and the same free-space dodge a new
-    /// tile's drop will take.
-    private func ghostFrame(at location: CGPoint, pan: CGPoint) -> CGRect {
+    /// tile's drop will take. Content-space placement, screen-space rectangle.
+    private func ghostFrame(at location: CGPoint, pan: CGPoint, zoom: CGFloat) -> CGRect {
+        let z = (zoom.isFinite && zoom > 0.05) ? zoom : 0.05
         let resident = targetBoard?.tiles.first { $0.itemID == itemID }
         let size = resident?.size ?? CanvasLayout.defaultTileSize
-        let desired = CGPoint(x: location.x - pan.x - size.width / 2,
-                              y: location.y - pan.y - 24)
+        let content = Self.contentPoint(location, pan: pan, zoom: zoom)
+        let desired = CGPoint(x: content.x - size.width / 2, y: content.y - 24)
         // Already on this board → the user's exact drop (magnets align it).
         // New here → the identical freePosition call addTile is about to make,
         // against the identical frames, so the ghost cannot promise a spot the
@@ -546,8 +789,8 @@ struct CanvasDropOverlay: View {
             ? CanvasLayout.freePosition(desired: desired, size: size,
                                         avoiding: targetBoard?.tiles.map(\.frame) ?? [])
             : CanvasLayout.snapped(desired)
-        return CGRect(x: origin.x + pan.x, y: origin.y + pan.y,
-                      width: size.width, height: size.height)
+        return CGRect(x: origin.x * z + pan.x, y: origin.y * z + pan.y,
+                      width: size.width * z, height: size.height * z)
     }
 
     private var newCanvasSurface: some View {
