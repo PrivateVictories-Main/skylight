@@ -534,8 +534,25 @@ struct TileView: View {
     /// Tapping a minified tile flies the canvas to it at 100%.
     var onOverviewTap: () -> Void = {}
 
+    /// Live per-edge resize deltas (content-space). Left/top move the origin
+    /// AND shrink the size; right/bottom only grow the size.
+    private struct EdgeDeltas: Equatable {
+        var left: CGFloat = 0
+        var right: CGFloat = 0
+        var top: CGFloat = 0
+        var bottom: CGFloat = 0
+        var isZero: Bool { self == EdgeDeltas() }
+    }
+
+    /// Which grab strip a gesture came from. No two opposite edges are ever
+    /// live at once — a corner drives one horizontal and one vertical edge.
+    private enum ResizeEdge {
+        case left, right, top, bottom
+        case topLeft, topRight, bottomLeft, bottomRight
+    }
+
     @State private var dragOffset: CGSize = .zero
-    @State private var resizeDelta: CGSize = .zero
+    @State private var edges = EdgeDeltas()
     @State private var grabbing = false
 
     /// AppKit hit-tests by untransformed frames, so a scaled-down terminal
@@ -548,12 +565,21 @@ struct TileView: View {
         CanvasZoom.safe(zoom)
     }
 
+    /// The clamps are the whole correctness story. `left` is how far the ORIGIN
+    /// moves, so it is capped at the point where the tile hits its minimum —
+    /// past that the origin stops dead and the far edge never slides. The `0`
+    /// floor is the mirror case: dragging the RIGHT edge left past the minimum
+    /// must pin the width, never haul the origin backwards with it.
     private var liveFrame: CGRect {
-        CGRect(
-            x: tile.origin.x + dragOffset.width,
-            y: tile.origin.y + dragOffset.height,
-            width: max(CanvasLayout.minTileSize.width, tile.size.width + resizeDelta.width),
-            height: max(CanvasLayout.minTileSize.height, tile.size.height + resizeDelta.height)
+        let minW = CanvasLayout.minTileSize.width
+        let minH = CanvasLayout.minTileSize.height
+        let left = min(edges.left, max(0, tile.size.width - minW + edges.right))
+        let top = min(edges.top, max(0, tile.size.height - minH + edges.bottom))
+        return CGRect(
+            x: tile.origin.x + dragOffset.width + left,
+            y: tile.origin.y + dragOffset.height + top,
+            width: max(minW, tile.size.width + edges.right - left),
+            height: max(minH, tile.size.height + edges.bottom - top)
         )
     }
 
@@ -584,6 +610,10 @@ struct TileView: View {
         // watching it move.
         .shadow(color: .black.opacity(grabbing ? 0.30 : 0.14),
                 radius: grabbing ? 24 : 12, y: grabbing ? 14 : 5)
+        // After the stroke, before the handle: an overlay of empty rectangles
+        // cannot perturb the layout it sits on, and the handle stays the last
+        // overlay so its click still wins the bottom-right corner.
+        .overlay { if interactive { resizeRing } }
         .overlay(alignment: .bottomTrailing) { resizeHandle }
         // The tile keeps its 100% LAYOUT size at every zoom: the pty is never
         // resized, the layer transform does the minifying.
@@ -690,6 +720,8 @@ struct TileView: View {
         }
     }
 
+    /// The visible affordance. Same commit path as the ring — it is simply the
+    /// bottom-right zone wearing a badge.
     private var resizeHandle: some View {
         Image(systemName: "arrow.up.left.and.arrow.down.right")
             .font(.system(size: 8, weight: .bold))
@@ -701,24 +733,168 @@ struct TileView: View {
             .contentShape(Rectangle())
             .gesture(
                 DragGesture()
-                    .onChanged {
-                        if !interacting { interacting = true }
-                        resizeDelta = CGSize(width: $0.translation.width / safeZoom,
-                                             height: $0.translation.height / safeZoom)
+                    .onChanged { applyResize(.bottomRight, translation: $0.translation) }
+                    .onEnded { _ in commitResize() }
+            )
+    }
+
+    // MARK: - Resize ring
+
+    /// Eight invisible grab strips hugging the perimeter, exactly like a real
+    /// window's frame. They live in an overlay, so they own no layout.
+    private var resizeRing: some View {
+        GeometryReader { geo in
+            let w = geo.size.width, h = geo.size.height
+            let t: CGFloat = 10       // grab thickness
+            let c: CGFloat = 16       // corner square
+            Group {
+                zone(.top,         x: c,     y: 0,      w: w - 2 * c, h: t)
+                zone(.bottom,      x: c,     y: h - t,  w: w - 2 * c, h: t)
+                zone(.left,        x: 0,     y: c,      w: t,         h: h - 2 * c)
+                zone(.right,       x: w - t, y: c,      w: t,         h: h - 2 * c)
+                zone(.topLeft,     x: 0,     y: 0,      w: c,         h: c)
+                zone(.topRight,    x: w - c, y: 0,      w: c,         h: c)
+                zone(.bottomLeft,  x: 0,     y: h - c,  w: c,         h: c)
+                zone(.bottomRight, x: w - c, y: h - c,  w: c,         h: c)
+            }
+        }
+    }
+
+    private func zone(_ edge: ResizeEdge, x: CGFloat, y: CGFloat,
+                      w: CGFloat, h: CGFloat) -> some View {
+        ResizeZone(
+            cursor: Self.cursor(for: edge),
+            rect: CGRect(x: x, y: y, width: w, height: h),
+            onChanged: { applyResize(edge, translation: $0) },
+            onEnded: { commitResize() }
+        )
+    }
+
+    /// `NSCursor.frameResize(position:directions:)` is macOS 15+; the package
+    /// deploys to 14, so the corner cursor is availability-gated with the
+    /// documented crosshair fallback underneath.
+    private static func cursor(for edge: ResizeEdge) -> NSCursor {
+        switch edge {
+        case .left, .right:
+            return .resizeLeftRight
+        case .top, .bottom:
+            return .resizeUpDown
+        case .topLeft, .bottomRight:
+            if #available(macOS 15.0, *) {
+                return .frameResize(position: .bottomRight, directions: .all)
+            }
+            return .crosshair
+        case .topRight, .bottomLeft:
+            if #available(macOS 15.0, *) {
+                return .frameResize(position: .bottomLeft, directions: .all)
+            }
+            return .crosshair
+        }
+    }
+
+    /// Live tracking only: screen points into content points, straight into the
+    /// per-edge deltas. Nothing else is written per event — a stray state write
+    /// here is a stutter you can see.
+    private func applyResize(_ edge: ResizeEdge, translation: CGSize) {
+        if !interacting { interacting = true }
+        let dx = translation.width / safeZoom
+        let dy = translation.height / safeZoom
+        switch edge {
+        case .left: edges.left = dx
+        case .right: edges.right = dx
+        case .top: edges.top = dy
+        case .bottom: edges.bottom = dy
+        case .topLeft: edges.left = dx; edges.top = dy
+        case .topRight: edges.right = dx; edges.top = dy
+        case .bottomLeft: edges.left = dx; edges.bottom = dy
+        case .bottomRight: edges.right = dx; edges.bottom = dy
+        }
+    }
+
+    /// One commit path for the ring AND the corner button: grid-snap the
+    /// resulting frame (origin and size), clamp to minimums, persist once.
+    private func commitResize() {
+        // A gesture that ended without ever moving must not silently re-snap a
+        // magnet-aligned origin onto the grid — a click is not a resize.
+        guard !edges.isZero else {
+            interacting = false
+            return
+        }
+        var updated = tile
+        let frame = liveFrame
+        let snappedOrigin = CanvasLayout.snapped(frame.origin)
+        // Snap an axis only when this gesture actually moved that origin edge.
+        // A bottom-right drag must not quietly re-grid an origin the move
+        // magnets deliberately aligned to a neighbour.
+        updated.origin = CGPoint(
+            x: edges.left != 0 ? snappedOrigin.x : tile.origin.x,
+            y: edges.top != 0 ? snappedOrigin.y : tile.origin.y
+        )
+        updated.size = CanvasLayout.snapped(frame.size)
+        edges = EdgeDeltas()
+        interacting = false
+        state.updateTile(updated, in: boardID)
+    }
+}
+
+/// One invisible grab strip. It owns its own cursor bookkeeping because
+/// balance is the only thing that matters here: a `pushed` flag makes push and
+/// pop idempotent, so no enter/drag/leave order can double-push or pop a
+/// cursor this zone never owned. The cursor also survives a drag that wanders
+/// outside the strip — it is released when the gesture ends, not when the
+/// pointer crosses the boundary.
+private struct ResizeZone: View {
+    let cursor: NSCursor
+    let rect: CGRect
+    let onChanged: (CGSize) -> Void
+    let onEnded: () -> Void
+
+    @State private var hovering = false
+    @State private var dragging = false
+    @State private var pushed = false
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .frame(width: max(0, rect.width), height: max(0, rect.height))
+            .offset(x: rect.minX, y: rect.minY)
+            .onHover { inside in
+                hovering = inside
+                syncCursor()
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1)
+                    .onChanged { value in
+                        if !dragging {
+                            dragging = true
+                            syncCursor()
+                        }
+                        onChanged(value.translation)
                     }
-                    .onEnded { value in
-                        var updated = tile
-                        updated.size = CanvasLayout.snapped(
-                            CGSize(
-                                width: tile.size.width + value.translation.width / safeZoom,
-                                height: tile.size.height + value.translation.height / safeZoom
-                            )
-                        )
-                        resizeDelta = .zero
-                        interacting = false
-                        state.updateTile(updated, in: boardID)
+                    .onEnded { _ in
+                        dragging = false
+                        syncCursor()
+                        onEnded()
                     }
             )
+            // The ring is torn down whenever the canvas leaves 100%. Without
+            // this, zooming out mid-hover would strand a resize cursor.
+            .onDisappear {
+                hovering = false
+                dragging = false
+                syncCursor()
+            }
+    }
+
+    private func syncCursor() {
+        let wanted = hovering || dragging
+        if wanted, !pushed {
+            cursor.push()
+            pushed = true
+        } else if !wanted, pushed {
+            NSCursor.pop()
+            pushed = false
+        }
     }
 }
 
