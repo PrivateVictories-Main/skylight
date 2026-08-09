@@ -501,7 +501,7 @@ struct PersistentTerminalView: NSViewRepresentable {
 /// glass — sidebar, canvas, and terminals all sit on it.
 struct WindowBlur: NSViewRepresentable {
     func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
+        let view = TransparentWindowEffectView()
         view.material = .underWindowBackground
         view.blendingMode = .behindWindow
         view.state = .active
@@ -509,4 +509,14 @@ struct WindowBlur: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+}
+
+/// A behind-window blur only samples the desktop once the hosting window
+/// stops painting an opaque backing behind it.
+private final class TransparentWindowEffectView: NSVisualEffectView {
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.isOpaque = false
+        window?.backgroundColor = .clear
+    }
 }
