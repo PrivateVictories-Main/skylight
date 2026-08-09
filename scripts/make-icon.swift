@@ -16,77 +16,72 @@ func gradient(_ stops: [(CGFloat, NSColor)]) -> NSGradient {
                colorSpace: .deviceRGB)!
 }
 
-var seed: UInt64 = 7
-func rnd() -> CGFloat {
-    seed = seed &* 6364136223846793005 &+ 1442695040888963407
-    return CGFloat(Double(seed >> 33) / Double(UInt64(1) << 31))
-}
-
 /// Draw the icon at `S` points into the current graphics context.
+/// "Ribbon" — Ryan's pick (2026-08-08): a bold folded prompt chevron with
+/// VS-Code-style depth on the baby-blue field, coral underscore, lit rim.
+/// Original mark; borrows brand DNA (fold depth, burst energy), never marks.
 func drawIcon(_ S: CGFloat) {
     let k = S / 512
-    seed = 7
     let corner = S * 0.2237
     let base = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: S, height: S),
                             xRadius: corner, yRadius: corner)
-    // Baby-blue sky, palest at the top.
-    gradient([(0, c(0x6FB4F0)), (0.45, c(0x92CCF9)), (0.8, c(0xBFE3FF)), (1, c(0xE8F6FF))])
+    // Baby-blue field, palest at the top.
+    gradient([(0, c(0x6FB4F0)), (0.5, c(0x9BD0FA)), (1, c(0xE4F4FF))])
         .draw(in: base, angle: 90)
     base.addClip()
 
-    // Glints — tiny bright sparks in the upper sky.
-    for _ in 0..<40 {
-        let x = rnd() * S, y = (140 + rnd() * (512 - 160)) * k
-        c(0xFFFFFF, 0.25 + rnd() * 0.45).setFill()
-        let d = (rnd() < 0.85 ? 2.2 : 3.6) * k
-        NSBezierPath(ovalIn: NSRect(x: x, y: y, width: d, height: d)).fill()
+    func softShadow() {
+        let sh = NSShadow()
+        sh.shadowColor = c(0x1B3E6E, 0.30)
+        sh.shadowBlurRadius = 18 * k
+        sh.shadowOffset = NSSize(width: 0, height: -8 * k)
+        sh.set()
     }
 
-    // A soft stream of light drifting across the pane.
-    let aur = NSBezierPath()
-    aur.move(to: NSPoint(x: 40 * k, y: 300 * k))
-    aur.curve(to: NSPoint(x: 480 * k, y: 400 * k),
-              controlPoint1: NSPoint(x: 190 * k, y: 430 * k),
-              controlPoint2: NSPoint(x: 330 * k, y: 300 * k))
-    aur.lineWidth = 60 * k
-    c(0xFFFFFF, 0.22).setStroke()
-    aur.stroke()
-    aur.lineWidth = 26 * k
-    c(0xF2FBFF, 0.30).setStroke()
-    aur.stroke()
+    // The folded chevron: deep-blue base pass, lighter upper arm = the fold.
+    let chevron = NSBezierPath()
+    chevron.move(to: NSPoint(x: 150 * k, y: 388 * k))
+    chevron.line(to: NSPoint(x: 330 * k, y: 262 * k))
+    chevron.line(to: NSPoint(x: 150 * k, y: 136 * k))
+    chevron.lineWidth = 96 * k
+    chevron.lineCapStyle = .round
+    chevron.lineJoinStyle = .round
+    NSGraphicsContext.current?.saveGraphicsState()
+    softShadow()
+    c(0x1F5E9E).setStroke()
+    chevron.stroke()
+    NSGraphicsContext.current?.restoreGraphicsState()
 
-    // Glass pane inset + mullions.
-    let inset = 64 * k
-    let pane = NSBezierPath(roundedRect: NSRect(x: inset, y: inset,
-                                                width: S - inset * 2, height: S - inset * 2),
-                            xRadius: 72 * k, yRadius: 72 * k)
-    c(0xFFFFFF, 0.12).setFill()
-    pane.fill()
-    pane.lineWidth = max(1, 2.5 * k)
-    c(0xFFFFFF, 0.85).setStroke()
-    pane.stroke()
-    let m = NSBezierPath()
-    m.move(to: NSPoint(x: S / 2, y: 66 * k)); m.line(to: NSPoint(x: S / 2, y: S - 66 * k))
-    m.move(to: NSPoint(x: 66 * k, y: S / 2)); m.line(to: NSPoint(x: S - 66 * k, y: S / 2))
-    m.lineWidth = max(1, 2.5 * k)
-    c(0xFFFFFF, 0.6).setStroke()
-    m.stroke()
+    let upper = NSBezierPath()
+    upper.move(to: NSPoint(x: 150 * k, y: 388 * k))
+    upper.line(to: NSPoint(x: 330 * k, y: 262 * k))
+    upper.lineWidth = 96 * k
+    upper.lineCapStyle = .round
+    c(0x3E8AD6).setStroke()
+    upper.stroke()
 
-    // The prompt, deep navy with a soft white glow, lower-left pane.
-    let f = NSFont.monospacedSystemFont(ofSize: 84 * k, weight: .semibold)
-    let sh = NSShadow()
-    sh.shadowColor = c(0xFFFFFF, 0.9)
-    sh.shadowBlurRadius = 18 * k
-    (">" as NSString).draw(at: NSPoint(x: 118 * k, y: 118 * k),
-        withAttributes: [.font: f, .foregroundColor: c(0x17406B), .shadow: sh])
-    ("_" as NSString).draw(at: NSPoint(x: 172 * k, y: 124 * k),
-        withAttributes: [.font: f, .foregroundColor: c(0x2A6DAF), .shadow: sh])
+    // Sheen along the upper arm.
+    let sheen = NSBezierPath()
+    sheen.move(to: NSPoint(x: 158 * k, y: 372 * k))
+    sheen.line(to: NSPoint(x: 306 * k, y: 268 * k))
+    sheen.lineWidth = 26 * k
+    sheen.lineCapStyle = .round
+    c(0xFFFFFF, 0.28).setStroke()
+    sheen.stroke()
 
-    // Lit top edge.
+    // Coral underscore — the cursor.
+    NSGraphicsContext.current?.saveGraphicsState()
+    softShadow()
+    c(0xE86A4C).setFill()
+    NSBezierPath(roundedRect: NSRect(x: 300 * k, y: 122 * k, width: 128 * k, height: 44 * k),
+                 xRadius: 22 * k, yRadius: 22 * k).fill()
+    NSGraphicsContext.current?.restoreGraphicsState()
+
+    // Lit top edge — the glisten.
     NSGraphicsContext.current?.saveGraphicsState()
     base.addClip()
-    NSGradient(starting: c(0xFFFFFF, 0.55), ending: c(0xFFFFFF, 0.0))!
-        .draw(in: NSRect(x: 0, y: S - 90 * k, width: S, height: 90 * k), angle: -90)
+    NSGradient(starting: c(0xFFFFFF, 0.5), ending: c(0xFFFFFF, 0.0))!
+        .draw(in: NSRect(x: 0, y: S - 84 * k, width: S, height: 84 * k), angle: -90)
     NSGraphicsContext.current?.restoreGraphicsState()
 }
 
