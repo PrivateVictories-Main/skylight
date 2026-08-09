@@ -110,18 +110,23 @@ struct SidebarView: View {
             Button {
                 state.newSheetShown = true
             } label: {
-                Label("New", systemImage: "plus")
+                Label {
+                    Text("New")
+                } icon: {
+                    Image(systemName: "plus").foregroundStyle(.secondary)
+                }
+                    .foregroundStyle(.primary)
                     .font(.system(size: 13, weight: .semibold))
                     .frame(maxWidth: .infinity)
                     .frame(height: 30)
                     .contentShape(Rectangle())
                     .background(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.14))
+                            .fill(Color.primary.opacity(0.07))
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .strokeBorder(Color.accentColor.opacity(0.3))
+                            .strokeBorder(Color.primary.opacity(0.14))
                     )
             }
             .buttonStyle(.pressable(scale: 0.97))
@@ -377,6 +382,7 @@ struct EmptyDetail: View {
             systemImage: "terminal",
             description: Text("Pick a terminal or canvas from the sidebar, or press ⌘T.")
         )
+        .ignoresSafeArea(edges: .top)
     }
 }
 
@@ -404,6 +410,9 @@ struct FullInstanceView: View {
             .padding(.horizontal, 10)
             .padding(.bottom, 10)
             .padding(.top, 4)
+            // The traffic lights ride over the sidebar column, so the detail
+            // side can own every pixel of height — no dead band up top.
+            .ignoresSafeArea(edges: .top)
     }
 }
 
@@ -446,6 +455,10 @@ struct FocusView: View {
                 }
             }
             .onExitCommand { state.endFocus() }
+            // The Back button floats over the glass instead of reserving a
+            // toolbar band, and the panel rises into the title-bar strip.
+            .toolbarBackground(.hidden, for: .windowToolbar)
+            .ignoresSafeArea(edges: .top)
     }
 }
 

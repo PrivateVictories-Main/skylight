@@ -46,7 +46,9 @@ struct NewTerminalSheet: View {
             if !state.presets.isEmpty, loaded {
                 presetRows
             }
+            Divider().opacity(0.4)
             shellSection
+            Divider().opacity(0.4)
             modeSection
             if agentMode {
                 harnessSection
@@ -55,8 +57,8 @@ struct NewTerminalSheet: View {
             directoryRow
             footer
         }
-        .padding(20)
-        .frame(width: 440)
+        .padding(22)
+        .frame(width: 460)
         .onAppear(perform: load)
         // Come back from a terminal where you just installed a CLI and the
         // row lights up — no reopen needed.
@@ -129,11 +131,11 @@ struct NewTerminalSheet: View {
             .padding(10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color.accentColor.opacity(0.08))
+                    .fill(Color.accentColor.opacity(0.06))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .strokeBorder(Color.accentColor.opacity(0.25))
+                    .strokeBorder(Color.accentColor.opacity(0.18))
             )
         }
         .buttonStyle(.pressable(scale: 0.98))
@@ -145,7 +147,7 @@ struct NewTerminalSheet: View {
                 let ready = isReady(preset.spec)
                 Button { if ready { launch(preset.spec, name: preset.name) } } label: {
                     HStack(spacing: 10) {
-                        harnessIcon(for: preset.spec.harness, size: 18)
+                        harnessIcon(for: preset.spec.harness, size: 20)
                         Text(preset.name)
                             .font(.system(size: 13, weight: .medium))
                         Spacer()
@@ -161,10 +163,10 @@ struct NewTerminalSheet: View {
                     }
                     .opacity(ready ? 1 : 0.55)
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
+                    .padding(.vertical, 8)
                 }
                 .buttonStyle(.plain)
-                .hoverHighlight()
+                .hoverHighlight(cornerRadius: 10)
                 .contextMenu {
                     Button("Delete Preset", role: .destructive) {
                         state.deletePreset(preset.id)
@@ -185,7 +187,9 @@ struct NewTerminalSheet: View {
             } label: {
                 HStack {
                     Text("Shell")
-                        .font(.system(size: 12, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
+                        .textCase(.uppercase)
+                        .kerning(0.6)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(shellPath.map { ($0 as NSString).lastPathComponent }
@@ -243,7 +247,9 @@ struct NewTerminalSheet: View {
     private var modeSection: some View {
         HStack {
             Text("Runs")
-                .font(.system(size: 12, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
+                .textCase(.uppercase)
+                .kerning(0.6)
                 .foregroundStyle(.secondary)
             Spacer()
             SlidingSegments(
@@ -276,10 +282,10 @@ struct NewTerminalSheet: View {
                 if path != nil { harnessID = harness.id }
             } label: {
                 HStack(spacing: 10) {
-                    harnessIcon(for: harness.id, size: 18)
+                    harnessIcon(for: harness.id, size: 20)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(harness.displayName)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 13, weight: .semibold))
                         if path == nil {
                             Text(harness.installCommand)
                                 .font(.system(size: 10.5, design: .monospaced))
@@ -293,7 +299,7 @@ struct NewTerminalSheet: View {
                             .foregroundStyle(Color.accentColor)
                     }
                 }
-                .padding(.vertical, 7)
+                .padding(.vertical, 8)
                 .padding(.leading, 10)
                 .contentShape(Rectangle())
             }
@@ -310,7 +316,7 @@ struct NewTerminalSheet: View {
         }
         .padding(.trailing, 10)
         .opacity(path == nil ? 0.55 : 1)
-        .hoverHighlight(active: harnessID == harness.id)
+        .hoverHighlight(cornerRadius: 10, active: harnessID == harness.id)
     }
 
     private var argumentsRow: some View {
@@ -369,6 +375,17 @@ struct NewTerminalSheet: View {
                 }
             }
             HStack {
+                // Canvases don't wait on terminals: an empty app can make one
+                // straight from here.
+                Button {
+                    state.selection = .canvas(state.newCanvas().id)
+                    dismiss()
+                } label: {
+                    Label("New Canvas", systemImage: "square.on.square.dashed")
+                }
+                .buttonStyle(.pressable(scale: 0.97))
+                .font(.system(size: 12))
+                .help("Create an empty canvas (⇧⌘N)")
                 Button(savingPreset ? "Cancel Preset" : "Save as Preset…") {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                         savingPreset.toggle()
@@ -379,6 +396,7 @@ struct NewTerminalSheet: View {
                 Spacer()
                 Button("Create") { launch(spec) }
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .disabled(agentMode && (harnessID == nil || harnessID.flatMap { installed[$0] } == nil))
             }

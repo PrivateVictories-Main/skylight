@@ -74,6 +74,10 @@ struct CanvasView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
         .navigationTitle(board?.name ?? "Canvas")
+        // The dot grid reaches the window top: no toolbar band, no safe-area
+        // gap between the glass and the traffic lights.
+        .toolbarBackground(.hidden, for: .windowToolbar)
+        .ignoresSafeArea(edges: .top)
         .overlay {
             if board?.tiles.isEmpty ?? true {
                 ContentUnavailableView(
