@@ -448,6 +448,10 @@ struct CanvasDropOverlay: View {
                 }))
             chipBar
         }
+        // Same origin as the CanvasView underneath it: if the overlay kept the
+        // safe-area inset the canvas gave up, every ghost would sit ~28pt above
+        // where the tile actually lands.
+        .ignoresSafeArea(edges: .top)
     }
 
     /// Mirror of addTile's placement so the ghost never lies — including a

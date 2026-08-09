@@ -382,6 +382,7 @@ struct EmptyDetail: View {
             systemImage: "terminal",
             description: Text("Pick a terminal or canvas from the sidebar, or press ⌘T.")
         )
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .ignoresSafeArea(edges: .top)
     }
 }
@@ -393,6 +394,10 @@ struct FullInstanceView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+            // The glass rises to the window top, but AppKit still owns the top
+            // ~28pt as a titlebar drag region: text starting up there would be
+            // unclickable. The inset keeps the first row honest.
+            .padding(.top, 34)
             .padding(10)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -412,6 +417,7 @@ struct FullInstanceView: View {
             .padding(.top, 4)
             // The traffic lights ride over the sidebar column, so the detail
             // side can own every pixel of height — no dead band up top.
+            .toolbarBackground(.hidden, for: .windowToolbar)
             .ignoresSafeArea(edges: .top)
     }
 }
@@ -426,6 +432,8 @@ struct FocusView: View {
 
     var body: some View {
         PersistentTerminalView(view: state.sessions.terminalHostView(for: instance))
+            // Same drag-region clearance as FullInstanceView.
+            .padding(.top, 34)
             .padding(10)
             .background(.ultraThinMaterial)
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))

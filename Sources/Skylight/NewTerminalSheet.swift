@@ -46,7 +46,9 @@ struct NewTerminalSheet: View {
             if !state.presets.isEmpty, loaded {
                 presetRows
             }
-            Divider().opacity(0.4)
+            if loaded, state.usage.topCombo() != nil || !state.presets.isEmpty {
+                Divider().opacity(0.4)
+            }
             shellSection
             Divider().opacity(0.4)
             modeSection
