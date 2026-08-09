@@ -32,7 +32,11 @@ struct CanvasView: View {
                         pan.x += delta.width
                         pan.y += delta.height
                     },
-                    onPanEnded: { commitPan() }
+                    onPanEnded: { commitPan() },
+                    contextMenu: { viewPoint in
+                        spawnMenu(at: CGPoint(x: viewPoint.x - pan.x,
+                                              y: viewPoint.y - pan.y))
+                    }
                 )
                 DotGrid(pan: pan)
                     .allowsHitTesting(false)
@@ -83,7 +87,7 @@ struct CanvasView: View {
                 ContentUnavailableView(
                     "Empty Canvas",
                     systemImage: "square.on.square.dashed",
-                    description: Text("Drag terminals here from the sidebar.")
+                    description: Text("Right-click anywhere to open a terminal here — or drag one in from the sidebar.")
                 )
                 .allowsHitTesting(false)
             }
@@ -93,6 +97,49 @@ struct CanvasView: View {
     private func commitPan() {
         state.setPan(pan, for: boardID)
         state.persistSoon()
+    }
+
+    /// The right-click spawn menu: everything launchable, one click, landing
+    /// at the click point. Only real, installed options — never a dead item.
+    private func spawnMenu(at contentPoint: CGPoint) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        func add(_ title: String, _ run: @escaping () -> Void) {
+            let action = MenuAction(run)
+            let item = NSMenuItem(title: title, action: #selector(MenuAction.invoke),
+                                  keyEquivalent: "")
+            item.target = action
+            item.representedObject = action   // retains the closure box
+            menu.addItem(item)
+        }
+        let spawn: (TerminalSpec, String?) -> Void = { spec, name in
+            state.launchTile(spec, name: name, on: boardID, at: contentPoint)
+        }
+        if let usual = state.usage.topCombo(),
+           usual.harness.map({ state.sessions.cachedResolveHarness($0) != nil }) ?? true {
+            add("Your Usual — \(AppState.defaultName(for: usual))") { spawn(usual, nil) }
+        }
+        for preset in state.presets where preset.spec.harness
+            .map({ state.sessions.cachedResolveHarness($0) != nil }) ?? true {
+            add(preset.name) { spawn(preset.spec, preset.name) }
+        }
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+        add("Terminal") { spawn(TerminalSpec(), nil) }
+        let installed = Catalog.harnesses.filter {
+            state.sessions.cachedResolveHarness($0.id) != nil
+        }
+        if !installed.isEmpty {
+            menu.addItem(.separator())
+            for harness in installed {
+                add(harness.displayName) { spawn(TerminalSpec(harness: harness.id), nil) }
+            }
+        }
+        menu.addItem(.separator())
+        add("More Options…") {
+            state.pendingSpawn = (boardID, contentPoint)
+            state.newSheetShown = true
+        }
+        return menu
     }
 
     /// Center the tile a sidebar row asked for.
@@ -119,6 +166,14 @@ struct CanvasView: View {
     }
 }
 
+/// Bridges NSMenuItem's target/action to a closure; retained via representedObject.
+@MainActor
+final class MenuAction: NSObject {
+    private let run: () -> Void
+    init(_ run: @escaping () -> Void) { self.run = run }
+    @objc func invoke() { run() }
+}
+
 // MARK: - Pan capture
 
 /// Sits behind the tiles and turns trackpad scrolls, mouse-wheel scrolls, and
@@ -127,22 +182,27 @@ struct CanvasView: View {
 struct PanSurface: NSViewRepresentable {
     let onPan: (CGSize) -> Void
     let onPanEnded: () -> Void
+    /// Builds the right-click menu for a point in CONTENT coordinates.
+    let contextMenu: (CGPoint) -> NSMenu
 
     func makeNSView(context: Context) -> PanView {
         let view = PanView()
         view.onPan = onPan
         view.onPanEnded = onPanEnded
+        view.contextMenu = contextMenu
         return view
     }
 
     func updateNSView(_ nsView: PanView, context: Context) {
         nsView.onPan = onPan
         nsView.onPanEnded = onPanEnded
+        nsView.contextMenu = contextMenu
     }
 
     final class PanView: NSView {
         var onPan: ((CGSize) -> Void)?
         var onPanEnded: (() -> Void)?
+        var contextMenu: ((CGPoint) -> NSMenu)?
         private var dragOrigin: CGPoint?
         private var dragged = false
 
@@ -178,6 +238,16 @@ struct PanSurface: NSViewRepresentable {
             if dragged { onPanEnded?() }
             dragOrigin = nil
             dragged = false
+        }
+
+        // No super call: the responder chain has nothing better to do with a
+        // right-click here, and the pan gesture's state is left untouched.
+        override func rightMouseDown(with event: NSEvent) {
+            guard let contextMenu else { return }
+            let p = convert(event.locationInWindow, from: nil)
+            // The view is unflipped; SwiftUI's content space is top-left.
+            let viewPoint = CGPoint(x: p.x, y: bounds.height - p.y)
+            NSMenu.popUpContextMenu(contextMenu(viewPoint), with: event, for: self)
         }
     }
 }

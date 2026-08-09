@@ -62,6 +62,9 @@ struct NewTerminalSheet: View {
         .padding(22)
         .frame(width: 460)
         .onAppear(perform: load)
+        // Closing without launching must not leave a stale spawn target
+        // waiting to hijack the next launch. (Launching clears it in launch.)
+        .onDisappear { state.pendingSpawn = nil }
         // Come back from a terminal where you just installed a CLI and the
         // row lights up — no reopen needed.
         .onReceive(NotificationCenter.default.publisher(

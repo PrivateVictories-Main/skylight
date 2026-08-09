@@ -27,6 +27,8 @@ final class AppState: ObservableObject {
     @Published var draggingItemID: UUID?
     /// The New sheet — openable from ⌘T and the sidebar + button alike.
     @Published var newSheetShown = false
+    /// Right-click spawn target: the sheet's next launch lands here as a tile.
+    var pendingSpawn: (canvasID: UUID, point: CGPoint)?
     @Published private(set) var presets: [LaunchPreset]
     @Published private(set) var usage: UsageLog
 
@@ -184,6 +186,11 @@ final class AppState: ObservableObject {
     /// presets, and the New sheet all use. Records the combo locally so the
     /// most-used launch can become a one-click recommendation.
     func launch(_ spec: TerminalSpec, name: String? = nil) {
+        if let spawn = pendingSpawn {
+            pendingSpawn = nil
+            launchTile(spec, name: name, on: spawn.canvasID, at: spawn.point)
+            return
+        }
         let base = name ?? Self.defaultName(for: spec)
         let siblings = instances.filter {
             $0.name == base || $0.name.hasPrefix("\(base) ")
@@ -195,6 +202,30 @@ final class AppState: ObservableObject {
         focusedInstance = nil
         usage.record(spec)
         persistUsage()
+        persist()
+    }
+
+    /// Create a new instance directly as a tile on a canvas, at a content
+    /// point — the right-click spawn. The canvas stays selected; the tile
+    /// appears where the cursor was, no full-window hop.
+    func launchTile(_ spec: TerminalSpec, name: String? = nil,
+                    on canvasID: UUID, at point: CGPoint) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        let base = name ?? Self.defaultName(for: spec)
+        let siblings = instances.filter {
+            $0.name == base || $0.name.hasPrefix("\(base) ")
+        }.count
+        let instance = TerminalInstance(
+            name: siblings == 0 ? base : "\(base) \(siblings + 1)", spec: spec)
+        instances.append(instance)
+        usage.record(spec)
+        persistUsage()
+        let size = CanvasLayout.defaultTileSize
+        let origin = CanvasLayout.snapped(
+            CGPoint(x: point.x - size.width / 2, y: point.y - 24))
+        canvases[index].tiles.append(
+            CanvasTile(itemID: instance.id, origin: origin, size: size))
+        selection = .canvas(canvasID)
         persist()
     }
 
