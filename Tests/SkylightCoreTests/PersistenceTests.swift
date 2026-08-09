@@ -11,7 +11,8 @@ final class PersistenceTests: XCTestCase {
             name: "Work",
             tiles: [CanvasTile(itemID: instance.id, origin: CGPoint(x: 64, y: 48),
                                size: CGSize(width: 560, height: 400))],
-            pan: CGPoint(x: -120, y: 40))
+            pan: CGPoint(x: -120, y: 40),
+            zoom: 0.5)
         let state = SavedState(instances: [instance], canvases: [board],
                                selectedCanvas: board.id)
         let data = try XCTUnwrap(WorkspacePersistence.encode(state))
@@ -19,7 +20,7 @@ final class PersistenceTests: XCTestCase {
     }
 
     func testBoardPanDefaultsToZeroWhenAbsent() throws {
-        // A v2 board saved before `pan` existed must still decode.
+        // A v2 board saved before `pan`/`zoom` existed must still decode.
         let json = """
         {"version":2,"instances":[],"canvases":[
           {"id":"44444444-4444-4444-4444-444444444444","name":"Old","tiles":[]}
@@ -27,6 +28,7 @@ final class PersistenceTests: XCTestCase {
         """
         let state = try XCTUnwrap(WorkspacePersistence.decode(Data(json.utf8)))
         XCTAssertEqual(state.canvases.first?.pan, .zero)
+        XCTAssertEqual(state.canvases.first?.zoom, 1)
     }
 
     func testLegacyMigrationDropsChatsAndMapsFlavors() throws {

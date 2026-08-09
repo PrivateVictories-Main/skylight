@@ -62,26 +62,34 @@ public struct CanvasBoard: Identifiable, Codable, Equatable, Sendable {
     public var tiles: [CanvasTile]
     /// Persisted pan offset so a canvas reopens exactly where you left it.
     public var pan: CGPoint
+    /// Persisted zoom scale (screen = content × zoom + pan) so a canvas
+    /// reopens at exactly the magnification you left it at.
+    public var zoom: CGFloat
 
-    public init(id: UUID = UUID(), name: String, tiles: [CanvasTile] = [], pan: CGPoint = .zero) {
+    public init(id: UUID = UUID(), name: String, tiles: [CanvasTile] = [],
+                pan: CGPoint = .zero, zoom: CGFloat = 1) {
         self.id = id
         self.name = name
         self.tiles = tiles
         self.pan = pan
+        self.zoom = zoom
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, tiles, pan }
+    enum CodingKeys: String, CodingKey { case id, name, tiles, pan, zoom }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(UUID.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         tiles = try container.decode([CanvasTile].self, forKey: .tiles)
-        // Boards saved before pan existed decode with the origin view.
+        // Boards saved before pan existed decode with the origin view, and
+        // boards saved before zoom existed decode at 100%.
         // NOTE: any new persisted property must be decoded HERE as well —
         // the synthesized encoder writes it, but this initializer silently
-        // drops what it doesn't read.
+        // drops what it doesn't read. Forgetting a key here does not fail
+        // loudly: the value simply reverts to its default on every load.
         pan = try container.decodeIfPresent(CGPoint.self, forKey: .pan) ?? .zero
+        zoom = try container.decodeIfPresent(CGFloat.self, forKey: .zoom) ?? 1
     }
 }
 

@@ -531,12 +531,21 @@ struct CanvasDropOverlay: View {
     }
 
     /// Mirror of addTile's placement so the ghost never lies — including a
-    /// repositioned tile's real size.
+    /// repositioned tile's real size, and the same free-space dodge a new
+    /// tile's drop will take.
     private func ghostFrame(at location: CGPoint, pan: CGPoint) -> CGRect {
-        let size = targetBoard?.tiles.first { $0.itemID == itemID }?.size
-            ?? CanvasLayout.defaultTileSize
-        let origin = CanvasLayout.snapped(
-            CGPoint(x: location.x - pan.x - size.width / 2, y: location.y - pan.y - 24))
+        let resident = targetBoard?.tiles.first { $0.itemID == itemID }
+        let size = resident?.size ?? CanvasLayout.defaultTileSize
+        let desired = CGPoint(x: location.x - pan.x - size.width / 2,
+                              y: location.y - pan.y - 24)
+        // Already on this board → the user's exact drop (magnets align it).
+        // New here → the identical freePosition call addTile is about to make,
+        // against the identical frames, so the ghost cannot promise a spot the
+        // tile then dodges away from.
+        let origin = resident == nil
+            ? CanvasLayout.freePosition(desired: desired, size: size,
+                                        avoiding: targetBoard?.tiles.map(\.frame) ?? [])
+            : CanvasLayout.snapped(desired)
         return CGRect(x: origin.x + pan.x, y: origin.y + pan.y,
                       width: size.width, height: size.height)
     }

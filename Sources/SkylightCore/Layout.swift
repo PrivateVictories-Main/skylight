@@ -105,6 +105,62 @@ public enum CanvasLayout {
         return (newTiles, newPan)
     }
 
+    /// Zoom that fits a content bounding box in a viewport with margin,
+    /// clamped to [minZoom, 1] — fitting never zooms IN past 100%.
+    public static func fitZoom(bounds: CGRect, viewport: CGSize,
+                               margin: CGFloat = 48, minZoom: CGFloat = 0.2) -> CGFloat {
+        guard bounds.width > 0, bounds.height > 0,
+              viewport.width > margin * 2, viewport.height > margin * 2 else { return 1 }
+        let scale = min((viewport.width - margin * 2) / bounds.width,
+                        (viewport.height - margin * 2) / bounds.height)
+        return min(1, max(minZoom, scale))
+    }
+
+    /// Pan that centers a content bounding box in the viewport at `zoom`
+    /// (screen = content × zoom + pan).
+    public static func centeringPan(bounds: CGRect, viewport: CGSize,
+                                    zoom: CGFloat) -> CGPoint {
+        CGPoint(x: (viewport.width - bounds.width * zoom) / 2 - bounds.minX * zoom,
+                y: (viewport.height - bounds.height * zoom) / 2 - bounds.minY * zoom)
+    }
+
+    /// The nearest non-overlapping, grid-snapped origin for a new tile of
+    /// `size` wanting to land at `desired` (its would-be origin): scans a
+    /// spiral of grid steps outward until the tile (inflated by `margin`)
+    /// clears every existing frame. Deterministic; returns `desired` snapped
+    /// when it is already free.
+    public static func freePosition(desired: CGPoint, size: CGSize,
+                                    avoiding frames: [CGRect],
+                                    margin: CGFloat = 16) -> CGPoint {
+        let start = snapped(desired)
+        func collides(_ origin: CGPoint) -> Bool {
+            let candidate = CGRect(origin: origin, size: size)
+                .insetBy(dx: -margin, dy: -margin)
+            return frames.contains { $0.intersects(candidate) }
+        }
+        if !collides(start) { return start }
+        let step = grid * 2
+        for ring in 1...200 {
+            let r = CGFloat(ring) * step
+            var candidates: [CGPoint] = []
+            let steps = ring * 4
+            for i in 0..<steps {
+                let side = i * 4 / steps
+                let t = CGFloat(i % (steps / 4)) / CGFloat(max(1, steps / 4))
+                switch side {
+                case 0: candidates.append(CGPoint(x: start.x - r + 2 * r * t, y: start.y - r))
+                case 1: candidates.append(CGPoint(x: start.x + r, y: start.y - r + 2 * r * t))
+                case 2: candidates.append(CGPoint(x: start.x + r - 2 * r * t, y: start.y + r))
+                default: candidates.append(CGPoint(x: start.x - r, y: start.y + r - 2 * r * t))
+                }
+            }
+            for candidate in candidates.map({ snapped($0) }) where !collides(candidate) {
+                return candidate
+            }
+        }
+        return start   // pathological density: overlap beats losing the tile
+    }
+
     public static func staggeredOrigin(existing: Int) -> CGPoint {
         CGPoint(x: 48 + CGFloat(existing) * 64, y: 48 + CGFloat(existing) * 48)
     }

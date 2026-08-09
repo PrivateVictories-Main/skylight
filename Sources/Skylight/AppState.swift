@@ -227,8 +227,10 @@ final class AppState: ObservableObject {
         usage.record(spec)
         persistUsage()
         let size = CanvasLayout.defaultTileSize
-        let origin = CanvasLayout.snapped(
-            CGPoint(x: point.x - size.width / 2, y: point.y - 24))
+        let desired = CGPoint(x: point.x - size.width / 2, y: point.y - 24)
+        let origin = CanvasLayout.freePosition(
+            desired: desired, size: size,
+            avoiding: canvases[index].tiles.map(\.frame))
         canvases[index].tiles.append(
             CanvasTile(itemID: instance.id, origin: origin, size: size))
         selection = .canvas(canvasID)
@@ -322,9 +324,11 @@ final class AppState: ObservableObject {
             }
         } else {
             let size = CanvasLayout.defaultTileSize
-            let origin = CanvasLayout.snapped(
-                point.map { CGPoint(x: $0.x - size.width / 2, y: $0.y - 24) }
-                    ?? CanvasLayout.staggeredOrigin(existing: canvases[index].tiles.count))
+            let desired = point.map { CGPoint(x: $0.x - size.width / 2, y: $0.y - 24) }
+                ?? CanvasLayout.staggeredOrigin(existing: canvases[index].tiles.count)
+            let origin = CanvasLayout.freePosition(
+                desired: desired, size: size,
+                avoiding: canvases[index].tiles.map(\.frame))
             canvases[index].tiles.append(
                 CanvasTile(itemID: itemID, origin: origin, size: size))
             // Only a newly placed tile is worth panning to; nudging one that
