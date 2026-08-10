@@ -53,10 +53,21 @@ extension Brand {
         case .claudeCode: Color(red: 0.851, green: 0.467, blue: 0.341)   // #D97757
         case .gemini: Color(red: 0.557, green: 0.459, blue: 0.698)       // #8E75B2
         case .qwen: Color(red: 0.412, green: 0.314, blue: 0.937)         // #6950EF
-        case .openai, .copilot, .cursor, .amp, .opencode:
-            Color(red: 0.0, green: 0.0, blue: 0.0)
+        case .openai, .copilot, .cursor, .amp, .opencode: .monochromeMark
         }
     }
+}
+
+extension Color {
+    /// The monochrome brands ship one mark in two official finishes: black on
+    /// light, reversed to white on dark. A literal black would simply vanish
+    /// into Skylight's dark glass, so the mark follows the appearance — which
+    /// is the official treatment, not a deviation from it. (Only the bare
+    /// `filled: false` path reads this; the plated variant paints its own
+    /// black-on-white, which is correct in both appearances.)
+    static let monochromeMark = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? .white : .black
+    })
 }
 
 /// Provider logo at a given size. `filled` draws the official rounded-square

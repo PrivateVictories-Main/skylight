@@ -738,7 +738,9 @@ struct TileView: View {
     private var header: some View {
         HStack(spacing: 8) {
             if let brand = harnessBrand {
-                BrandIcon(brand: brand, size: 15)
+                // Bare mark here too — the sidebar and the canvas wear the
+                // same emblem, never a plated one and a flat one.
+                BrandIcon(brand: brand, size: 14, filled: false)
             } else {
                 Image(systemName: "terminal")
                     .font(.system(size: 11, weight: .semibold))

@@ -78,13 +78,22 @@ struct SidebarView: View {
                 }
                 if state.freeInstances.isEmpty {
                     Text("⌘T for a new terminal · ⇧⌘T for an instant shell")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.quaternary)
                 }
             } header: {
                 // Dropping a canvas-resident row here frees it again. The
                 // whole header row is the target, not just the word.
-                HStack { Text("Terminals"); Spacer() }
+                HStack {
+                    Text("Terminals")
+                        // Same caption voice as the New sheet's tier headings,
+                        // so the two surfaces read as one app.
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .textCase(.uppercase)
+                        .kerning(0.6)
+                    Spacer()
+                }
                     .contentShape(Rectangle())
                     .dropDestination(for: String.self) { ids, _ in
                         for raw in ids {
@@ -212,40 +221,41 @@ struct InstanceRow: View {
     }
 
     private var label: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 9) {
             icon
-            if let terminal = state.sessions.existingTerminal(for: instance.id) {
-                TerminalRowLabel(instance: instance, terminal: terminal)
-            } else {
+                .frame(width: 16, height: 16)
+            VStack(alignment: .leading, spacing: 1) {
                 Text(instance.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                // The caption's live updates come from the terminal's own
+                // object, so the observation lives one view deeper — see
+                // TitleCaption. Rendering a row still never spawns a process:
+                // existingTerminal is non-creating.
+                if let terminal = state.sessions.existingTerminal(for: instance.id) {
+                    TitleCaption(name: instance.name, terminal: terminal)
+                }
             }
+            Spacer(minLength: 4)
             if state.attention.contains(instance.id) {
-                Spacer(minLength: 4)
                 AttentionDot()
             }
         }
-        .padding(.vertical, 1)
-        .padding(.leading, resident ? 10 : 0)
+        .padding(.vertical, 3)
+        .padding(.leading, resident ? 12 : 0)
     }
 
     @ViewBuilder
     private var icon: some View {
         if let brand = harnessBrand {
-            // Agent terminal: brand emblem with a small terminal badge.
-            BrandIcon(brand: brand, size: 18)
-                .overlay(alignment: .bottomTrailing) {
-                    Image(systemName: "terminal.fill")
-                        .font(.system(size: 7, weight: .bold))
-                        .foregroundStyle(.secondary)
-                        .padding(1.5)
-                        .background(Circle().fill(.background))
-                        .offset(x: 4, y: 4)
-                }
+            // The bare official mark, no plate and no terminal badge: the mark
+            // itself already says "agent", and anything under it reads as noise.
+            BrandIcon(brand: brand, size: 16, filled: false)
         } else {
             Image(systemName: "terminal")
-                .font(.system(size: 13, weight: .medium))
+                .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 18, height: 18)
         }
     }
 
@@ -298,26 +308,47 @@ struct CanvasRow: View {
     @State private var confirmDelete = false
 
     var body: some View {
-        Label(board.name, systemImage: "square.on.square.dashed")
+        HStack(spacing: 6) {
+            // Split-init Label so the glyph can hold its own weight and tone:
+            // the name is the loud part of a canvas row, the icon is not.
+            Label {
+                Text(board.name)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            } icon: {
+                Image(systemName: "square.on.square.dashed")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
             .font(.system(size: 13, weight: .semibold))
-            .tag(Selection.canvas(board.id))
-            .dropDestination(for: String.self) { ids, _ in
-                for raw in ids {
-                    guard let id = UUID(uuidString: raw) else { continue }
-                    state.addTile(itemID: id, to: board.id, at: nil)
-                }
-                return true
+            Spacer()
+            // How many tiles are parked on this board — the one number you
+            // want from a collapsed glance at the sidebar.
+            Text("\(state.residents(of: board).count)")
+                .font(.system(size: 10.5, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 1.5)
+                .background(Capsule().fill(Color.primary.opacity(0.07)))
+        }
+        .tag(Selection.canvas(board.id))
+        .dropDestination(for: String.self) { ids, _ in
+            for raw in ids {
+                guard let id = UUID(uuidString: raw) else { continue }
+                state.addTile(itemID: id, to: board.id, at: nil)
             }
-            .contextMenu {
-                Button("Rename…") { onRename(board) }
-                Divider()
-                Button("Delete Canvas", role: .destructive) { confirmDelete = true }
-            }
-            .confirmationDialog("Delete “\(board.name)”?", isPresented: $confirmDelete) {
-                Button("Delete Canvas", role: .destructive) { state.deleteCanvas(board.id) }
-            } message: {
-                Text("Its terminals return to the sidebar — nothing is closed.")
-            }
+            return true
+        }
+        .contextMenu {
+            Button("Rename…") { onRename(board) }
+            Divider()
+            Button("Delete Canvas", role: .destructive) { confirmDelete = true }
+        }
+        .confirmationDialog("Delete “\(board.name)”?", isPresented: $confirmDelete) {
+            Button("Delete Canvas", role: .destructive) { state.deleteCanvas(board.id) }
+        } message: {
+            Text("Its terminals return to the sidebar — nothing is closed.")
+        }
     }
 }
 
@@ -338,27 +369,27 @@ struct AttentionDot: View {
     }
 }
 
-/// Terminal row with a live activity caption from ghostty's reported title —
-/// glance at the sidebar and see what every session is doing.
-struct TerminalRowLabel: View {
-    let instance: TerminalInstance
+/// The row's second line: a live activity caption from ghostty's reported
+/// title — glance at the sidebar and see what every session is doing. It is
+/// its own view purely to hold the `@ObservedObject`; the terminal's title
+/// belongs to the terminal, not to AppState, so a row that read it inline
+/// would render once and then freeze.
+struct TitleCaption: View {
+    let name: String
     @ObservedObject var terminal: TerminalViewState
 
     private var activity: String? {
         let title = terminal.title.trimmingCharacters(in: .whitespaces)
-        guard !title.isEmpty, title != instance.name else { return nil }
+        guard !title.isEmpty, title != name else { return nil }
         return title
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(instance.name)
-            if let activity {
-                Text(activity)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+        if let activity {
+            Text(activity)
+                .font(.system(size: 10.5))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
         }
     }
 }
