@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 import SwiftUI
@@ -103,6 +104,17 @@ final class AppState: ObservableObject {
         sessions.onBell = { [weak self] id in
             guard let self, !self.isVisible(id) else { return }
             self.attention.insert(id)
+        }
+        // An agent terminal names itself after the first thing you ask it.
+        sessions.onAutoName = { [weak self] id, title in
+            guard let self,
+                  let index = self.instances.firstIndex(where: { $0.id == id })
+            else { return }
+            self.instances[index].name = title
+            self.persist()
+        }
+        sessions.lookupName = { [weak self] id in
+            self?.instance(id)?.name
         }
         Self.shared = self
 
@@ -279,6 +291,8 @@ final class AppState: ObservableObject {
         guard !trimmed.isEmpty,
               let index = instances.firstIndex(where: { $0.id == id }) else { return }
         instances[index].name = trimmed
+        // A name you chose stands: no prompt typed later may replace it.
+        sessions.cancelTitleCapture(id)
         persist()
     }
 
@@ -473,6 +487,31 @@ final class LiveSessionStore {
     /// Fired when a terminal rings the bell (a CLI is done / needs input).
     var onBell: ((UUID) -> Void)?
 
+    /// Fired once per agent terminal, with a name derived from the first
+    /// thing its human asked for.
+    var onAutoName: ((UUID, String) -> Void)?
+
+    /// The instance's name as it stands right now. A name chosen between
+    /// launch and the first prompt outranks anything derived here, so the
+    /// capture asks before it fires.
+    var lookupName: ((UUID) -> String?)?
+
+    // MARK: - First-prompt title capture
+
+    /// An agent terminal still wearing its launch-issued name, and the line
+    /// typed into it so far. We cannot read the pty, but we own the input
+    /// path: every keystroke passes through the terminal's NSView.
+    private struct TitleCapture {
+        let defaultName: String
+        var buffer: String = ""
+    }
+    private var titleCapture: [UUID: TitleCapture] = [:]
+    private var keyMonitor: Any?
+
+    /// Long enough for any first prompt worth naming; past it the buffer
+    /// stops growing but the capture stays alive.
+    private static let bufferLimit = 300
+
     /// Cached PATH resolution — resolving stats the filesystem, and tile
     /// bodies ask for it during pan. Cache lives for the app run, matching
     /// the session config it feeds.
@@ -539,6 +578,12 @@ final class LiveSessionStore {
         bellObservers[id] = state.$bellCount
             .dropFirst()
             .sink { [weak self] _ in self?.onBell?(id) }
+        // Only agents name themselves, and only while they still answer to
+        // the name the launcher gave them.
+        if instance.spec.harness != nil, Self.wearsLaunchName(instance) {
+            titleCapture[id] = TitleCapture(defaultName: instance.name)
+            installKeyMonitorIfNeeded()
+        }
         return state
     }
 
@@ -548,6 +593,127 @@ final class LiveSessionStore {
         terminals.removeValue(forKey: id)
         terminalNSViews.removeValue(forKey: id)
         bellObservers.removeValue(forKey: id)
+        cancelTitleCapture(id)
+    }
+
+    /// A deliberate name ends the auto-naming conversation for good — a hand
+    /// rename must never be overwritten by a prompt typed later.
+    func cancelTitleCapture(_ id: UUID) {
+        titleCapture.removeValue(forKey: id)
+        removeKeyMonitorIfIdle()
+    }
+
+    /// True while an instance still wears exactly what `launch` issued it —
+    /// "Claude Code", or "Claude Code 2" for a sibling. Names outlive
+    /// captures (they persist to disk; captures do not), so a terminal that
+    /// already named itself in an earlier run, or was renamed by hand, is not
+    /// eligible again after a relaunch.
+    private static func wearsLaunchName(_ instance: TerminalInstance) -> Bool {
+        let base = AppState.defaultName(for: instance.spec)
+        if instance.name == base { return true }
+        guard instance.name.hasPrefix("\(base) ") else { return false }
+        let suffix = instance.name.dropFirst(base.count + 1)
+        return !suffix.isEmpty && suffix.allSatisfy(\.isNumber)
+    }
+
+    private func installKeyMonitorIfNeeded() {
+        guard keyMonitor == nil, !titleCapture.isEmpty else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            self?.captureKey(event)
+            return event   // NEVER consume — the terminal gets every key
+        }
+    }
+
+    /// No captures left, no monitor: the feature costs nothing once every
+    /// agent terminal has a name.
+    private func removeKeyMonitorIfIdle() {
+        guard titleCapture.isEmpty, let monitor = keyMonitor else { return }
+        NSEvent.removeMonitor(monitor)
+        keyMonitor = nil
+    }
+
+    /// Watches; never intercepts. Every path out of here leaves the event
+    /// exactly as it arrived — the monitor returns it verbatim, and nothing
+    /// below may consume, rewrite, or defer a keystroke.
+    private func captureKey(_ event: NSEvent) {
+        guard !titleCapture.isEmpty else { return }
+        // Chords belong to the app and the CLI, never to a title. (.function
+        // is deliberately NOT screened here — the numeric keypad can carry it,
+        // and arrows/F-keys are screened by `isTypedText` instead.)
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard modifiers.isDisjoint(with: [.command, .control]) else { return }
+        // Which terminal owns the keyboard — nil for a sheet's text field, a
+        // sidebar rename, or anything else that is not a live terminal.
+        guard let id = instanceID(forResponder: event.window?.firstResponder),
+              var capture = titleCapture[id] else { return }
+
+        let characters = event.characters ?? ""
+        // Agent CLIs spell "newline, not send" as ⇧/⌥Return; a multi-line
+        // first prompt must not be named off its opening line.
+        let softNewline = !modifiers.isDisjoint(with: [.shift, .option])
+        switch event.keyCode {
+        case 36, 76:                       // Return, keypad Enter
+            if softNewline {
+                guard capture.buffer.count < Self.bufferLimit else { return }
+                capture.buffer += "\n"     // derivation collapses it to a space
+                titleCapture[id] = capture
+            } else {
+                finalize(id, capture)
+            }
+        case 51:                           // Delete
+            capture.buffer = String(capture.buffer.dropLast())
+            titleCapture[id] = capture
+        default:
+            if !softNewline, characters == "\r" || characters == "\n" {
+                finalize(id, capture)      // a remapped Return still submits
+                return
+            }
+            guard Self.isTypedText(characters),
+                  capture.buffer.count < Self.bufferLimit else { return }
+            capture.buffer += characters
+            titleCapture[id] = capture
+        }
+    }
+
+    /// Text a person typed, not a key event dressed as text: AppKit reports
+    /// arrows and F-keys as private-use scalars (U+F700…U+F8FF) and Esc/Tab
+    /// as control scalars — none of which belong in a name.
+    private static func isTypedText(_ characters: String) -> Bool {
+        guard !characters.isEmpty else { return false }
+        return characters.unicodeScalars.allSatisfy { scalar in
+            !CharacterSet.controlCharacters.contains(scalar)
+                && !(0xF700...0xF8FF).contains(scalar.value)
+        }
+    }
+
+    /// Return was pressed: name the terminal if the line was worth a name.
+    /// NOTE: only typed keys land in the buffer — a pasted prompt arrives via
+    /// the paste path, unseen here, so its Return simply resets the buffer
+    /// and the capture waits for the next line.
+    private func finalize(_ id: UUID, _ capture: TitleCapture) {
+        guard let title = Titles.derived(fromPrompt: capture.buffer) else {
+            // A bare Return, a "y", a slash-command: the real first prompt
+            // has not happened yet.
+            titleCapture[id]?.buffer = ""
+            return
+        }
+        if lookupName?(id) == capture.defaultName {
+            onAutoName?(id, title)
+        }
+        // Named, or renamed by hand while we watched — either way, done.
+        titleCapture.removeValue(forKey: id)
+        removeKeyMonitorIfIdle()
+    }
+
+    /// Ghostty's focused view may be a subview of the view we store, so this
+    /// walks ancestors rather than comparing identity. A responder that lives
+    /// in no terminal (a sheet field editor, a SwiftUI host) matches nothing
+    /// and the capture stands down.
+    private func instanceID(forResponder responder: NSResponder?) -> UUID? {
+        guard let view = responder as? NSView else { return nil }
+        return terminalNSViews.first { _, terminal in
+            view.isDescendant(of: terminal)
+        }?.key
     }
 
     static func resolveHarness(_ name: String) -> String? {
