@@ -123,6 +123,11 @@ struct CanvasView: View {
                 if !tileInteracting { applyReflow(in: viewport) }
             }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
+            // While a tile is being dragged or resized, the window must not
+            // contest the pointer — pause window movement for exactly that long.
+            .onChange(of: tileInteracting) { _, interacting in
+                state.hostWindow?.isMovable = !interacting
+            }
             .onChange(of: board?.tiles.count ?? 0) { old, new in
                 // The board grew: if the arrangement no longer fits, the canvas
                 // zooms itself out to show all of it. A fit supersedes centering

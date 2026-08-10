@@ -52,6 +52,9 @@ final class AppState: ObservableObject {
     let sessions = LiveSessionStore()
 
     static weak var shared: AppState?
+    /// The app's one window — so a tile drag can pause window movement for
+    /// exactly its own duration (see CanvasView.tileInteracting).
+    weak var hostWindow: NSWindow?
     private var observers: Set<AnyCancellable> = []
     private let persistRequests = PassthroughSubject<Void, Never>()
 

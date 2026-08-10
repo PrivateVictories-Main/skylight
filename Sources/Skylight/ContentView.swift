@@ -669,33 +669,28 @@ private final class TransparentWindowEffectView: NSVisualEffectView {
         super.viewDidMoveToWindow()
         window?.isOpaque = false
         window?.backgroundColor = .clear
-        // The window never moves itself. Without this, AppKit's titlebar band
-        // (invisible here, but still a drag region) steals the first inches of
-        // every tile drag near the top of the canvas and walks the window
-        // instead. Two explicit handles replace it — the sidebar's bottom bar,
-        // and a strip across the reserved top band when the sidebar is hidden
-        // — so there is always exactly one place that moves the window.
-        window?.isMovable = false
+        // The window moves like any macOS window — titlebar band, plus the
+        // explicit handles (sidebar bottom bar, collapsed-sidebar top strip).
+        // Tile drags are protected surgically instead: CanvasView flips
+        // isMovable off for exactly the duration of a tile gesture, via this
+        // reference. A blanket isMovable=false shipped once and made moving
+        // the window a hunt — never again.
+        window?.isMovable = true
+        MainActor.assumeIsolated {
+            AppState.shared?.hostWindow = window
+        }
     }
 }
 
-/// A region that moves the window: grab any empty part of it and drag (the
-/// canvas never moves the window — tiles always win there).
+/// A region that always moves the window: grab any empty part of it and drag
+/// — works even where the titlebar band doesn't reach.
 struct WindowDragArea: NSViewRepresentable {
     func makeNSView(context: Context) -> DragView { DragView() }
     func updateNSView(_ nsView: DragView, context: Context) {}
 
     final class DragView: NSView {
         override func mouseDown(with event: NSEvent) {
-            guard let window else { return }
-            // The window is deliberately immovable so the canvas can never
-            // walk it; lend it movability for exactly this drag. performDrag
-            // tracks the mouse modally and returns on mouse-up, so the loan
-            // is over by the next line.
-            let wasMovable = window.isMovable
-            window.isMovable = true
-            window.performDrag(with: event)
-            window.isMovable = wasMovable
+            window?.performDrag(with: event)
         }
     }
 }
