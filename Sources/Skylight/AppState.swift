@@ -129,15 +129,22 @@ final class AppState: ObservableObject {
                 // and any navigation leaves focus mode.
                 guard let self else { return }
                 self.focusedInstance = nil
+                // A pending centering is a promise to the canvas that was being
+                // opened. Navigating anywhere ELSE first answers it the other
+                // way — only a mounted CanvasView consumes the request, so an
+                // uncleared one would re-center some canvas opened much later.
+                // (A `.canvas` selection is left alone: reveal sets the two
+                // together, and clearing here would kill the reveal itself.)
                 switch selection {
                 case let .item(id)?:
                     self.attention.remove(id)
+                    self.pendingReveal = nil
                 case let .canvas(boardID)?:
                     for tile in self.canvases.first(where: { $0.id == boardID })?.tiles ?? [] {
                         self.attention.remove(tile.itemID)
                     }
                 case nil:
-                    break
+                    self.pendingReveal = nil
                 }
             }
             .store(in: &observers)
@@ -231,12 +238,8 @@ final class AppState: ObservableObject {
     /// presets, and the New sheet all use. Records the combo locally so the
     /// most-used launch can become a one-click recommendation.
     func launch(_ spec: TerminalSpec, name: String? = nil) {
-        let base = name ?? Self.defaultName(for: spec)
-        let siblings = instances.filter {
-            $0.name == base || $0.name.hasPrefix("\(base) ")
-        }.count
         let instance = TerminalInstance(
-            name: siblings == 0 ? base : "\(base) \(siblings + 1)", spec: spec)
+            name: numberedName(base: name ?? Self.defaultName(for: spec)), spec: spec)
         instances.append(instance)
         selection = .item(instance.id)
         focusedInstance = nil
@@ -262,12 +265,8 @@ final class AppState: ObservableObject {
     func launchTile(_ spec: TerminalSpec, name: String? = nil,
                     on canvasID: UUID, at point: CGPoint) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
-        let base = name ?? Self.defaultName(for: spec)
-        let siblings = instances.filter {
-            $0.name == base || $0.name.hasPrefix("\(base) ")
-        }.count
         let instance = TerminalInstance(
-            name: siblings == 0 ? base : "\(base) \(siblings + 1)", spec: spec)
+            name: numberedName(base: name ?? Self.defaultName(for: spec)), spec: spec)
         instances.append(instance)
         usage.record(spec)
         persistUsage()
@@ -280,6 +279,21 @@ final class AppState: ObservableObject {
             CanvasTile(itemID: instance.id, origin: origin, size: size))
         selection = .canvas(canvasID)
         persist()
+    }
+
+    /// "Terminal", "Terminal 2", … — always one past the highest existing
+    /// suffix, so deletions never cause duplicates.
+    private func numberedName(base: String) -> String {
+        var highest = 0
+        for instance in instances {
+            if instance.name == base {
+                highest = max(highest, 1)
+            } else if instance.name.hasPrefix(base + " "),
+                      let n = Int(instance.name.dropFirst(base.count + 1)) {
+                highest = max(highest, n)
+            }
+        }
+        return highest == 0 ? base : "\(base) \(highest + 1)"
     }
 
     static func defaultName(for spec: TerminalSpec) -> String {
@@ -376,12 +390,16 @@ final class AppState: ObservableObject {
         guard let index = canvases.firstIndex(where: { $0.id == boardID }) else { return }
         if let existing = canvases[index].tiles.firstIndex(where: { $0.itemID == itemID }) {
             // Dropping on its own board repositions the tile.
-            if let point {
-                var tile = canvases[index].tiles.remove(at: existing)
-                tile.origin = CanvasLayout.snapped(
-                    CGPoint(x: point.x - tile.size.width / 2, y: point.y - 24))
-                canvases[index].tiles.append(tile)
+            guard let point else {
+                // Pointless drop: the tile is already here and nothing says
+                // where to put it. Churning selection and writing disk to
+                // accomplish nothing is worse than doing nothing.
+                return
             }
+            var tile = canvases[index].tiles.remove(at: existing)
+            tile.origin = CanvasLayout.snapped(
+                CGPoint(x: point.x - tile.size.width / 2, y: point.y - 24))
+            canvases[index].tiles.append(tile)
         } else {
             let size = CanvasLayout.defaultTileSize
             let desired = point.map { CGPoint(x: $0.x - size.width / 2, y: $0.y - 24) }
@@ -547,6 +565,17 @@ final class LiveSessionStore {
         terminals[id]
     }
 
+    /// Quote a word for ghostty's command line iff it contains whitespace or
+    /// quotes (minimal shell-style quoting; single words pass through).
+    /// Ghostty word-splits the `command` value, so an unquoted "/Applications/
+    /// My Tool/bin/agent" silently becomes two arguments and the launch fails.
+    nonisolated private static func quoted(_ word: String) -> String {
+        guard word.rangeOfCharacter(from: .whitespaces) != nil || word.contains("\"") else {
+            return word
+        }
+        return "\"" + word.replacingOccurrences(of: "\"", with: "\\\"") + "\""
+    }
+
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
         // Glass + breathing room: translucency (never below 0.9 — readability beats effect, spec Addendum A1) plus balanced inner padding so
@@ -561,13 +590,14 @@ final class LiveSessionStore {
         """
         if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
-            let command = ([binary] + instance.spec.arguments).joined(separator: " ")
+            let command = ([binary] + instance.spec.arguments)
+                .map(Self.quoted).joined(separator: " ")
             config += "command = \(command)\n"
         } else if let shell = instance.spec.shellPath,
                   FileManager.default.isExecutableFile(atPath: shell) {
             // A shell that vanished since the spec was saved falls back to the
             // login shell (the default branch); the banner says so (Task 9).
-            config += "command = \(shell)\n"
+            config += "command = \(Self.quoted(shell))\n"
         }
         let state = TerminalViewState(configSource: .generated(config),
                                       terminalConfiguration: .default)
@@ -647,6 +677,25 @@ final class LiveSessionStore {
               var capture = titleCapture[id] else { return }
 
         let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // A long first prompt usually ARRIVES by paste. Plain ⌘V pastes the
+        // string flavor, which is exactly what the terminal is about to
+        // receive, so read it and move on — the event still goes through
+        // untouched. The paste-special variants (⌘⇧V, ⌘⌥V) are excluded: they
+        // may paste something other than `.string`.
+        //
+        // Matched on `charactersIgnoringModifiers` (keyCode 9 on ANSI) for the
+        // same reason `abandonsLine` is: on Dvorak the raw keyCode would both
+        // miss the real ⌘V and read the pasteboard on ⌘K.
+        if modifiers.contains(.command),
+           modifiers.isDisjoint(with: [.shift, .option, .control]),
+           event.charactersIgnoringModifiers?.lowercased() == "v" {
+            if capture.buffer.count < Self.bufferLimit,
+               let pasted = NSPasteboard.general.string(forType: .string) {
+                capture.buffer += pasted.prefix(Self.bufferLimit - capture.buffer.count)
+                titleCapture[id] = capture
+            }
+            return
+        }
         // Abandon gestures wipe the line in the CLI — mirror them, or an old
         // fragment glues onto the real prompt.
         if Self.abandonsLine(keyCode: event.keyCode, modifiers: modifiers,
@@ -714,9 +763,11 @@ final class LiveSessionStore {
     ///
     /// Known blind spots — all of them fail toward "no name" or "a name from
     /// slightly different text", never toward a lost keystroke:
-    /// - **Paste.** Only typed keys land in the buffer; ⌘V is a chord and is
-    ///   ignored. A pasted-then-Return prompt leaves the buffer empty, so its
-    ///   Return simply resets and the capture waits for the next line.
+    /// - **Paste.** ⌘V IS captured: the pasteboard's string flavor is appended
+    ///   as the paste happens. Every other paste path — middle-click primary
+    ///   selection, drag-and-drop, a CLI's own bracketed-paste plumbing —
+    ///   reaches the pty without a keyDown, so it leaves the buffer short and
+    ///   the line simply fails to earn a name.
     /// - **Word-delete drift.** The buffer is append-only apart from single
     ///   deletes: ⌥⌫ removes one character here while the CLI removes a whole
     ///   word, so a heavily edited line can derive from slightly stale text.

@@ -85,6 +85,20 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(CanvasLayout.magnetSnapped(dragged, against: [a, b]).x, 112)
     }
 
+    func testMagnetIgnoresFarPerpendicularNeighbors() {
+        // Same x-alignment candidate, but 1000pt below: no magnet — grid wins.
+        let farBelow = CGRect(x: 96, y: 1500, width: 560, height: 400)
+        let dragged = CGRect(x: 104, y: 40, width: 560, height: 400)
+        XCTAssertEqual(CanvasLayout.magnetSnapped(dragged, against: [farBelow]),
+                       CGPoint(x: 112, y: 48))   // 104 → grid 112 (no 96 magnet)
+    }
+
+    func testMagnetStillFiresWithinProximity() {
+        let nearBelow = CGRect(x: 96, y: 520, width: 560, height: 400)   // 80pt gap
+        let dragged = CGRect(x: 104, y: 40, width: 560, height: 400)
+        XCTAssertEqual(CanvasLayout.magnetSnapped(dragged, against: [nearBelow]).x, 96)
+    }
+
     func testNoMagnetsFallsBackToGridOnBothAxes() {
         let dragged = CGRect(x: 40, y: 40, width: 560, height: 400)
         XCTAssertEqual(CanvasLayout.magnetSnapped(dragged, against: []),

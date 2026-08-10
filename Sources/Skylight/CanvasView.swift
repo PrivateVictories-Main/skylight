@@ -670,7 +670,10 @@ struct TileView: View {
         .overlay { overviewTarget }
         .scaleEffect(zoom, anchor: .topLeading)
         .offset(x: liveFrame.minX * zoom + pan.x, y: liveFrame.minY * zoom + pan.y)
-        .animation(.spring(response: 0.3, dampingFraction: 0.7), value: grabbing)
+        // One spring family for the whole gesture. This modifier is INNERMOST,
+        // so it owns the release transaction: a second set of constants here
+        // would quietly override `settleSpring` and undo the tuning.
+        .animation(Self.settleSpring, value: grabbing)
         .animation(Self.settleSpring, value: tile.origin)
         .animation(Self.settleSpring, value: tile.size)
         .zIndex(grabbing ? 1 : 0)

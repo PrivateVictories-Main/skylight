@@ -29,25 +29,38 @@ public enum CanvasLayout {
     /// candidate wins; axes are independent). Grid snap is the fallback on
     /// any axis where no magnet fires — aligning to a neighbor deliberately
     /// beats the grid.
+    ///
+    /// A magnet is a LOCAL relationship: a candidate only participates when the
+    /// two tiles are neighbors on the perpendicular axis — their perpendicular
+    /// spans overlap, or come within `proximity` of it. Without that gate a
+    /// tile x-aligns to something thousands of points below, which reads as the
+    /// drag catching on nothing.
     public static func magnetSnapped(_ frame: CGRect, against others: [CGRect],
-                                     threshold: CGFloat = 12) -> CGPoint {
+                                     threshold: CGFloat = 12,
+                                     proximity: CGFloat = 96) -> CGPoint {
         var x = frame.origin.x
         var y = frame.origin.y
         var bestDX = threshold
         var bestDY = threshold
         for other in others {
-            // Align left-left, right-right; abut right-of, left-of.
-            let xCandidates = [other.minX, other.maxX - frame.width,
-                               other.maxX, other.minX - frame.width]
-            for candidate in xCandidates {
-                let distance = abs(frame.origin.x - candidate)
-                if distance < bestDX { bestDX = distance; x = candidate }
+            // Align left-left, right-right; abut right-of, left-of. Only for a
+            // vertical neighbor: the tiles' y-spans must near-overlap.
+            if frame.minY - proximity < other.maxY, other.minY - proximity < frame.maxY {
+                let xCandidates = [other.minX, other.maxX - frame.width,
+                                   other.maxX, other.minX - frame.width]
+                for candidate in xCandidates {
+                    let distance = abs(frame.origin.x - candidate)
+                    if distance < bestDX { bestDX = distance; x = candidate }
+                }
             }
-            let yCandidates = [other.minY, other.maxY - frame.height,
-                               other.maxY, other.minY - frame.height]
-            for candidate in yCandidates {
-                let distance = abs(frame.origin.y - candidate)
-                if distance < bestDY { bestDY = distance; y = candidate }
+            // The horizontal mirror: y magnets need near-overlapping x-spans.
+            if frame.minX - proximity < other.maxX, other.minX - proximity < frame.maxX {
+                let yCandidates = [other.minY, other.maxY - frame.height,
+                                   other.maxY, other.minY - frame.height]
+                for candidate in yCandidates {
+                    let distance = abs(frame.origin.y - candidate)
+                    if distance < bestDY { bestDY = distance; y = candidate }
+                }
             }
         }
         return CGPoint(
