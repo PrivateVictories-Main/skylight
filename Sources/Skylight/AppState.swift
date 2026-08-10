@@ -111,7 +111,8 @@ final class AppState: ObservableObject {
                   let index = self.instances.firstIndex(where: { $0.id == id })
             else { return }
             self.instances[index].name = title
-            self.persist()
+            // Coalesced: a keyDown is no place for a synchronous disk write.
+            self.persistSoon()
         }
         sessions.lookupName = { [weak self] id in
             self?.instance(id)?.name
@@ -637,15 +638,23 @@ final class LiveSessionStore {
     /// below may consume, rewrite, or defer a keystroke.
     private func captureKey(_ event: NSEvent) {
         guard !titleCapture.isEmpty else { return }
-        // Chords belong to the app and the CLI, never to a title. (.function
-        // is deliberately NOT screened here — the numeric keypad can carry it,
-        // and arrows/F-keys are screened by `isTypedText` instead.)
-        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        guard modifiers.isDisjoint(with: [.command, .control]) else { return }
         // Which terminal owns the keyboard — nil for a sheet's text field, a
         // sidebar rename, or anything else that is not a live terminal.
         guard let id = instanceID(forResponder: event.window?.firstResponder),
               var capture = titleCapture[id] else { return }
+
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        // Abandon gestures wipe the line in the CLI — mirror them, or an old
+        // fragment glues onto the real prompt.
+        if Self.abandonsLine(keyCode: event.keyCode, modifiers: modifiers,
+                             keyIgnoringModifiers: event.charactersIgnoringModifiers) {
+            titleCapture[id]?.buffer = ""
+            return
+        }
+        // Chords belong to the app and the CLI, never to a title. (.function
+        // is deliberately NOT screened here — the numeric keypad can carry it,
+        // and arrows/F-keys are screened by `isTypedText` instead.)
+        guard modifiers.isDisjoint(with: [.command, .control]) else { return }
 
         let characters = event.characters ?? ""
         // Agent CLIs spell "newline, not send" as ⇧/⌥Return; a multi-line
@@ -675,6 +684,18 @@ final class LiveSessionStore {
         }
     }
 
+    /// The gestures that throw away the line you were typing: Esc (an agent
+    /// CLI's "clear the prompt"), ⌃C / ⌃U / ⌃W (every readline), and ⌘⌫.
+    /// Matched on `charactersIgnoringModifiers` so a Dvorak ⌃U is still ⌃U.
+    private static func abandonsLine(keyCode: UInt16, modifiers: NSEvent.ModifierFlags,
+                                     keyIgnoringModifiers: String?) -> Bool {
+        if keyCode == 53 { return true }                              // Esc
+        if modifiers.contains(.command), keyCode == 51 { return true }  // ⌘⌫
+        guard modifiers.contains(.control),
+              let key = keyIgnoringModifiers?.lowercased() else { return false }
+        return key == "c" || key == "u" || key == "w"
+    }
+
     /// Text a person typed, not a key event dressed as text: AppKit reports
     /// arrows and F-keys as private-use scalars (U+F700…U+F8FF) and Esc/Tab
     /// as control scalars — none of which belong in a name.
@@ -687,9 +708,23 @@ final class LiveSessionStore {
     }
 
     /// Return was pressed: name the terminal if the line was worth a name.
-    /// NOTE: only typed keys land in the buffer — a pasted prompt arrives via
-    /// the paste path, unseen here, so its Return simply resets the buffer
-    /// and the capture waits for the next line.
+    ///
+    /// Known blind spots — all of them fail toward "no name" or "a name from
+    /// slightly different text", never toward a lost keystroke:
+    /// - **Paste.** Only typed keys land in the buffer; ⌘V is a chord and is
+    ///   ignored. A pasted-then-Return prompt leaves the buffer empty, so its
+    ///   Return simply resets and the capture waits for the next line.
+    /// - **Word-delete drift.** The buffer is append-only apart from single
+    ///   deletes: ⌥⌫ removes one character here while the CLI removes a whole
+    ///   word, so a heavily edited line can derive from slightly stale text.
+    ///   (⌃W is treated as an abandon instead, which is the safe direction.)
+    /// - **IME composition.** Marked text is not committed text; a Japanese or
+    ///   Chinese prompt can name itself from the romaji that was typed rather
+    ///   than the characters that were chosen.
+    /// - **Re-arming.** Renaming an instance back to the launch pattern
+    ///   ("Claude Code 2") makes it eligible again on the next relaunch —
+    ///   `wearsLaunchName` reads the name, and that name is once again the
+    ///   one the launcher would have issued.
     private func finalize(_ id: UUID, _ capture: TitleCapture) {
         guard let title = Titles.derived(fromPrompt: capture.buffer) else {
             // A bare Return, a "y", a slash-command: the real first prompt

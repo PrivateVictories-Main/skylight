@@ -29,4 +29,26 @@ final class TitlesTests: XCTestCase {
         XCTAssertEqual(Titles.derived(fromPrompt: "ship the canvas zoom round"),
                        "ship the canvas zoom round")
     }
+
+    func testBoundaryRetreatRespectsMinimumFloor() {
+        // A cut whose only space is before the 8-char floor must NOT retreat —
+        // it keeps the mid-word cut instead of collapsing to a stub.
+        let prompt = "reconfigure" + String(repeating: "x", count: 60)   // no space after idx 0
+        let long = "a " + prompt
+        let title = Titles.derived(fromPrompt: long)!
+        XCTAssertEqual(title.count, 40)   // no retreat below the floor
+    }
+
+    func testCleanCutAtExactSpaceDoesNotRetreat() {
+        // 40 chars land exactly before a space: pass through with no retreat.
+        let head = String(repeating: "ab ", count: 13) + "c"   // 40 chars exactly
+        XCTAssertEqual(head.count, 40)
+        let title = Titles.derived(fromPrompt: head + " tail words")!
+        XCTAssertEqual(title, head)
+    }
+
+    func testMinimumLengthBoundary() {
+        XCTAssertNil(Titles.derived(fromPrompt: "1234567"))       // 7 = too thin
+        XCTAssertNotNil(Titles.derived(fromPrompt: "12345678"))   // 8 = named
+    }
 }
