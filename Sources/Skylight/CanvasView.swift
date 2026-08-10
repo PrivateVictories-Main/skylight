@@ -52,6 +52,10 @@ struct CanvasView: View {
     /// True while a tile is being moved or resized — a reflow must never land
     /// in the middle of a gesture.
     @State private var tileInteracting = false
+    /// ⌘ is the grab-anywhere key: while it is down every tile wears an
+    /// invisible move grip. Driven by PanView's flags monitor, because SwiftUI
+    /// never sees a bare modifier press over an AppKit terminal.
+    @State private var commandHeld = false
     @StateObject private var reflowCoalescer = ReflowCoalescer()
 
     private var board: CanvasBoard? {
@@ -74,7 +78,10 @@ struct CanvasView: View {
                     contextMenu: { viewPoint in
                         spawnMenu(at: contentPoint(viewPoint))
                     },
-                    installsMagnifyMonitor: reflowEnabled
+                    onCommandChanged: { held in
+                        if commandHeld != held { commandHeld = held }
+                    },
+                    installsEventMonitors: reflowEnabled
                 )
                 DotGrid(pan: pan, zoom: zoom)
                     .allowsHitTesting(false)
@@ -82,8 +89,9 @@ struct CanvasView: View {
                     if let instance = state.instance(tile.itemID) {
                         TileView(tile: tile, instance: instance, boardID: boardID,
                                  pan: pan, zoom: zoom,
+                                 commandHeld: commandHeld,
                                  interacting: $tileInteracting,
-                                 onOverviewTap: { navigate(to: tile) })
+                                 onDive: { navigate(to: tile) })
                     }
                 }
             }
@@ -359,10 +367,12 @@ struct PanSurface: NSViewRepresentable {
     let onMagnifyEnded: () -> Void
     /// Builds the right-click menu for a point in CONTENT coordinates.
     let contextMenu: (CGPoint) -> NSMenu
+    /// ⌘ went down or came up anywhere in this window.
+    let onCommandChanged: (Bool) -> Void
     /// Preview canvases (drop overlay) are pictures — a local monitor would
     /// bypass their allowsHitTesting(false) and misroute pinches onto an
-    /// invisible board.
-    var installsMagnifyMonitor = true
+    /// invisible board, or arm a grab layer on tiles nobody can touch.
+    var installsEventMonitors = true
 
     func makeNSView(context: Context) -> PanView {
         let view = PanView()
@@ -380,7 +390,8 @@ struct PanSurface: NSViewRepresentable {
         view.onMagnify = onMagnify
         view.onMagnifyEnded = onMagnifyEnded
         view.contextMenu = contextMenu
-        view.installsMagnifyMonitor = installsMagnifyMonitor
+        view.onCommandChanged = onCommandChanged
+        view.installsEventMonitors = installsEventMonitors
     }
 
     final class PanView: NSView {
@@ -389,7 +400,8 @@ struct PanSurface: NSViewRepresentable {
         var onMagnify: ((CGFloat, CGPoint) -> Void)?
         var onMagnifyEnded: (() -> Void)?
         var contextMenu: ((CGPoint) -> NSMenu)?
-        var installsMagnifyMonitor = true
+        var onCommandChanged: ((Bool) -> Void)?
+        var installsEventMonitors = true
         private var dragOrigin: CGPoint?
         private var dragged = false
         /// Nonisolated, Sendable storage: a `deinit` runs outside the main
@@ -398,9 +410,17 @@ struct PanSurface: NSViewRepresentable {
             var monitor: Any?
         }
         private let magnify = MonitorBox()
+        private let flags = MonitorBox()
+        /// ⌘-tab carries the key-up to the OTHER app, so a local monitor never
+        /// hears ⌘ lift. Losing key is that missing release.
+        private let resignKey = MonitorBox()
 
         deinit {
             if let monitor = magnify.monitor { NSEvent.removeMonitor(monitor) }
+            if let monitor = flags.monitor { NSEvent.removeMonitor(monitor) }
+            if let token = resignKey.monitor {
+                NotificationCenter.default.removeObserver(token)
+            }
         }
 
         /// The view is unflipped; SwiftUI's viewport space is top-left.
@@ -419,7 +439,15 @@ struct PanSurface: NSViewRepresentable {
                 NSEvent.removeMonitor(monitor)
                 magnify.monitor = nil
             }
-            guard window != nil, installsMagnifyMonitor else { return }
+            if let monitor = flags.monitor {
+                NSEvent.removeMonitor(monitor)
+                flags.monitor = nil
+            }
+            if let token = resignKey.monitor {
+                NotificationCenter.default.removeObserver(token)
+                resignKey.monitor = nil
+            }
+            guard let window, installsEventMonitors else { return }
             magnify.monitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) {
                 [weak self] event in
                 guard let self, event.window === self.window else { return event }
@@ -427,6 +455,22 @@ struct PanSurface: NSViewRepresentable {
                 guard self.bounds.contains(p) else { return event }
                 self.handleMagnify(event, at: p)
                 return nil   // consumed — no double handling via the responder chain
+            }
+            // A modifier press over a terminal never reaches SwiftUI: the
+            // AppKit view is first responder and keeps its own key handling.
+            // The monitor watches, it does not intercept — a consumed
+            // flagsChanged would strip ⌘ from every shortcut in the app.
+            flags.monitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) {
+                [weak self] event in
+                guard let self, event.window === self.window else { return event }
+                self.onCommandChanged?(event.modifierFlags.contains(.command))
+                return event
+            }
+            resignKey.monitor = NotificationCenter.default.addObserver(
+                forName: NSWindow.didResignKeyNotification, object: window,
+                queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.onCommandChanged?(false) }
             }
         }
 
@@ -528,11 +572,19 @@ struct TileView: View {
     /// The board's magnification. Exactly 1 means "work here"; anything else
     /// means "overview" — see `interactive`.
     let zoom: CGFloat
+    /// ⌘ is down somewhere in this window: the whole tile becomes a grip.
+    var commandHeld = false
     /// Raised for the life of a move or resize gesture so the canvas can hold
     /// a queued reflow until the hands are off.
     @Binding var interacting: Bool
-    /// Tapping a minified tile flies the canvas to it at 100%.
-    var onOverviewTap: () -> Void = {}
+    /// Clicking a minified tile flies the canvas to it at 100%.
+    var onDive: () -> Void = {}
+
+    /// One spring for the whole settle. The transient offset decays inside it
+    /// and the model's origin springs under it — same response, same damping,
+    /// so a release reads as ONE motion instead of a jump and a chase. Any
+    /// second set of constants anywhere below is the glitch coming back.
+    static let settleSpring = Animation.spring(response: 0.35, dampingFraction: 0.8)
 
     /// Which grab strip a gesture came from. No two opposite edges are ever
     /// live at once — a corner drives one horizontal and one vertical edge.
@@ -600,43 +652,82 @@ struct TileView: View {
         // After the stroke, before the handle: an overlay of empty rectangles
         // cannot perturb the layout it sits on, and the handle stays the last
         // overlay so its click still wins the bottom-right corner.
+        //
+        // The ⌘ grip goes UNDER the ring on purpose: the ring is applied after,
+        // so it is hit-tested first and the edges still resize while ⌘ is held.
+        .overlay { if interactive && commandHeld { moveAnywhereTarget } }
         .overlay { if interactive { resizeRing } }
         .overlay(alignment: .bottomTrailing) { resizeHandle }
         // The tile keeps its 100% LAYOUT size at every zoom: the pty is never
         // resized, the layer transform does the minifying.
         .frame(width: liveFrame.width, height: liveFrame.height)
         .allowsHitTesting(interactive)
-        .overlay { overviewTapTarget }
+        .overlay { overviewTarget }
         .scaleEffect(zoom, anchor: .topLeading)
         .offset(x: liveFrame.minX * zoom + pan.x, y: liveFrame.minY * zoom + pan.y)
         .animation(.spring(response: 0.3, dampingFraction: 0.7), value: grabbing)
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.origin)
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: tile.size)
+        .animation(Self.settleSpring, value: tile.origin)
+        .animation(Self.settleSpring, value: tile.size)
         .zIndex(grabbing ? 1 : 0)
-        // Belt and braces for the same teardown: whatever route the ring took
-        // out of existence, half-finished deltas and a latched `interacting`
-        // must not outlive it.
+        // Belt and braces for the same teardown: whatever route the ring or the
+        // grip took out of existence, a half-finished gesture's deltas and a
+        // latched `interacting` must not outlive it.
         .onChange(of: interactive) { _, isInteractive in
             if !isInteractive {
                 edges = .init()
+                dragOffset = .zero
+                grabbing = false
                 interacting = false
             }
         }
     }
 
-    /// In overview the whole tile is one button: tap it and the canvas flies
-    /// there at 100%, where it becomes a terminal again.
+    /// Overview interactions: a click dives to 100% on this tile, a drag MOVES
+    /// it — rearranging is exactly what an overview is for. Gestures arrive in
+    /// screen points, so the threshold and the offset are both content-space:
+    /// zoomed out, a short flick is still a real move of a big tile.
     @ViewBuilder
-    private var overviewTapTarget: some View {
+    private var overviewTarget: some View {
         if !interactive {
-            Button(action: onOverviewTap) {
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .help("Open “\(instance.name)” at 100%")
+            Color.clear
+                .contentShape(Rectangle())
+                .help("Drag to move “\(instance.name)” — click to open it at 100%")
+                .gesture(
+                    // Global space on purpose: this view sits UNDER the tile's
+                    // scaleEffect, and a local translation would already be
+                    // divided by the zoom — dividing again would move the tile
+                    // at several times the cursor. Screen points in, one
+                    // conversion to content, and only in the shared move funcs.
+                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                        .onChanged { value in
+                            if !grabbing {
+                                let content = CGSize(
+                                    width: value.translation.width / safeZoom,
+                                    height: value.translation.height / safeZoom)
+                                guard hypot(content.width, content.height) > 3 else { return }
+                            }
+                            moveChanged(value)
+                        }
+                        .onEnded { value in
+                            // Under the threshold this was never a move: it is
+                            // the click that flies the canvas here.
+                            if grabbing { moveEnded(value) } else { onDive() }
+                        }
+                )
+                // A raw gesture is invisible to VoiceOver, and this used to be
+                // a Button: the dive stays reachable without a mouse.
+                .accessibilityElement()
+                .accessibilityLabel("Open “\(instance.name)” at 100%")
+                .accessibilityAddTraits(.isButton)
+                .accessibilityAction { onDive() }
         }
+    }
+
+    /// ⌘-drag anywhere on the tile moves it. The terminal's NSView eats plain
+    /// drags, so this grip only exists while the key is down — one mechanism
+    /// with the header, two places to grab it.
+    private var moveAnywhereTarget: some View {
+        MoveGrip(onChanged: moveChanged, onEnded: moveEnded)
     }
 
     private var header: some View {
@@ -679,35 +770,45 @@ struct TileView: View {
         .frame(height: 30)
         .background(.bar)
         .contentShape(Rectangle())
-        .gesture(
-            DragGesture()
-                // Nothing but the offset moves here: any extra state written
-                // per event is a stutter you can see.
-                .onChanged {
-                    if !grabbing { grabbing = true }
-                    if !interacting { interacting = true }
-                    dragOffset = CGSize(width: $0.translation.width / safeZoom,
-                                        height: $0.translation.height / safeZoom)
-                }
-                .onEnded { value in
-                    var updated = tile
-                    let proposed = CGRect(
-                        x: tile.origin.x + value.translation.width / safeZoom,
-                        y: tile.origin.y + value.translation.height / safeZoom,
-                        width: tile.size.width,
-                        height: tile.size.height
-                    )
-                    let others = (state.canvases.first { $0.id == boardID }?.tiles ?? [])
-                        .filter { $0.id != tile.id }
-                        .map(\.frame)
-                    updated.origin = CanvasLayout.magnetSnapped(proposed, against: others)
-                    dragOffset = .zero
-                    grabbing = false
-                    interacting = false
-                    state.updateTile(updated, in: boardID)
-                }
-        )
+        // Same screen-space contract as every other grip — see overviewTarget.
+        .gesture(DragGesture(coordinateSpace: .global)
+            .onChanged(moveChanged).onEnded(moveEnded))
         .onTapGesture(count: 2) { state.focusedInstance = instance.id }
+    }
+
+    // MARK: - Move
+
+    /// Live tracking, shared by every grip there is: the header strip, the ⌘
+    /// layer, and an overview drag. Nothing but the offset moves here — any
+    /// extra state written per event is a stutter you can see.
+    private func moveChanged(_ value: DragGesture.Value) {
+        if !grabbing { grabbing = true }
+        if !interacting { interacting = true }
+        dragOffset = CGSize(width: value.translation.width / safeZoom,
+                            height: value.translation.height / safeZoom)
+    }
+
+    /// The one place a move lands, at every zoom: screen translation into
+    /// content, magnet-snap against the other tiles, commit. Zeroing the
+    /// transient offset INSIDE the settle spring is the whole trick — set it
+    /// bare and the tile snaps back the width of the drag before the model's
+    /// spring carries it forward, which is the glitch you see on release.
+    private func moveEnded(_ value: DragGesture.Value) {
+        var updated = tile
+        let proposed = CGRect(
+            x: tile.origin.x + value.translation.width / safeZoom,
+            y: tile.origin.y + value.translation.height / safeZoom,
+            width: tile.size.width,
+            height: tile.size.height
+        )
+        let others = (state.canvases.first { $0.id == boardID }?.tiles ?? [])
+            .filter { $0.id != tile.id }
+            .map(\.frame)
+        updated.origin = CanvasLayout.magnetSnapped(proposed, against: others)
+        withAnimation(Self.settleSpring) { dragOffset = .zero }
+        grabbing = false
+        interacting = false
+        state.updateTile(updated, in: boardID)
     }
 
     private var harnessBrand: Brand? {
@@ -820,18 +921,83 @@ struct TileView: View {
         let commit = CanvasLayout.resizeCommit(tile.frame, by: edges)
         // Clamped to a standstill (already at the minimum, dragged further in):
         // writing an identical tile back would still cost a persist and a
-        // spring, so end the gesture and leave the board alone.
+        // spring, so end the gesture and leave the board alone. The overshoot
+        // still rides the settle home instead of vanishing.
         guard commit != tile.frame else {
-            edges = .init()
+            withAnimation(Self.settleSpring) { edges = .init() }
             interacting = false
             return
         }
         var updated = tile
         updated.origin = commit.origin
         updated.size = commit.size
-        edges = .init()
+        // Same spring as the model's size/origin change, for the same reason a
+        // move needs it: the live deltas and the committed frame must be one
+        // motion, not a jump followed by a spring.
+        withAnimation(Self.settleSpring) { edges = .init() }
         interacting = false
         state.updateTile(updated, in: boardID)
+    }
+}
+
+/// The ⌘-grab layer. It owns the same cursor and teardown discipline as
+/// `ResizeZone`, and for a sharper reason: this view's very existence is tied
+/// to a key being down, so a drag can outlive it. Lifting ⌘ mid-drag settles
+/// the move where it stands rather than stranding an offset — and a latched
+/// `interacting` that would pause the canvas's reflow forever.
+private struct MoveGrip: View {
+    let onChanged: (DragGesture.Value) -> Void
+    let onEnded: (DragGesture.Value) -> Void
+
+    @State private var hovering = false
+    @State private var dragging = false
+    @State private var pushed = false
+    @State private var last: DragGesture.Value?
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                syncCursor()
+            }
+            .gesture(
+                // Screen points, like every other grip: the caller owns the one
+                // conversion into content space.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if !dragging {
+                            dragging = true
+                            syncCursor()
+                        }
+                        last = value
+                        onChanged(value)
+                    }
+                    .onEnded { value in
+                        dragging = false
+                        last = nil
+                        syncCursor()
+                        onEnded(value)
+                    }
+            )
+            .onDisappear {
+                if dragging, let last { onEnded(last) }
+                hovering = false
+                dragging = false
+                last = nil
+                syncCursor()
+            }
+    }
+
+    private func syncCursor() {
+        let wanted = hovering || dragging
+        if wanted, !pushed {
+            NSCursor.openHand.push()
+            pushed = true
+        } else if !wanted, pushed {
+            NSCursor.pop()
+            pushed = false
+        }
     }
 }
 
