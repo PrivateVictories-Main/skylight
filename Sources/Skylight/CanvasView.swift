@@ -704,7 +704,12 @@ struct TileView: View {
                                 let content = CGSize(
                                     width: value.translation.width / safeZoom,
                                     height: value.translation.height / safeZoom)
-                                guard hypot(content.width, content.height) > 3 else { return }
+                                // Both floors: 4pt of SCREEN intent (hand jitter
+                                // is ~1-3pt) and 3pt of content movement.
+                                guard hypot(value.translation.width,
+                                            value.translation.height) > 4,
+                                      hypot(content.width, content.height) > 3
+                                else { return }
                             }
                             moveChanged(value)
                         }
@@ -770,8 +775,10 @@ struct TileView: View {
         .frame(height: 30)
         .background(.bar)
         .contentShape(Rectangle())
-        // Same screen-space contract as every other grip — see overviewTarget.
-        .gesture(DragGesture(coordinateSpace: .global)
+        // Same screen-space contract as every other grip — see overviewTarget,
+        // and the same 1pt arming distance as the ⌘ layer: two grips onto the
+        // same tile that start at different distances feel like two tools.
+        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
             .onChanged(moveChanged).onEnded(moveEnded))
         .onTapGesture(count: 2) { state.focusedInstance = instance.id }
     }
