@@ -239,8 +239,8 @@ final class AppState: ObservableObject {
     /// most-used launch can become a one-click recommendation.
     func launch(_ spec: TerminalSpec, name: String? = nil) {
         let instance = TerminalInstance(
-            name: numberedName(base: name ?? Self.defaultName(for: spec),
-                               among: instances.map(\.name)), spec: spec)
+            name: Names.numbered(base: name ?? Self.defaultName(for: spec),
+                                 among: instances.map(\.name)), spec: spec)
         instances.append(instance)
         selection = .item(instance.id)
         focusedInstance = nil
@@ -267,8 +267,8 @@ final class AppState: ObservableObject {
                     on canvasID: UUID, at point: CGPoint) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
         let instance = TerminalInstance(
-            name: numberedName(base: name ?? Self.defaultName(for: spec),
-                               among: instances.map(\.name)), spec: spec)
+            name: Names.numbered(base: name ?? Self.defaultName(for: spec),
+                                 among: instances.map(\.name)), spec: spec)
         instances.append(instance)
         usage.record(spec)
         persistUsage()
@@ -281,22 +281,6 @@ final class AppState: ObservableObject {
             CanvasTile(itemID: instance.id, origin: origin, size: size))
         selection = .canvas(canvasID)
         persist()
-    }
-
-    /// "Terminal", "Terminal 2", … — always one past the highest existing
-    /// suffix, so deletions never cause duplicates. Any family of names counts
-    /// the same way: instances and canvases share this one rule.
-    private func numberedName(base: String, among names: [String]) -> String {
-        var highest = 0
-        for name in names {
-            if name == base {
-                highest = max(highest, 1)
-            } else if name.hasPrefix(base + " "),
-                      let n = Int(name.dropFirst(base.count + 1)) {
-                highest = max(highest, n)
-            }
-        }
-        return highest == 0 ? base : "\(base) \(highest + 1)"
     }
 
     static func defaultName(for spec: TerminalSpec) -> String {
@@ -338,7 +322,7 @@ final class AppState: ObservableObject {
         // Counting boards repeats a name the moment one is deleted; the highest
         // suffix does not. Same rule as terminals, deliberately.
         let board = CanvasBoard(
-            name: numberedName(base: "Canvas", among: canvases.map(\.name)))
+            name: Names.numbered(base: "Canvas", among: canvases.map(\.name)))
         canvases.append(board)
         persist()
         return board
@@ -717,7 +701,7 @@ final class LiveSessionStore {
                let pasted = NSPasteboard.general.string(forType: .string) {
                 // Sanitize BEFORE the cap, so the 300 counts prompt text and
                 // not the escape bytes of some copied terminal output.
-                let clean = Self.sanitizedPaste(pasted)
+                let clean = Titles.sanitizedPaste(pasted)
                 if !clean.isEmpty {
                     capture.buffer += clean.prefix(Self.bufferLimit - capture.buffer.count)
                     titleCapture[id] = capture
@@ -777,34 +761,14 @@ final class LiveSessionStore {
         return key == "c" || key == "u" || key == "w"
     }
 
-    /// AppKit reports arrows and F-keys as private-use scalars — "text" that
-    /// no one typed.
-    private static let functionKeyScalars: ClosedRange<UInt32> = 0xF700...0xF8FF
-
-    /// One screen, two callers: a scalar belongs in a name unless it is a
-    /// control character (Esc, Tab, and every byte of an ANSI escape) or a
-    /// function-key scalar. Typed text and pasted text differ only in what
-    /// they allow ON TOP of this — nothing may be admitted that this rejects.
-    private static func isNameSafe(_ scalar: Unicode.Scalar) -> Bool {
-        !CharacterSet.controlCharacters.contains(scalar)
-            && !functionKeyScalars.contains(scalar.value)
-    }
-
     /// Text a person typed, not a key event dressed as text: arrows, F-keys,
     /// and Esc/Tab are all reported as characters and none belong in a name.
+    /// Shares `Titles.isNameSafe` with the paste path on purpose — typed and
+    /// pasted text differ only in what they allow ON TOP of that one rule, and
+    /// a second copy of it here is exactly how the two would drift apart.
     private static func isTypedText(_ characters: String) -> Bool {
         guard !characters.isEmpty else { return false }
-        return characters.unicodeScalars.allSatisfy(isNameSafe)
-    }
-
-    /// Pasted text keeps newlines/tabs but sheds control and function-key
-    /// scalars — copied CLI output carries ANSI escapes that must never
-    /// reach a name. (Newlines and tabs are legitimate in a multi-line
-    /// prompt; `Titles.derived` collapses them to spaces.)
-    private static func sanitizedPaste(_ text: String) -> String {
-        String(String.UnicodeScalarView(text.unicodeScalars.filter { scalar in
-            scalar == "\n" || scalar == "\t" || isNameSafe(scalar)
-        }))
+        return characters.unicodeScalars.allSatisfy(Titles.isNameSafe)
     }
 
     /// Return was pressed: name the terminal if the line was worth a name.

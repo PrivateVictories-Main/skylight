@@ -51,4 +51,46 @@ final class TitlesTests: XCTestCase {
         XCTAssertNil(Titles.derived(fromPrompt: "1234567"))       // 7 = too thin
         XCTAssertNotNil(Titles.derived(fromPrompt: "12345678"))   // 8 = named
     }
+
+    // MARK: - sanitizedPaste
+
+    func testSanitizedPasteLeavesPlainTextAlone() {
+        XCTAssertEqual(Titles.sanitizedPaste("fix the login bug"), "fix the login bug")
+        // Newlines and tabs are legitimate in a multi-line prompt.
+        XCTAssertEqual(Titles.sanitizedPaste("fix the\nlogin\tbug"), "fix the\nlogin\tbug")
+    }
+
+    /// The whole point of the upgrade: dropping the lone ESC scalar used to
+    /// leave the human-readable tail of the sequence behind, so a pasted line
+    /// of colored build output named the terminal "[1;31mBuild failed[0m".
+    func testSanitizedPasteStripsWholeCSISequences() {
+        XCTAssertEqual(Titles.sanitizedPaste("\u{1B}[1;31mBuild failed\u{1B}[0m"),
+                       "Build failed")
+        // Cursor moves and erases are CSI too, params or not.
+        XCTAssertEqual(Titles.sanitizedPaste("a\u{1B}[2Kb\u{1B}[Hc"), "abc")
+    }
+
+    func testSanitizedPasteStripsOSCSequences() {
+        // BEL-terminated (what shells actually emit for a window title).
+        XCTAssertEqual(Titles.sanitizedPaste("\u{1B}]0;my title\u{07}done"), "done")
+        // ST-terminated (ESC \) is the other legal ending.
+        XCTAssertEqual(Titles.sanitizedPaste("\u{1B}]0;my title\u{1B}\\done"), "done")
+    }
+
+    func testSanitizedPasteStripsFunctionKeyScalars() {
+        // 0xF700…0xF8FF: arrows and F-keys arrive as characters.
+        XCTAssertEqual(Titles.sanitizedPaste("a\u{F700}b\u{F8FF}c"), "abc")
+    }
+
+    func testSanitizedPasteOfPureControlNoiseIsEmpty() {
+        XCTAssertEqual(Titles.sanitizedPaste("\u{1B}[0m\u{07}\u{01}"), "")
+        XCTAssertEqual(Titles.sanitizedPaste(""), "")
+    }
+
+    /// An unterminated sequence is not evidence enough to eat the text after
+    /// it — only the ESC itself goes, exactly as before the upgrade.
+    func testSanitizedPasteKeepsTextAfterAnIncompleteSequence() {
+        XCTAssertEqual(Titles.sanitizedPaste("\u{1B}[1;31"), "[1;31")
+        XCTAssertEqual(Titles.sanitizedPaste("\u{1B}]0;no terminator"), "]0;no terminator")
+    }
 }

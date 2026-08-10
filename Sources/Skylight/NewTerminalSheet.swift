@@ -62,6 +62,8 @@ struct NewTerminalSheet: View {
         .padding(22)
         .frame(width: 460)
         .onAppear(perform: load)
+        // First frame from cache (instant); truth arrives a frame later.
+        .task { resample() }
         // Closing without launching must not leave a stale spawn target
         // waiting to hijack the next launch. (Launching clears it in launch.)
         .onDisappear { state.pendingSpawn = nil }
