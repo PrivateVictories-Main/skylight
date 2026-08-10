@@ -68,19 +68,26 @@ struct NewTerminalSheet: View {
         // Come back from a terminal where you just installed a CLI and the
         // row lights up — no reopen needed.
         .onReceive(NotificationCenter.default.publisher(
-            for: NSApplication.didBecomeActiveNotification)) { _ in load() }
+            for: NSApplication.didBecomeActiveNotification)) { _ in resample() }
     }
 
+    /// Read-through only: both detections are cached for the app's run, so the
+    /// first ⌘T of a session pays for the filesystem and every open after it
+    /// is dictionary reads. The sheet's first frame is no longer a stat storm.
     private func load() {
-        state.sessions.invalidateHarnessCache()
-        let fm = FileManager.default
-        let contents = (try? String(contentsOfFile: "/etc/shells", encoding: .utf8)) ?? ""
-        shells = Catalog.installedShells(fromShellsFile: contents,
-                                        isExecutable: { fm.isExecutableFile(atPath: $0) })
+        shells = state.sessions.detectedShells()
         installed = Dictionary(uniqueKeysWithValues: Catalog.harnesses.compactMap { harness in
-            LiveSessionStore.resolveHarness(harness.id).map { (harness.id, $0) }
+            state.sessions.cachedResolveHarness(harness.id).map { (harness.id, $0) }
         })
         loaded = true
+    }
+
+    /// Returning to the app is the one moment worth re-walking the disk for —
+    /// you may have just installed the thing you left to install. Drop the
+    /// caches first so this is a genuinely fresh sample, not a replay.
+    private func resample() {
+        state.sessions.invalidateHarnessCache()
+        load()
     }
 
     private func launch(_ spec: TerminalSpec, name: String? = nil) {

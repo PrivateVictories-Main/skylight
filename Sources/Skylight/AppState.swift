@@ -511,6 +511,7 @@ final class LiveSessionStore {
     private var terminalNSViews: [UUID: TerminalView] = [:]
     private var bellObservers: [UUID: AnyCancellable] = [:]
     private var resolvedHarnesses: [String: String?] = [:]
+    private var cachedShells: [Shell]?
 
     /// Fired when a terminal rings the bell (a CLI is done / needs input).
     var onBell: ((UUID) -> Void)?
@@ -550,9 +551,26 @@ final class LiveSessionStore {
         return resolved
     }
 
-    /// The sheet re-samples install state; drop the cache so a CLI installed
-    /// mid-run is honored by the next launch too.
-    func invalidateHarnessCache() { resolvedHarnesses.removeAll() }
+    /// Shell detection, once per run: reading /etc/shells and stat-ing every
+    /// path in it is a filesystem walk, and the New sheet used to pay for it
+    /// inside `.onAppear` — i.e. on its first frame, every single open.
+    func detectedShells() -> [Shell] {
+        if let cachedShells { return cachedShells }
+        let fm = FileManager.default
+        let contents = (try? String(contentsOfFile: "/etc/shells", encoding: .utf8)) ?? ""
+        let shells = Catalog.installedShells(fromShellsFile: contents,
+                                             isExecutable: { fm.isExecutableFile(atPath: $0) })
+        cachedShells = shells
+        return shells
+    }
+
+    /// The sheet re-samples install state when the app comes back to the
+    /// front; drop BOTH detection caches so a CLI — or a shell — installed
+    /// mid-run is honored by the next sample and the next launch alike.
+    func invalidateHarnessCache() {
+        resolvedHarnesses.removeAll()
+        cachedShells = nil
+    }
 
     func terminalHostView(for instance: TerminalInstance) -> TerminalView {
         if let existing = terminalNSViews[instance.id] { return existing }

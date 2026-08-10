@@ -476,15 +476,17 @@ struct EmptyDetail: View {
     }
 }
 
-/// Full-window view of a single instance.
-struct FullInstanceView: View {
-    @EnvironmentObject private var state: AppState
+/// The full-window terminal dress: terminal-toned rounded backing, hard clip,
+/// hairline outline, missing-harness banner, and the breathing inset that
+/// tracks the sidebar. ONE definition — the no-sharp-edges rule is structural
+/// here, not a chain two views have to remember to keep identical. Anything
+/// that fills the detail pane with a terminal wears this and nothing else.
+private struct TerminalPanel: ViewModifier {
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let instance: TerminalInstance
 
-    var body: some View {
-        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
-                               cornerRadius: 16)
+    func body(content: Content) -> some View {
+        content
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
@@ -506,7 +508,9 @@ struct FullInstanceView: View {
             // windows: inset 8 + radius 16 nests under radii up to 24.
             .padding(8)
             // The traffic lights ride over the sidebar column, so the detail
-            // side can own every pixel of height — no dead band up top.
+            // side can own every pixel of height — no dead band up top. In
+            // focus mode the panel's own header IS the chrome, so neither
+            // caller ever wants a toolbar band.
             .toolbarBackground(.hidden, for: .windowToolbar)
             // Collapsed sidebar = traffic lights float over the detail area;
             // step below them, reclaim the top when the sidebar returns. An
@@ -518,6 +522,26 @@ struct FullInstanceView: View {
     }
 }
 
+extension View {
+    /// Wear the full-window terminal panel. The banner reads the instance, so
+    /// the panel needs to know whose terminal it is dressing.
+    fileprivate func terminalPanel(for instance: TerminalInstance) -> some View {
+        modifier(TerminalPanel(instance: instance))
+    }
+}
+
+/// Full-window view of a single instance.
+struct FullInstanceView: View {
+    @EnvironmentObject private var state: AppState
+    let instance: TerminalInstance
+
+    var body: some View {
+        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+                               cornerRadius: 16)
+            .terminalPanel(for: instance)
+    }
+}
+
 /// Focus mode: one canvas tile borrows the whole window. ⌘., the header's Back
 /// chip, or a double-click on the header hands it back — the canvas is exactly
 /// as you left it. The terminal eats Escape (vim and TUIs need it), so the menu
@@ -525,36 +549,24 @@ struct FullInstanceView: View {
 /// nothing consumed the key.
 struct FocusView: View {
     @EnvironmentObject private var state: AppState
-    @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     let instance: TerminalInstance
 
     var body: some View {
         VStack(spacing: 0) {
             header
-            // cornerRadius 0: the VStack is clipped as one shape below, and a
-            // second rounding on the terminal's own layer would double-round
-            // the bottom corners.
+            // cornerRadius 0: the VStack is clipped as one shape by the panel,
+            // and a second rounding on the terminal's own layer would
+            // double-round the bottom corners.
             PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
                                    cornerRadius: 0)
         }
-        // Same chain as FullInstanceView: terminal-toned fill, hard clip for
-        // ghostty's whole-cell overhang, hairline outline, glass margin.
-        .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
-                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
-        )
-        .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
-        .padding(8)
+        // Header and terminal wear ONE panel — clipped, stroked, and inset as
+        // a single shape, the same dress FullInstanceView's bare terminal gets.
+        .terminalPanel(for: instance)
+        // Outside the panel now rather than mid-chain: the exit command is a
+        // keyboard route, so nothing the panel does between here and the
+        // content changes whether it fires.
         .onExitCommand { state.endFocus() }
-        // No toolbar band: the header IS the chrome, and it belongs to the
-        // panel rather than floating over the text.
-        .toolbarBackground(.hidden, for: .windowToolbar)
-        .padding(.top, sidebarCollapsed ? 30 : 0)
-        .ignoresSafeArea(edges: .top)
-        .animation(.easeOut(duration: 0.22), value: sidebarCollapsed)
     }
 
     /// A slim bar the width of the panel — nothing ever sits on top of the

@@ -78,6 +78,13 @@ struct CanvasView: View {
                     contextMenu: { viewPoint in
                         spawnMenu(at: contentPoint(viewPoint))
                     },
+                    // The fastest "new terminal here" there is: a default
+                    // shell lands under the cursor. Right-click still opens
+                    // the full menu when you want to choose what runs.
+                    onDoubleClick: { viewPoint in
+                        state.launchTile(TerminalSpec(), on: boardID,
+                                         at: contentPoint(viewPoint))
+                    },
                     onCommandChanged: { held in
                         if commandHeld != held { commandHeld = held }
                     },
@@ -151,7 +158,7 @@ struct CanvasView: View {
                 ContentUnavailableView(
                     "Empty Canvas",
                     systemImage: "square.on.square.dashed",
-                    description: Text("Right-click anywhere to open a terminal here — or drag one in from the sidebar.")
+                    description: Text("Double-click for a terminal — right-click to choose. Or drag one in from the sidebar.")
                 )
                 .allowsHitTesting(false)
             }
@@ -372,6 +379,8 @@ struct PanSurface: NSViewRepresentable {
     let onMagnifyEnded: () -> Void
     /// Builds the right-click menu for a point in CONTENT coordinates.
     let contextMenu: (CGPoint) -> NSMenu
+    /// Double-click on empty canvas, in VIEWPORT coordinates.
+    let onDoubleClick: (CGPoint) -> Void
     /// ⌘ went down or came up anywhere in this window.
     let onCommandChanged: (Bool) -> Void
     /// Preview canvases (drop overlay) are pictures — a local monitor would
@@ -395,6 +404,7 @@ struct PanSurface: NSViewRepresentable {
         view.onMagnify = onMagnify
         view.onMagnifyEnded = onMagnifyEnded
         view.contextMenu = contextMenu
+        view.onDoubleClick = onDoubleClick
         view.onCommandChanged = onCommandChanged
         view.installsEventMonitors = installsEventMonitors
     }
@@ -405,6 +415,7 @@ struct PanSurface: NSViewRepresentable {
         var onMagnify: ((CGFloat, CGPoint) -> Void)?
         var onMagnifyEnded: (() -> Void)?
         var contextMenu: ((CGPoint) -> NSMenu)?
+        var onDoubleClick: ((CGPoint) -> Void)?
         var onCommandChanged: ((Bool) -> Void)?
         var installsEventMonitors = true
         private var dragOrigin: CGPoint?
@@ -506,6 +517,16 @@ struct PanSurface: NSViewRepresentable {
         }
 
         override func mouseDown(with event: NSEvent) {
+            // The second click of a pair is a spawn, never a pan. The first
+            // click already armed a press and released it without dragging,
+            // so disarm outright: no origin means mouseDragged can't pan and
+            // mouseUp can't commit a viewport that never moved.
+            if event.clickCount == 2 {
+                dragOrigin = nil
+                dragged = false
+                onDoubleClick?(viewportPoint(event.locationInWindow))
+                return
+            }
             // A missed mouseUp must not arm the next bare click.
             dragged = false
             dragOrigin = event.locationInWindow

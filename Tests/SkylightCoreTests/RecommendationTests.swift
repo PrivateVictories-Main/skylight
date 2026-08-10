@@ -39,4 +39,15 @@ final class RecommendationTests: XCTestCase {
     func testEmptyLogHasNoRecommendation() {
         XCTAssertNil(UsageLog().topCombo())
     }
+
+    /// The usage log is written to disk on every launch and read back on every
+    /// start, so a field that stops surviving JSON silently costs the user
+    /// their "Your usual" row. Full equality, both dictionaries populated.
+    func testUsageLogRoundTripsThroughJSON() throws {
+        var log = UsageLog()
+        log.record(TerminalSpec(harness: "claude", arguments: ["--model", "opus"]))
+        log.record(TerminalSpec())
+        let data = try JSONEncoder().encode(log)
+        XCTAssertEqual(try JSONDecoder().decode(UsageLog.self, from: data), log)
+    }
 }

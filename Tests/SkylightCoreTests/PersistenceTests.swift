@@ -2,21 +2,36 @@ import XCTest
 import SkylightCore
 
 final class PersistenceTests: XCTestCase {
+    /// This test EXISTS to fail when someone adds a persisted field without
+    /// teaching `CanvasBoard.init(from:)` about it. `CanvasBoard` decodes by
+    /// hand (for the pre-pan/pre-zoom defaults), so the synthesized encoder
+    /// will happily write a key the initializer silently drops — and a dropped
+    /// key does not throw, it just resets to a default on every load. So every
+    /// CanvasBoard field here is set to something a default could never be,
+    /// and the assertion is full equality: a field that stops surviving the
+    /// round trip breaks this, loudly, in the same commit that adds it.
     func testV2RoundTrip() throws {
         let instance = TerminalInstance(
             name: "Claude Code",
             spec: TerminalSpec(harness: "claude", arguments: ["--model", "opus"],
                                workingDirectory: "/tmp"))
         let board = CanvasBoard(
+            id: UUID(uuidString: "99999999-9999-9999-9999-999999999999")!,
             name: "Work",
             tiles: [CanvasTile(itemID: instance.id, origin: CGPoint(x: 64, y: 48),
                                size: CGSize(width: 560, height: 400))],
             pan: CGPoint(x: -120, y: 40),
             zoom: 0.5)
         let state = SavedState(instances: [instance], canvases: [board],
+                               selectedInstance: instance.id,
                                selectedCanvas: board.id)
         let data = try XCTUnwrap(WorkspacePersistence.encode(state))
-        XCTAssertEqual(WorkspacePersistence.decode(data), state)
+        let decoded = try XCTUnwrap(WorkspacePersistence.decode(data))
+        // Board equality first: it is the type that decodes by hand, so it is
+        // the one whose failure should name itself rather than hiding inside a
+        // whole-state diff.
+        XCTAssertEqual(decoded.canvases, [board])
+        XCTAssertEqual(decoded, state)
     }
 
     func testBoardPanDefaultsToZeroWhenAbsent() throws {

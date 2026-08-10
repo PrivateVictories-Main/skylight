@@ -1,7 +1,10 @@
 import Foundation
 
 /// On-device launch statistics. Nothing recorded here ever leaves the machine.
-public struct UsageLog: Codable, Equatable {
+/// Sendable like every other core model: its storage is already value types
+/// all the way down, and being the one exception is how a model quietly
+/// becomes un-passable across isolation later.
+public struct UsageLog: Codable, Equatable, Sendable {
     public var counts: [String: Int]
     public var specs: [String: TerminalSpec]
 
