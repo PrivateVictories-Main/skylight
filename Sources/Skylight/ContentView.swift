@@ -370,6 +370,7 @@ struct CanvasRow: View {
 /// A soft pulsing dot marking a terminal whose bell rang — it's done or
 /// waiting for you — until you open it.
 struct AttentionDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pulse = false
 
     var body: some View {
@@ -378,8 +379,16 @@ struct AttentionDot: View {
             .frame(width: 7, height: 7)
             .shadow(color: Color.accentColor.opacity(0.7), radius: pulse ? 3.5 : 1)
             .scaleEffect(pulse ? 1.15 : 0.9)
-            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: pulse)
-            .onAppear { pulse = true }
+            // A forever-repeating breath is the one motion Reduce Motion most
+            // wants gone, and it cannot be re-timed into honesty — so it is
+            // simply not started. The dot still marks the terminal; it just
+            // sits still. Keying `value:` off a constant leaves the repeating
+            // animation nothing to attach to even if the setting is flipped
+            // mid-session, and resting `pulse` at false keeps the static dot
+            // at its base size instead of frozen mid-breath.
+            .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
+                       value: reduceMotion ? false : pulse)
+            .onAppear { pulse = !reduceMotion }
             .help("This session finished or needs your input")
     }
 }

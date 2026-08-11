@@ -1079,8 +1079,11 @@ private struct MoveGrip: View {
         let wanted = hovering || dragging
         if wanted {
             // SET, never push: see ResizeZone.syncCursor for why the stack is
-            // the wrong tool here. Re-setting while already owned is free and
-            // re-asserts the cursor if a neighbouring zone stomped it.
+            // the wrong tool here. Setting unconditionally (rather than only
+            // on the false→true edge) is free, but note this runs only when
+            // something calls it — hover in/out and drag start/end. It is not
+            // a continuous re-assert: a stomp landing BETWEEN two transitions
+            // stands until the next one.
             NSCursor.openHand.set()
             owned = true
         } else if owned {

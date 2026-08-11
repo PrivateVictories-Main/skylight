@@ -52,6 +52,30 @@ draggable, resizable tiles. Swift + SwiftUI, with real Ghostty terminals.
 macOS 14+, Swift 6 toolchain. Debug appearance override:
 `SKYLIGHT_APPEARANCE=dark ./build/Skylight.app/Contents/MacOS/Skylight`
 
+## Grant access once
+
+macOS ties permission grants to an app's code identity. An ad-hoc signature —
+what a plain build produces — is a *new* identity every time, so every rebuild
+looks like a brand-new app and every grant is forgotten. Two one-time steps fix
+that for good:
+
+```
+./scripts/setup-signing.sh          # once, by hand — approve the one dialog
+```
+
+That creates a local "Skylight Dev" signing identity. `make-app.sh` detects it
+automatically from then on (and tells you when it can't, so you are never
+silently back to ad-hoc).
+
+Then, once, grant Skylight **Full Disk Access** — the app's *Open Full Disk
+Access Settings…* menu command opens the right pane. Every terminal and every
+agent CLI running inside Skylight inherits that grant, and rebuilds keep it.
+
+Agent CLIs also ask for their own permission, separately from macOS. If you
+want a given agent to stop asking, the New sheet's **Full autonomy** toggle
+(shown for the agents that support it) names the exact flag it will launch
+with. It is off until you turn it on, per agent.
+
 ## Architecture
 
 Two targets, tests on the pure part:

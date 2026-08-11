@@ -54,6 +54,7 @@ struct NewTerminalSheet: View {
             modeSection
             if agentMode {
                 harnessSection
+                autonomyRow
                 argumentsRow
             }
             directoryRow
@@ -331,6 +332,40 @@ struct NewTerminalSheet: View {
         .padding(.trailing, 10)
         .opacity(path == nil ? 0.55 : 1)
         .hoverHighlight(cornerRadius: 10, active: harnessID == harness.id)
+    }
+
+    /// Shown only for the SELECTED harness, and only when we have a verified
+    /// flag for it. The copy names that flag outright: this is Ryan choosing,
+    /// on his own machine, to let an agent stop asking — a euphemism would be
+    /// the one thing that makes it a bad choice.
+    @ViewBuilder
+    private var autonomyRow: some View {
+        if let id = harnessID,
+           let harness = Catalog.harnesses.first(where: { $0.id == id }),
+           let flag = harness.autonomyFlag {
+            Toggle(isOn: trustedBinding) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Full autonomy")
+                        .font(.system(size: 12.5, weight: .medium))
+                    Text("Launches with \(flag) — skips the agent's own permission prompts. Applies to every future \(harness.displayName) terminal.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .toggleStyle(.switch)
+            .controlSize(.mini)
+            .padding(.horizontal, 10)
+        }
+    }
+
+    private var trustedBinding: Binding<Bool> {
+        Binding(
+            get: { harnessID.map(state.trustedHarnesses.contains) ?? false },
+            set: { on in
+                guard let id = harnessID else { return }
+                state.setTrusted(id, on)
+            }
+        )
     }
 
     private var argumentsRow: some View {

@@ -13,12 +13,20 @@ public struct Harness: Identifiable, Equatable, Sendable {
     public let displayName: String
     public let installCommand: String
     public let brand: Brand?         // nil = no official vector mark; UI uses a glyph
+    /// The flag that makes this CLI stop asking permission for its own
+    /// actions, or nil when we have not VERIFIED one from its live `--help`.
+    /// nil is not "no such flag exists" — it is "we will not guess". A guessed
+    /// flag either fails the launch or grants something other than what the
+    /// toggle promised, so an unverified harness simply shows no toggle.
+    public let autonomyFlag: String?
 
-    public init(id: String, displayName: String, installCommand: String, brand: Brand?) {
+    public init(id: String, displayName: String, installCommand: String, brand: Brand?,
+                autonomyFlag: String? = nil) {
         self.id = id
         self.displayName = displayName
         self.installCommand = installCommand
         self.brand = brand
+        self.autonomyFlag = autonomyFlag
     }
 }
 
@@ -27,9 +35,11 @@ public enum Catalog {
     /// an uninstalled harness renders dimmed with its install command.
     public static let harnesses: [Harness] = [
         Harness(id: "claude", displayName: "Claude Code",
-                installCommand: "npm i -g @anthropic-ai/claude-code", brand: .claudeCode),
+                installCommand: "npm i -g @anthropic-ai/claude-code", brand: .claudeCode,
+                autonomyFlag: "--dangerously-skip-permissions"),
         Harness(id: "codex", displayName: "Codex",
-                installCommand: "npm i -g @openai/codex", brand: .openai),
+                installCommand: "npm i -g @openai/codex", brand: .openai,
+                autonomyFlag: "--dangerously-bypass-approvals-and-sandbox"),
         Harness(id: "gemini", displayName: "Gemini CLI",
                 installCommand: "npm i -g @google/gemini-cli", brand: .gemini),
         Harness(id: "copilot", displayName: "Copilot CLI",
@@ -41,7 +51,8 @@ public enum Catalog {
         Harness(id: "amp", displayName: "Amp",
                 installCommand: "npm i -g @sourcegraph/amp", brand: .amp),
         Harness(id: "opencode", displayName: "OpenCode",
-                installCommand: "npm i -g opencode-ai", brand: .opencode),
+                installCommand: "npm i -g opencode-ai", brand: .opencode,
+                autonomyFlag: "--auto"),
     ]
 
     /// /etc/shells → shell paths, comments and blank lines stripped.

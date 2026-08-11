@@ -63,5 +63,24 @@ final class CatalogTests: XCTestCase {
             "npm i -g opencode-ai",
         ])
         XCTAssertTrue(Catalog.harnesses.allSatisfy { $0.brand != nil })
+        // Autonomy flags are typed straight onto a command line on Ryan's
+        // machine — pin all eight, nils included. A nil here means "not
+        // verified from live --help output", and inventing one would either
+        // break the launch or grant something the toggle never promised.
+        XCTAssertEqual(Catalog.harnesses.map(\.autonomyFlag), [
+            "--dangerously-skip-permissions",              // claude
+            "--dangerously-bypass-approvals-and-sandbox",  // codex
+            nil,                                           // gemini
+            nil,                                           // copilot
+            nil,                                           // cursor-agent
+            nil,                                           // qwen
+            nil,                                           // amp
+            "--auto",                                      // opencode
+        ])
+        // No flag may carry whitespace: they are prepended into ghostty's
+        // word-split command line, where a space would silently become a
+        // second argument.
+        XCTAssertTrue(Catalog.harnesses.compactMap(\.autonomyFlag)
+            .allSatisfy { !$0.contains(" ") && $0.hasPrefix("--") })
     }
 }

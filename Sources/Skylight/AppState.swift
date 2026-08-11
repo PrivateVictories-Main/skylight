@@ -59,6 +59,10 @@ final class AppState: ObservableObject {
     var pendingSpawn: (canvasID: UUID, point: CGPoint)?
     @Published private(set) var presets: [LaunchPreset]
     @Published private(set) var usage: UsageLog
+    /// Harness ids Ryan has granted full autonomy — they launch with their own
+    /// permission prompts skipped. Off for everything until he says otherwise,
+    /// once per harness, and it survives relaunches.
+    @Published private(set) var trustedHarnesses: Set<String>
 
     let sessions = LiveSessionStore()
 
@@ -78,6 +82,7 @@ final class AppState: ObservableObject {
     private static var stateURL: URL { supportDir.appendingPathComponent("workspace.json") }
     private static var presetsURL: URL { supportDir.appendingPathComponent("presets.json") }
     private static var usageURL: URL { supportDir.appendingPathComponent("usage.json") }
+    private static var trustedURL: URL { supportDir.appendingPathComponent("trusted.json") }
 
     init() {
         var saved: SavedState?
@@ -111,6 +116,10 @@ final class AppState: ObservableObject {
             .flatMap { try? JSONDecoder().decode([LaunchPreset].self, from: $0) } ?? []
         usage = (try? Data(contentsOf: Self.usageURL))
             .flatMap { try? JSONDecoder().decode(UsageLog.self, from: $0) } ?? UsageLog()
+        // Unreadable or absent = trusted nothing. A grant this consequential
+        // must never be recovered by guessing.
+        trustedHarnesses = (try? Data(contentsOf: Self.trustedURL))
+            .flatMap { try? JSONDecoder().decode(Set<String>.self, from: $0) } ?? []
 
         // Every stored property is initialized before `self` is read.
         if selection == nil { selection = instances.first.map { .item($0.id) } }
@@ -130,6 +139,9 @@ final class AppState: ObservableObject {
         }
         sessions.lookupName = { [weak self] id in
             self?.instance(id)?.name
+        }
+        sessions.lookupTrusted = { [weak self] harness in
+            self?.trustedHarnesses.contains(harness) ?? false
         }
         Self.shared = self
 
@@ -221,6 +233,20 @@ final class AppState: ObservableObject {
         }
     }
 
+    private func persistTrusted() {
+        if let data = try? JSONEncoder().encode(trustedHarnesses) {
+            try? data.write(to: Self.trustedURL, options: .atomic)
+        }
+    }
+
+    /// Grant or revoke full autonomy for one harness. Takes effect for every
+    /// terminal launched from here on — a session already running keeps the
+    /// command line it started with, which is what the toggle's copy promises.
+    func setTrusted(_ id: String, _ on: Bool) {
+        if on { trustedHarnesses.insert(id) } else { trustedHarnesses.remove(id) }
+        persistTrusted()
+    }
+
     // MARK: - Lookup
 
     func instance(_ id: UUID) -> TerminalInstance? {
@@ -250,6 +276,15 @@ final class AppState: ObservableObject {
     /// mode covers it, and a zoom you cannot see is a silent no-op.
     var canvasZoomAvailable: Bool {
         selectedCanvasID != nil && focusedInstance == nil
+    }
+
+    /// Stricter than zoom: arranging also needs something to arrange. Below
+    /// two tiles the command does nothing at all (see CanvasView.arrange),
+    /// and an enabled menu item that does nothing is a lie.
+    var canArrange: Bool {
+        guard canvasZoomAvailable, let id = selectedCanvasID,
+              let board = canvases.first(where: { $0.id == id }) else { return false }
+        return board.tiles.count > 1
     }
 
     var freeInstances: [TerminalInstance] {
@@ -346,11 +381,14 @@ final class AppState: ObservableObject {
     /// Reorder within the FREE instances (sidebar Terminals section) while
     /// canvas residents keep their positions in the master array.
     ///
-    /// Residents move to the tail, which is invisible: their sidebar position
-    /// comes from their board's tile order (`Residency.residents` walks tiles,
-    /// not this array), and every other reader is order-agnostic — id lookups,
-    /// `map(\.name)` for unique naming, and a whole-array save that
-    /// round-trips. `Residency.free` is a filter, so free order IS this order.
+    /// Residents move to the tail. That is invisible while they stay on a
+    /// canvas — their sidebar position comes from their board's tile order
+    /// (`Residency.residents` walks tiles, not this array) — but it has one
+    /// real consequence: a terminal freed from a canvas AFTER a reorder
+    /// returns to the BOTTOM of Terminals, because that is where its master
+    /// index now sits. Every other reader is order-agnostic (id lookups,
+    /// `map(\.name)` for unique naming, a whole-array save that round-trips),
+    /// and `Residency.free` is a filter, so free order IS this order.
     func moveFreeInstances(from source: IndexSet, to destination: Int) {
         var free = freeInstances
         free.move(fromOffsets: source, toOffset: destination)
@@ -584,6 +622,11 @@ final class LiveSessionStore {
     /// capture asks before it fires.
     var lookupName: ((UUID) -> String?)?
 
+    /// Whether a harness id has been granted full autonomy. Read at surface
+    /// creation, like `lookupName`, so the store never holds its own copy of
+    /// a setting that lives in AppState.
+    var lookupTrusted: ((String) -> Bool)?
+
     // MARK: - First-prompt title capture
 
     /// An agent terminal still wearing its launch-issued name, and the line
@@ -659,6 +702,21 @@ final class LiveSessionStore {
         return "\"" + word.replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 
+    /// The spec's arguments, with the harness's verified autonomy flag in
+    /// front when Ryan has granted that harness. Local to building the command
+    /// line: the saved spec is never rewritten, so revoking the grant is
+    /// enough to un-grant it — nothing has to be scrubbed back out.
+    ///
+    /// The flag leads rather than trails because agent CLIs take a positional
+    /// prompt; appending would risk landing after one. It is skipped entirely
+    /// when the spec already passes it by hand, so nobody gets it twice.
+    private func autonomousArguments(for spec: TerminalSpec, harness: String) -> [String] {
+        guard let flag = Catalog.harnesses.first(where: { $0.id == harness })?.autonomyFlag,
+              lookupTrusted?(harness) == true,
+              !spec.arguments.contains(flag) else { return spec.arguments }
+        return [flag] + spec.arguments
+    }
+
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
         // Glass + breathing room: translucency (never below 0.9 — readability beats effect, spec Addendum A1) plus balanced inner padding so
@@ -673,7 +731,7 @@ final class LiveSessionStore {
         """
         if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
-            let command = ([binary] + instance.spec.arguments)
+            let command = ([binary] + autonomousArguments(for: instance.spec, harness: harness))
                 .map(Self.quoted).joined(separator: " ")
             config += "command = \(command)\n"
         } else if let shell = instance.spec.shellPath,

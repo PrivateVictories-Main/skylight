@@ -45,12 +45,23 @@ struct SkylightApp: App {
                     .keyboardShortcut("1", modifiers: [.command])
                     .disabled(!state.canvasZoomAvailable)
                 Divider()
-                // Arrange belongs to the visible canvas for the same reason
-                // zoom does — and it ends in a fit, so it is dead in exactly
-                // the same states.
+                // Arrange needs everything zoom needs AND at least two tiles
+                // to compose — a one-tile board is already arranged, so the
+                // item goes grey rather than firing a command that returns
+                // immediately.
                 Button("Arrange Canvas") { state.requestArrange() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
-                    .disabled(!state.canvasZoomAvailable)
+                    .disabled(!state.canArrange)
+                Divider()
+                // Granted once to Skylight, inherited by every terminal and
+                // agent inside it — and, with a stable signing identity, kept
+                // across rebuilds. See scripts/setup-signing.sh.
+                Button("Open Full Disk Access Settings…") {
+                    if let url = URL(string:
+                        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+                        NSWorkspace.shared.open(url)
+                    }
+                }
             }
         }
     }
