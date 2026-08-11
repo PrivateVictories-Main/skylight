@@ -168,6 +168,23 @@ final class AppState: ObservableObject {
             .debounce(for: .seconds(0.4), scheduler: RunLoop.main)
             .sink { [weak self] _ in self?.persist() }
             .store(in: &observers)
+        // Terminals waiting on you, counted on the Dock like every serious
+        // mac app. `dropFirst` for the same reason the selection sinks use it:
+        // a @Published publisher replays its current value to a new
+        // subscriber, so the first emission lands INSIDE this init — before
+        // SwiftUI has finished standing NSApplication up. That emission is
+        // always the empty set, i.e. the no-badge state the Dock already
+        // shows, so dropping it costs nothing and every surviving emission
+        // comes from a bell or a selection change, long after launch. NSApp
+        // is an implicitly-unwrapped global, so it is chained rather than
+        // forced: a wrong guess about launch order should not be a crash.
+        $attention
+            .removeDuplicates()
+            .dropFirst()
+            .sink { attention in
+                NSApp?.dockTile.badgeLabel = attention.isEmpty ? nil : "\(attention.count)"
+            }
+            .store(in: &observers)
     }
 
     // MARK: - Persistence
@@ -326,6 +343,36 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    /// Reorder within the FREE instances (sidebar Terminals section) while
+    /// canvas residents keep their positions in the master array.
+    ///
+    /// Residents move to the tail, which is invisible: their sidebar position
+    /// comes from their board's tile order (`Residency.residents` walks tiles,
+    /// not this array), and every other reader is order-agnostic — id lookups,
+    /// `map(\.name)` for unique naming, and a whole-array save that
+    /// round-trips. `Residency.free` is a filter, so free order IS this order.
+    func moveFreeInstances(from source: IndexSet, to destination: Int) {
+        var free = freeInstances
+        free.move(fromOffsets: source, toOffset: destination)
+        let residents = instances.filter { Residency.board(of: $0.id, in: canvases) != nil }
+        // Free order is what the user arranged; residents keep relative order
+        // appended after (their sidebar position comes from canvas groups).
+        instances = free + residents
+        persist()
+    }
+
+    /// Nudge one free terminal a step up or down the Terminals section.
+    /// `move(fromOffsets:toOffset:)` measures the destination in PRE-removal
+    /// indices, which is why a step down is `index + 2` and not `index + 1`.
+    func moveFreeInstance(_ id: UUID, by delta: Int) {
+        let free = freeInstances
+        guard let index = free.firstIndex(where: { $0.id == id }) else { return }
+        let target = index + delta
+        guard target >= 0, target < free.count else { return }
+        moveFreeInstances(from: IndexSet(integer: index),
+                          to: delta < 0 ? target : target + 1)
+    }
+
     // MARK: - Canvases
 
     @discardableResult
@@ -388,10 +435,9 @@ final class AppState: ObservableObject {
     /// tile springs to its new origin together. The caller fits the view
     /// immediately after — see CanvasView.arrange(in:).
     func arrangeCanvas(_ canvasID: UUID, viewport: CGSize) {
-        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
-        canvases[index].tiles = CanvasLayout.arranged(
-            tiles: canvases[index].tiles, viewport: viewport)
-        persistSoon()
+        guard let board = canvases.first(where: { $0.id == canvasID }) else { return }
+        setTiles(CanvasLayout.arranged(tiles: board.tiles, viewport: viewport),
+                 for: canvasID)
     }
 
     // MARK: - Tiles

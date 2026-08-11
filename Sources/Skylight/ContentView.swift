@@ -265,6 +265,11 @@ struct InstanceRow: View {
         }
     }
 
+    /// Where this row sits in the Terminals section, for the reorder commands.
+    private var freeIndex: Int? {
+        state.freeInstances.firstIndex { $0.id == instance.id }
+    }
+
     @ViewBuilder
     private var menu: some View {
         Button("Rename…") { onRename?(instance) }
@@ -294,6 +299,16 @@ struct InstanceRow: View {
                         }
                     }
                 }
+            }
+            // Ordering is a command, not a gesture: a row's drag already
+            // means "put this on a canvas", and one drag cannot mean two
+            // things. See moveFreeInstances.
+            if state.freeInstances.count > 1 {
+                Divider()
+                Button("Move Up") { state.moveFreeInstance(instance.id, by: -1) }
+                    .disabled(freeIndex == 0)
+                Button("Move Down") { state.moveFreeInstance(instance.id, by: 1) }
+                    .disabled(freeIndex == state.freeInstances.count - 1)
             }
         }
         Divider()
@@ -414,7 +429,7 @@ struct DetailView: View {
             }
         }
         .animation(.easeOut(duration: 0.18), value: state.draggingItemID)
-        .animation(.spring(response: 0.3, dampingFraction: 0.85), value: state.focusedInstance)
+        .animation(Motion.viewport, value: state.focusedInstance)
         // With the sidebar hidden its bottom-bar handle goes with it. The 30pt
         // band the content already steps below becomes a DELIBERATE slim bar —
         // material, hairline edge, window controls at home on it — not a raw

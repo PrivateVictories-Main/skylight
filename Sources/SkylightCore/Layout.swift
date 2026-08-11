@@ -258,7 +258,13 @@ public enum CanvasLayout {
         // Target row width: the viewport's aspect applied to the total area,
         // floored by the widest tile.
         let totalArea = sorted.reduce(CGFloat(0)) { $0 + $1.size.width * $1.size.height }
-        let aspect = viewport.height > 0 ? viewport.width / viewport.height : 16 / 10
+        // Both dimensions, deliberately: a zero height would divide to NaN and
+        // poison every origin, and a zero width would silently collapse the
+        // board into one column. An unmeasured viewport gets the honest
+        // default instead of either.
+        let aspect = viewport.width > 0 && viewport.height > 0
+            ? viewport.width / viewport.height
+            : 16 / 10
         let widest = sorted.map(\.size.width).max() ?? 0
         let targetWidth = max(widest, (totalArea * aspect).squareRoot())
 

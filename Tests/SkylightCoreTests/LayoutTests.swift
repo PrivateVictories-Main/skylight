@@ -276,6 +276,11 @@ final class LayoutTests: XCTestCase {
                                "\(a.frame) vs \(b.frame)")
             }
         }
+        // Reading order, spelled out. The fixture's y values bucket
+        // (y/200 floored) to [0,1,2,3,4,0,1], so tiles 5 and 6 rejoin the
+        // first two rows and sort by x within them: 5 (x=650) after 0 (x=0),
+        // and 6 (x=80) BEFORE 1 (x=130).
+        XCTAssertEqual(arranged.map(\.id), [0, 5, 6, 1, 2, 3, 4].map { tiles[$0].id })
         // Deterministic.
         XCTAssertEqual(arranged.map(\.id),
                        CanvasLayout.arranged(tiles: tiles, viewport: CGSize(width: 1600, height: 1000)).map(\.id))

@@ -148,8 +148,12 @@ struct CanvasView: View {
                 state.canvasZoomRequest = nil
             }
             .onChange(of: state.canvasArrangeRequest) { _, request in
-                // Only the real board acts: the drag-preview copy shares this
-                // boardID and would arrange it a second time.
+                // `reflowEnabled` is belt-and-braces, matching the reflow
+                // consumer above: the drag-preview copy cannot actually reach
+                // here today (it renders Color.clear for the selected board,
+                // and only a selected board can be sent an arrange), but a
+                // board-mutating consumer that reads `reflowEnabled` the same
+                // way every other one does is one less thing to re-derive.
                 guard let request, request.canvasID == boardID, reflowEnabled else { return }
                 state.canvasArrangeRequest = nil
                 arrange(in: viewport)
@@ -227,7 +231,7 @@ struct CanvasView: View {
     }
 
     private func apply(_ action: CanvasZoomAction, in viewport: CGSize) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(Motion.viewport) {
             switch action {
             case .zoomIn:
                 setZoom(CanvasZoom.snapped(zoom + 0.25), around: viewportCenter)
@@ -271,6 +275,11 @@ struct CanvasView: View {
     /// finishes is a surprise, not a command.
     private func arrange(in viewport: CGSize) {
         guard !tileInteracting else { return }
+        // Nothing to compose below two tiles, and a no-op must be a TRUE
+        // no-op: falling through to the fit would silently reset the zoom on
+        // an empty or single-tile board. Matches the menu item, which hides
+        // itself in exactly these states.
+        guard let board, board.tiles.count > 1 else { return }
         state.arrangeCanvas(boardID, viewport: viewport)
         apply(.fit, in: viewport)
     }
@@ -291,7 +300,7 @@ struct CanvasView: View {
                                                      minZoom: CanvasZoom.minimum))
         let targetPan = CanvasLayout.centeringPan(bounds: bounds, viewport: viewport,
                                                   zoom: target)
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(Motion.viewport) {
             zoom = target
             pan = targetPan
         }
@@ -301,7 +310,7 @@ struct CanvasView: View {
 
     /// Overview → work: a tap on a scaled-down tile flies to it at 100%.
     private func navigate(to tile: CanvasTile) {
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(Motion.viewport) {
             zoom = 1
             pan = CanvasLayout.centeringPan(bounds: tile.frame, viewport: viewport, zoom: 1)
         }
@@ -350,7 +359,9 @@ struct CanvasView: View {
         }
         // Not a spawn: the one command that acts on the board itself, in its
         // own trailing section. Uses this view's live viewport, same as ⌘⇧A.
-        if !(board?.tiles.isEmpty ?? true) {
+        // Hidden below two tiles, where arranging is a no-op — this menu
+        // promises never to show a dead item.
+        if (board?.tiles.count ?? 0) > 1 {
             menu.addItem(.separator())
             add("Arrange") { arrange(in: viewport) }
         }
@@ -363,7 +374,7 @@ struct CanvasView: View {
         guard let itemID = state.pendingReveal,
               let tile = board?.tiles.first(where: { $0.itemID == itemID }) else { return }
         state.pendingReveal = nil
-        withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
+        withAnimation(Motion.viewport) {
             pan = CanvasLayout.centeringPan(bounds: tile.frame, viewport: viewport,
                                             zoom: zoom)
         }
@@ -387,7 +398,7 @@ struct CanvasView: View {
         guard let result = CanvasLayout.reflowed(tiles: board.tiles, pan: contentPan,
                                                  viewport: contentViewport) else { return }
         let screenPan = CGPoint(x: result.pan.x * safeZoom, y: result.pan.y * safeZoom)
-        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+        withAnimation(Motion.viewport) {
             pan = screenPan
         }
         state.setPan(screenPan, for: boardID)
@@ -647,7 +658,7 @@ struct TileView: View {
     /// and the model's origin springs under it — same response, same damping,
     /// so a release reads as ONE motion instead of a jump and a chase. Any
     /// second set of constants anywhere below is the glitch coming back.
-    static let settleSpring = Animation.spring(response: 0.35, dampingFraction: 0.8)
+    static var settleSpring: Animation { Motion.settle }
 
     /// Which grab strip a gesture came from. No two opposite edges are ever
     /// live at once — a corner drives one horizontal and one vertical edge.
@@ -1026,7 +1037,7 @@ private struct MoveGrip: View {
 
     @State private var hovering = false
     @State private var dragging = false
-    @State private var pushed = false
+    @State private var owned = false
     @State private var last: DragGesture.Value?
 
     var body: some View {
@@ -1066,21 +1077,28 @@ private struct MoveGrip: View {
 
     private func syncCursor() {
         let wanted = hovering || dragging
-        if wanted, !pushed {
-            NSCursor.openHand.push()
-            pushed = true
-        } else if !wanted, pushed {
-            NSCursor.pop()
-            pushed = false
+        if wanted {
+            // SET, never push: see ResizeZone.syncCursor for why the stack is
+            // the wrong tool here. Re-setting while already owned is free and
+            // re-asserts the cursor if a neighbouring zone stomped it.
+            NSCursor.openHand.set()
+            owned = true
+        } else if owned {
+            NSCursor.arrow.set()
+            owned = false
         }
     }
 }
 
 /// One invisible grab strip. It owns its own cursor bookkeeping because
-/// balance is the only thing that matters here: a `pushed` flag makes push and
-/// pop idempotent, so no enter/drag/leave order can double-push or pop a
-/// cursor this zone never owned. The cursor also survives a drag that wanders
-/// outside the strip — it is released when the gesture ends, not when the
+/// balance is the only thing that matters here — and the cursor STACK cannot
+/// give it: eight strips ring a tile, and any enter/leave order where one
+/// zone's exit lands after its neighbour's entry pops a cursor the popper
+/// never pushed. Set semantics have no stack to imbalance, so the worst
+/// misordering costs one wrong cursor instead of a permanently stuck one.
+/// The `owned` flag is what keeps a zone from resetting a cursor it does not
+/// believe is its own. The cursor also survives a drag that wanders outside
+/// the strip — `dragging` holds it until the gesture ends, not until the
 /// pointer crosses the boundary.
 private struct ResizeZone: View {
     let cursor: NSCursor
@@ -1090,7 +1108,7 @@ private struct ResizeZone: View {
 
     @State private var hovering = false
     @State private var dragging = false
-    @State private var pushed = false
+    @State private var owned = false
 
     var body: some View {
         Color.clear
@@ -1130,12 +1148,12 @@ private struct ResizeZone: View {
 
     private func syncCursor() {
         let wanted = hovering || dragging
-        if wanted, !pushed {
-            cursor.push()
-            pushed = true
-        } else if !wanted, pushed {
-            NSCursor.pop()
-            pushed = false
+        if wanted {
+            cursor.set()
+            owned = true
+        } else if owned {
+            NSCursor.arrow.set()
+            owned = false
         }
     }
 }

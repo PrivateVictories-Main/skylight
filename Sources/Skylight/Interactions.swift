@@ -1,4 +1,28 @@
+import AppKit
 import SwiftUI
+
+/// The app's motion voice, with Reduce Motion respected: springs normally,
+/// near-instant fades when the user asked the system for less movement.
+///
+/// These are computed on purpose. A `static let` would freeze whatever the
+/// setting was the first time anything animated and keep using it for the rest
+/// of the launch; read fresh, toggling Reduce Motion in System Settings applies
+/// to the very next animation.
+enum Motion {
+    /// Objects settling into place — tiles, grips, resize commits.
+    static var settle: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.35, dampingFraction: 0.8)
+    }
+
+    /// The camera moving — zoom, fit, reveal, and the focus transition.
+    static var viewport: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.12)
+            : .spring(response: 0.35, dampingFraction: 0.85)
+    }
+}
 
 /// Springy press feedback for buttons — the subtle scale-and-settle that makes
 /// taps feel physical. Used app-wide for a consistent, satisfying response.
