@@ -71,6 +71,10 @@ Then, once, grant Skylight **Full Disk Access** — the app's *Open Full Disk
 Access Settings…* menu command opens the right pane. Every terminal and every
 agent CLI running inside Skylight inherits that grant, and rebuilds keep it.
 
+The grant follows the signing identity: anything signed with it, including a
+tampered rebuild, inherits the access. That is the trade that makes grants
+survive rebuilds; it is the same posture as any developer certificate.
+
 Agent CLIs also ask for their own permission, separately from macOS. If you
 want a given agent to stop asking, the New sheet's **Full autonomy** toggle
 (shown for the agents that support it) names the exact flag it will launch

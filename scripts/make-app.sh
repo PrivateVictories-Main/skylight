@@ -40,8 +40,8 @@ cp "$BIN" "$APP/Contents/MacOS/Skylight"
 # grant. Detection only — this script never creates or trusts anything, and so
 # can never raise a dialog of its own. scripts/setup-signing.sh does that once,
 # by hand.
-if security find-identity -v -p codesigning 2>/dev/null | grep -q "Skylight Dev"; then
-  codesign --force --sign "Skylight Dev" "$APP" >/dev/null 2>&1 || true
+if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Skylight Dev"'; then
+  codesign --force --sign "Skylight Dev" "$APP" >/dev/null 2>&1 || echo "warning: signing with Skylight Dev FAILED — app is unsigned; permission grants will not persist. Check Keychain (locked? prompt declined?)." >&2
 else
   codesign --force --sign - "$APP" >/dev/null 2>&1 || true
   echo "note: ad-hoc signed — macOS will re-ask permissions after rebuilds." >&2

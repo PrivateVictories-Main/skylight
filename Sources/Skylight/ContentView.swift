@@ -377,15 +377,18 @@ struct AttentionDot: View {
         Circle()
             .fill(Color.accentColor)
             .frame(width: 7, height: 7)
-            .shadow(color: Color.accentColor.opacity(0.7), radius: pulse ? 3.5 : 1)
-            .scaleEffect(pulse ? 1.15 : 0.9)
+            .shadow(color: Color.accentColor.opacity(0.7),
+                    radius: pulse && !reduceMotion ? 3.5 : 1)
+            .scaleEffect(pulse && !reduceMotion ? 1.15 : 0.9)
             // A forever-repeating breath is the one motion Reduce Motion most
             // wants gone, and it cannot be re-timed into honesty — so it is
             // simply not started. The dot still marks the terminal; it just
-            // sits still. Keying `value:` off a constant leaves the repeating
-            // animation nothing to attach to even if the setting is flipped
-            // mid-session, and resting `pulse` at false keeps the static dot
-            // at its base size instead of frozen mid-breath.
+            // sits still. Three parts, because each covers a different moment:
+            // the visuals above read `reduceMotion` directly, so a mid-pulse
+            // flip lands the dot back at rest instead of wherever the breath
+            // had it; keying `value:` off a constant leaves the repeating
+            // animation nothing to attach to; and resting `pulse` at false
+            // means it never starts in the first place.
             .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true),
                        value: reduceMotion ? false : pulse)
             .onAppear { pulse = !reduceMotion }

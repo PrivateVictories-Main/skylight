@@ -57,10 +57,14 @@ struct SkylightApp: App {
                 // agent inside it — and, with a stable signing identity, kept
                 // across rebuilds. See scripts/setup-signing.sh.
                 Button("Open Full Disk Access Settings…") {
-                    if let url = URL(string:
-                        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
-                        NSWorkspace.shared.open(url)
-                    }
+                    // Ventura renamed the pane. Try the modern id first and
+                    // fall back only when the system says it could not open
+                    // it — so this keeps working on both sides of that split
+                    // without sniffing the OS version.
+                    let modern = URL(string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles")
+                    let legacy = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
+                    if let modern, NSWorkspace.shared.open(modern) { return }
+                    if let legacy { _ = NSWorkspace.shared.open(legacy) }
                 }
             }
         }
