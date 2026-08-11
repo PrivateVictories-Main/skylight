@@ -244,6 +244,61 @@ final class LayoutTests: XCTestCase {
                                                viewport: CGSize(width: 1200, height: 800)), 1)
     }
 
+    // MARK: - Arrange
+
+    func testArrangePreservesSizesAndCount() {
+        let tiles = [
+            CanvasTile(itemID: UUID(), origin: CGPoint(x: 900, y: 12), size: CGSize(width: 560, height: 400)),
+            CanvasTile(itemID: UUID(), origin: CGPoint(x: -300, y: 700), size: CGSize(width: 320, height: 220)),
+            CanvasTile(itemID: UUID(), origin: CGPoint(x: 40, y: 30), size: CGSize(width: 480, height: 300)),
+        ]
+        let arranged = CanvasLayout.arranged(tiles: tiles, viewport: CGSize(width: 1600, height: 1000))
+        XCTAssertEqual(arranged.count, 3)
+        XCTAssertEqual(Set(arranged.map(\.id)), Set(tiles.map(\.id)))
+        for tile in tiles {
+            XCTAssertEqual(arranged.first { $0.id == tile.id }?.size, tile.size)
+        }
+    }
+
+    func testArrangeKeepsReadingOrderAndNeverOverlaps() {
+        var tiles: [CanvasTile] = []
+        for i in 0..<7 {
+            tiles.append(CanvasTile(itemID: UUID(),
+                                    origin: CGPoint(x: CGFloat(i * 130 % 700), y: CGFloat(i * 210 % 900)),
+                                    size: CGSize(width: 400 + CGFloat(i % 3) * 80, height: 280 + CGFloat(i % 2) * 120)))
+        }
+        let arranged = CanvasLayout.arranged(tiles: tiles, viewport: CGSize(width: 1600, height: 1000))
+        // Pairwise clearance: no two frames intersect even when inflated by 8
+        // (snap can pull an origin left by at most 8; the 24 gap absorbs it).
+        for a in arranged {
+            for b in arranged where a.id != b.id {
+                XCTAssertFalse(a.frame.insetBy(dx: -8, dy: -8).intersects(b.frame),
+                               "\(a.frame) vs \(b.frame)")
+            }
+        }
+        // Deterministic.
+        XCTAssertEqual(arranged.map(\.id),
+                       CanvasLayout.arranged(tiles: tiles, viewport: CGSize(width: 1600, height: 1000)).map(\.id))
+    }
+
+    func testArrangeSingleTileGoesHome() {
+        let tile = CanvasTile(itemID: UUID(), origin: CGPoint(x: 999, y: -400),
+                              size: CGSize(width: 560, height: 400))
+        XCTAssertEqual(CanvasLayout.arranged(tiles: [tile], viewport: CGSize(width: 1600, height: 1000))
+            .first?.origin, CGPoint(x: 48, y: 48))
+    }
+
+    func testArrangeOriginsAreGridSnapped() {
+        let tiles = (0..<5).map { i in
+            CanvasTile(itemID: UUID(), origin: CGPoint(x: CGFloat(i) * 313, y: CGFloat(i) * 217),
+                       size: CGSize(width: 500, height: 300))
+        }
+        for tile in CanvasLayout.arranged(tiles: tiles, viewport: CGSize(width: 1600, height: 1000)) {
+            XCTAssertEqual(tile.origin.x.truncatingRemainder(dividingBy: 16), 0)
+            XCTAssertEqual(tile.origin.y.truncatingRemainder(dividingBy: 16), 0)
+        }
+    }
+
     func testReflowReturnsNilWhenClampedTilesCannotShrinkFurther() {
         // A min-sized tile in a viewport it barely fits: scaling clamps to the
         // same size, the pan shift cancels — identical state must return nil.

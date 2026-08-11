@@ -44,6 +44,13 @@ struct SkylightApp: App {
                 Button("Actual Size") { state.requestZoom(.actual) }
                     .keyboardShortcut("1", modifiers: [.command])
                     .disabled(!state.canvasZoomAvailable)
+                Divider()
+                // Arrange belongs to the visible canvas for the same reason
+                // zoom does — and it ends in a fit, so it is dead in exactly
+                // the same states.
+                Button("Arrange Canvas") { state.requestArrange() }
+                    .keyboardShortcut("a", modifiers: [.command, .shift])
+                    .disabled(!state.canvasZoomAvailable)
             }
         }
     }

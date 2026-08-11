@@ -147,6 +147,13 @@ struct CanvasView: View {
                 apply(request.action, in: viewport)
                 state.canvasZoomRequest = nil
             }
+            .onChange(of: state.canvasArrangeRequest) { _, request in
+                // Only the real board acts: the drag-preview copy shares this
+                // boardID and would arrange it a second time.
+                guard let request, request.canvasID == boardID, reflowEnabled else { return }
+                state.canvasArrangeRequest = nil
+                arrange(in: viewport)
+            }
         }
         .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
         .navigationTitle(board?.name ?? "Canvas")
@@ -244,6 +251,30 @@ struct CanvasView: View {
         commitViewport()
     }
 
+    /// One command, a composed canvas: pack the tiles, then fit the result.
+    ///
+    /// Both halves run in the SAME runloop turn, which is what makes it read
+    /// as one motion: `arrangeCanvas` publishes new origins that TileView
+    /// animates with `settleSpring`, and `apply(.fit:)` runs its own spring on
+    /// pan/zoom in the same update. Routing the fit back through
+    /// `state.requestZoom(.fit)` would land a frame later, after the tiles had
+    /// already started moving — and `contentBounds` is read here, AFTER the
+    /// mutation, so the fit frames the arranged board and not the old one.
+    ///
+    /// The viewport is handed over in screen points on purpose: `arranged`
+    /// uses it only for its ASPECT, which zoom does not change.
+    ///
+    /// The guard lives here rather than at the call sites so BOTH ways in —
+    /// ⌘⇧A and the right-click item — are covered: a drag owns the tiles, and
+    /// repacking under the pointer would yank one out from under it. The
+    /// command is dropped, not queued: a rearrange that lands after the drag
+    /// finishes is a surprise, not a command.
+    private func arrange(in viewport: CGSize) {
+        guard !tileInteracting else { return }
+        state.arrangeCanvas(boardID, viewport: viewport)
+        apply(.fit, in: viewport)
+    }
+
     /// Drop the whole board back into view when it has outgrown the window.
     /// Returns true when it actually moved the viewport.
     @discardableResult
@@ -316,6 +347,12 @@ struct CanvasView: View {
         add("More Options…") {
             state.pendingSpawn = (boardID, contentPoint)
             state.newSheetShown = true
+        }
+        // Not a spawn: the one command that acts on the board itself, in its
+        // own trailing section. Uses this view's live viewport, same as ⌘⇧A.
+        if !(board?.tiles.isEmpty ?? true) {
+            menu.addItem(.separator())
+            add("Arrange") { arrange(in: viewport) }
         }
         return menu
     }

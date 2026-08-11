@@ -24,6 +24,15 @@ struct CanvasZoomRequest: Equatable {
     let action: CanvasZoomAction
 }
 
+/// One arrange command, addressed to a board. Arranging needs the LIVE
+/// viewport (its aspect sets the row width), and only the mounted CanvasView
+/// knows that — so the command travels the way zooms do. `id` keeps a second
+/// ⌘⇧A in a row distinct.
+struct CanvasArrangeRequest: Equatable {
+    let id = UUID()
+    let canvasID: UUID
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var instances: [TerminalInstance]
@@ -39,6 +48,8 @@ final class AppState: ObservableObject {
     /// Menu/keyboard zoom aimed at a canvas — the visible CanvasView owns the
     /// live transform, so commands travel to it the way reveals do.
     @Published var canvasZoomRequest: CanvasZoomRequest?
+    /// Menu/keyboard arrange aimed at a canvas — same travel as a zoom.
+    @Published var canvasArrangeRequest: CanvasArrangeRequest?
     /// Non-nil while a sidebar row is mid-drag; the detail area shows the
     /// canvas drop surface for exactly that long.
     @Published var draggingItemID: UUID?
@@ -363,6 +374,24 @@ final class AppState: ObservableObject {
     func requestZoom(_ action: CanvasZoomAction) {
         guard let id = selectedCanvasID else { return }
         canvasZoomRequest = CanvasZoomRequest(canvasID: id, action: action)
+    }
+
+    /// Aim an arrange at whatever canvas is on screen. Same rule as zoom: no
+    /// visible canvas, no command — the menu item is disabled in that state.
+    func requestArrange() {
+        guard let id = selectedCanvasID else { return }
+        canvasArrangeRequest = CanvasArrangeRequest(canvasID: id)
+    }
+
+    /// One command, a composed canvas: tiles pack tidily (sizes and reading
+    /// order kept) and the board is written back in one mutation, so every
+    /// tile springs to its new origin together. The caller fits the view
+    /// immediately after — see CanvasView.arrange(in:).
+    func arrangeCanvas(_ canvasID: UUID, viewport: CGSize) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        canvases[index].tiles = CanvasLayout.arranged(
+            tiles: canvases[index].tiles, viewport: viewport)
+        persistSoon()
     }
 
     // MARK: - Tiles

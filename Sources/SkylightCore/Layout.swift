@@ -228,6 +228,59 @@ public enum CanvasLayout {
         return start   // pathological density: overlap beats losing the tile
     }
 
+    /// Tidy a board: tiles keep their sizes and their reading order
+    /// (row-major by current position), and pack into gapped rows whose
+    /// width targets the viewport's aspect so the result fits naturally.
+    /// Deterministic; origins grid-snapped; never overlaps.
+    ///
+    /// Clearance invariant — the row cursor advances from the SNAPPED origin,
+    /// never from the raw one, so rounding cannot accumulate into an overlap.
+    /// A snap moves an origin by less than half a grid step (`snapped` rounds
+    /// half away from zero, so a positive origin moves LEFT by < 8 and RIGHT
+    /// by ≤ 8). The next tile's raw x is `prevSnappedX + prevWidth + gap`, so
+    /// the residual horizontal gap is `gap + (snapped − raw)` > 24 − 8 = 16pt.
+    /// Rows advance from the raw `y` accumulator, where the two independent
+    /// snaps can eat from both sides: the residual vertical gap is > 24 − 8 − 8
+    /// = 8pt worst case (32pt in the common all-grid-multiple case). Both stay
+    /// strictly positive, which is what "never overlaps" means here.
+    public static func arranged(tiles: [CanvasTile], viewport: CGSize,
+                                gap: CGFloat = 24) -> [CanvasTile] {
+        guard !tiles.isEmpty else { return tiles }
+        // Reading order: coarse rows by y (half a tile-height tolerance),
+        // then x. Sort by (bucketed y, x, id) for determinism.
+        let sorted = tiles.sorted { a, b in
+            let ay = (a.origin.y / 200).rounded(.down)
+            let by = (b.origin.y / 200).rounded(.down)
+            if ay != by { return ay < by }
+            if a.origin.x != b.origin.x { return a.origin.x < b.origin.x }
+            return a.id.uuidString < b.id.uuidString
+        }
+        // Target row width: the viewport's aspect applied to the total area,
+        // floored by the widest tile.
+        let totalArea = sorted.reduce(CGFloat(0)) { $0 + $1.size.width * $1.size.height }
+        let aspect = viewport.height > 0 ? viewport.width / viewport.height : 16 / 10
+        let widest = sorted.map(\.size.width).max() ?? 0
+        let targetWidth = max(widest, (totalArea * aspect).squareRoot())
+
+        var result: [CanvasTile] = []
+        let originX: CGFloat = 48
+        var y: CGFloat = 48
+        var x = originX
+        var rowHeight: CGFloat = 0
+        for var tile in sorted {
+            if x > originX, x + tile.size.width > originX + targetWidth {
+                y += rowHeight + gap
+                x = originX
+                rowHeight = 0
+            }
+            tile.origin = snapped(CGPoint(x: x, y: y))
+            result.append(tile)
+            x = tile.origin.x + tile.size.width + gap
+            rowHeight = max(rowHeight, tile.size.height)
+        }
+        return result
+    }
+
     public static func staggeredOrigin(existing: Int) -> CGPoint {
         CGPoint(x: 48 + CGFloat(existing) * 64, y: 48 + CGFloat(existing) * 48)
     }
