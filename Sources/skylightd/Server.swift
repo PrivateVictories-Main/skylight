@@ -27,6 +27,14 @@ final class Server: @unchecked Sendable {
         /// semantically; unbounded memory would lose the daemon.
         var inputBacklog = Data()
         var inputSource: DispatchSourceWrite?
+        /// Flow control (see readFromPTY): true while the read source is
+        /// suspended — because an attached client is drowning, or because
+        /// nobody is attached and full-rate reading would only overwrite the
+        /// ring. A suspended source must be resumed before cancel.
+        var readPaused = false
+        /// Bytes read since the last pause while detached; bounds the CPU a
+        /// client-less flood can burn.
+        var detachedBurst = 0
         var ring = OutputRing()
         var exitCode: Int32?
         /// Output fully drained from the master after child exit.
@@ -64,10 +72,24 @@ final class Server: @unchecked Sendable {
         init(fd: Int32) { self.fd = fd }
     }
 
-    /// A client this far behind is not coming back for its bytes.
+    /// A client this far behind is not coming back for its bytes. With
+    /// backpressure below, output floods can no longer reach this — only a
+    /// client ignoring the socket entirely while frames accumulate.
     private static let maxClientBacklog = 4 << 20
     /// Keystrokes queued for one tty; far beyond any legitimate typing.
     private static let maxInputBacklog = 1 << 20
+    /// Flow control: pause a session's pty reads when an attached client is
+    /// this far behind…
+    private static let clientHighWater = 512 << 10
+    /// …resume when it drains to here. The child then blocks on its tty
+    /// exactly as it would under any real terminal with a slow consumer.
+    private static let clientLowWater = 64 << 10
+    /// A detached flood is read in pulses of this much, then rests 250ms.
+    /// Small on purpose: a pty master hands out ~1 KiB reads, so the pulse
+    /// cost is EVENTS, not bytes — and nobody is watching a detached
+    /// session anyway (attach resumes reading instantly, and the replay
+    /// carries the tail).
+    private static let detachedBurstLimit = 256 << 10
 
     private let queue = DispatchQueue(label: "skylightd.server")
     private let socketPath: String
@@ -266,6 +288,9 @@ final class Server: @unchecked Sendable {
         for id in client.attached where pendingSpawns[id] != nil {
             pendingSpawns.removeValue(forKey: id)
         }
+        // And any session paused for this client's backlog reads again —
+        // the detached pulse takes over from here.
+        releaseBackpressure(from: client)
         log("client gone (\(clients.count))")
         exitIfIdle()
     }
@@ -289,6 +314,9 @@ final class Server: @unchecked Sendable {
             }
             if n > 0 {
                 client.outbound.removeFirst(n)
+                if client.outbound.count <= Self.clientLowWater {
+                    releaseBackpressure(from: client)
+                }
             } else if n < 0, errno == EAGAIN {
                 armWrite(client)
                 return
@@ -300,6 +328,16 @@ final class Server: @unchecked Sendable {
         }
         client.writeSource?.cancel()
         client.writeSource = nil
+        releaseBackpressure(from: client)
+    }
+
+    /// The low-water release: any session paused for this client's backlog
+    /// reads again. (A still-slow client just re-pauses it at high water.)
+    private func releaseBackpressure(from client: Client) {
+        for session in sessions.values
+        where session.readPaused && client.attached.contains(session.id) {
+            resumeReading(session)
+        }
     }
 
     private func armWrite(_ client: Client) {
@@ -376,6 +414,9 @@ final class Server: @unchecked Sendable {
             guard let id = WirePayload.uuid(from: frame.payload),
                   let session = sessions[id] else { return }
             client.attached.insert(id)
+            // A pulse-paused detached session streams again the moment
+            // someone is watching.
+            resumeReading(session)
             if session.ring.count > 0 {
                 send(WireFrame(type: .output,
                                payload: WirePayload.idPrefixed(id, session.ring.contents)),
@@ -550,8 +591,34 @@ final class Server: @unchecked Sendable {
             let data = Data(chunk[0..<n])
             session.ring.append(data)
             let payload = WirePayload.idPrefixed(session.id, data)
+            var anyAttached = false
+            var anyDrowning = false
             for client in clients.values where client.attached.contains(session.id) {
+                anyAttached = true
                 send(WireFrame(type: .output, payload: payload), to: client)
+                if client.outbound.count > Self.clientHighWater { anyDrowning = true }
+            }
+            // Flow control, both directions of absence:
+            // — an attached client that can't keep up gets BACKPRESSURE (the
+            //   child blocks on its tty, like under any real terminal),
+            //   released at the low-water mark by flushOutbound;
+            // — nobody attached means full-rate reading only overwrites the
+            //   ring, so a flood is sampled in pulses instead of pegging a
+            //   core for as long as it runs.
+            if anyDrowning {
+                pauseReading(session)
+            } else if !anyAttached {
+                session.detachedBurst += n
+                if session.detachedBurst >= Self.detachedBurstLimit {
+                    session.detachedBurst = 0
+                    pauseReading(session)
+                    queue.asyncAfter(deadline: .now() + 0.25) { [weak self, weak session] in
+                        guard let self, let session else { return }
+                        self.resumeReading(session)
+                    }
+                }
+            } else {
+                session.detachedBurst = 0
             }
         } else if n < 0, errno == EAGAIN || errno == EINTR {
             // A non-blocking master can wake spuriously — this is NOT the
@@ -570,6 +637,18 @@ final class Server: @unchecked Sendable {
             session.drained = true
             announceExitIfComplete(session)
         }
+    }
+
+    private func pauseReading(_ session: Session) {
+        guard !session.readPaused, session.readSource != nil else { return }
+        session.readPaused = true
+        session.readSource?.suspend()
+    }
+
+    private func resumeReading(_ session: Session) {
+        guard session.readPaused else { return }
+        session.readPaused = false
+        session.readSource?.resume()
     }
 
     /// The tty-input twin of flushOutbound: drain what the tty will take,
@@ -620,6 +699,9 @@ final class Server: @unchecked Sendable {
                 code = 128 + (status & 0x7F)  // signal deaths, shell-style
             }
             session.exitCode = code
+            // A paused reader must wake to see its EOF — and a suspended
+            // source could never be cancelled at removal anyway.
+            resumeReading(session)
             // A child that never spoke still holds our slave hostage — its
             // reap is the other proof, and the master needs the close to EOF.
             if session.slaveFD >= 0 {
@@ -686,7 +768,9 @@ final class Server: @unchecked Sendable {
     private func remove(_ session: Session) {
         // The read source's cancel handler owns the master fd close, on
         // every path — drained sources already ran it, live ones run it now.
-        // The input source goes first: it shares that fd.
+        // The input source goes first: it shares that fd. A suspended source
+        // must be resumed before cancel — dispatch's rule, not a preference.
+        resumeReading(session)
         session.inputSource?.cancel()
         session.inputSource = nil
         session.readSource?.cancel()

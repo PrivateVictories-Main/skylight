@@ -91,6 +91,43 @@ final class DaemonE2ETests: XCTestCase {
         daemonProcess = nil
     }
 
+    func testMegabyteReplayKeepsTheTailNotTheHead() throws {
+        let id = UUID()
+        var conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .hello))
+        _ = try conn.expect(.helloReply)
+        // ~1.7 MB of numbered lines through the pty: the 1 MiB ring must
+        // keep the END of the stream — and the buffered non-blocking client
+        // lane must survive the flood without dropping a frame mid-stream.
+        let spawn = SpawnRequest(id: id,
+                                 argv: ["/bin/sh", "-c", "seq 1 200000; echo RING_DONE; exec cat"])
+        try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(spawn)))
+        try conn.sendResize(id)
+        _ = try conn.collectOutput(for: id, until: "RING_DONE", timeout: 30)
+
+        conn.close()
+        usleep(200_000)
+        conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .attach, payload: WirePayload.uuidData(id)))
+        let replay = try conn.collectOutput(for: id, until: "RING_DONE", timeout: 10)
+        // Byte-level checks: pty output is CRLF, and "\r\n" is a SINGLE
+        // grapheme to Swift's String.contains — a character-level search for
+        // "\n199999" can never match it. utf8 has no such opinions.
+        let bytes = Array(replay.utf8)
+        XCTAssertNotNil(bytes.firstRange(of: Array("\n199999".utf8)),
+                        "tail lines missing from replay")
+        XCTAssertNil(bytes.prefix(8).firstRange(of: Array("1\r\n2\r\n".utf8)),
+                     "ring kept the head, not the tail")
+        XCTAssertLessThanOrEqual(replay.utf8.count, (1 << 20) + 64 * 1024,
+                                 "replay exceeded the ring bound")
+
+        try conn.send(WireFrame(type: .kill, payload: WirePayload.uuidData(id)))
+        _ = try? conn.expect(.exited)
+        conn.close()
+        daemonProcess?.terminate()
+        daemonProcess = nil
+    }
+
     func testCrashedDaemonsOrphansAreSweptByTheSuccessor() throws {
         let id = UUID()
         var conn = try Conn(path: socketPath)
@@ -253,18 +290,25 @@ final class DaemonE2ETests: XCTestCase {
         }
 
         /// Accumulate OUTPUT payloads for `id` until the text shows up.
+        /// Byte-level, tail-window search: a naive contains() over a growing
+        /// megabyte String per frame is O(n²) grapheme work — it once made
+        /// this harness time out on a stream the daemon delivered in 0.4s.
         mutating func collectOutput(for id: UUID, until marker: String,
                                     timeout: TimeInterval = 5) throws -> String {
-            var text = ""
+            let markerBytes = Data(marker.utf8)
+            var collected = Data()
+            var found = false
             let deadline = Date().addingTimeInterval(timeout)
-            while Date() < deadline, !text.contains(marker) {
+            while Date() < deadline, !found {
                 let frame = try next(timeout: deadline.timeIntervalSinceNow)
                 guard frame.type == .output,
                       let (frameID, bytes) = WirePayload.parseIDPrefixed(frame.payload),
                       frameID == id else { continue }
-                text += String(decoding: bytes, as: UTF8.self)
+                collected.append(bytes)
+                let window = collected.suffix(bytes.count + markerBytes.count)
+                found = window.range(of: markerBytes) != nil
             }
-            return text
+            return String(decoding: collected, as: UTF8.self)
         }
 
         func close() { Darwin.close(fd) }

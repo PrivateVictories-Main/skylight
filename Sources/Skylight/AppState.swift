@@ -941,21 +941,18 @@ final class LiveSessionStore {
 
     /// What the daemon runs for an instance: a real argv, no quoting layer —
     /// the word-splitting concern of the exec lane's command string does not
-    /// exist here. Missing harness/shell fall back exactly like the exec
-    /// lane (the recorded LaunchOutcome already carries the banner's truth).
+    /// exist here. The fallback chain itself is pure and unit-tested
+    /// (SkylightCore.Launch); this wires in the live filesystem and the
+    /// trust-gated autonomy arguments.
     private func daemonArgv(for instance: TerminalInstance) -> [String] {
-        if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
-            return [binary] + autonomousArguments(for: instance.spec, harness: harness)
-        }
-        if let shell = instance.spec.shellPath,
-           FileManager.default.isExecutableFile(atPath: shell) {
-            return [shell, "-l"]
-        }
-        let login = Catalog.loginShell(environment: ProcessInfo.processInfo.environment)
-        let fallback = login.flatMap {
-            FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil
-        } ?? "/bin/zsh"
-        return [fallback, "-l"]
+        let harness = instance.spec.harness
+        let binary = harness.flatMap { cachedResolveHarness($0) }
+        return Launch.argv(
+            shellPath: instance.spec.shellPath,
+            harnessBinary: binary,
+            harnessArguments: harness.map { autonomousArguments(for: instance.spec, harness: $0) } ?? [],
+            isExecutable: { FileManager.default.isExecutableFile(atPath: $0) },
+            loginShell: Catalog.loginShell(environment: ProcessInfo.processInfo.environment))
     }
 
     /// The spec's arguments, with the harness's verified autonomy flag in

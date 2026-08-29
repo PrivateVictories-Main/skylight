@@ -70,6 +70,9 @@ process — same pid, unbroken step count — still going when the app returns.*
 - No background cost worth naming — measured, not hoped: with live
   terminals on screen the app idles around 0.2% CPU; the session daemon
   holds steady at 0.0% CPU and ~5 MB. Hidden surfaces render nothing.
+  The keeper adds ~170µs to a keystroke's round trip (a 120Hz frame is
+  8,333µs), applies real tty backpressure to slow consumers, and samples
+  a detached session's output flood in pulses instead of pegging a core.
 - One terminal engine: Ghostty, embedded via GhosttyKit. kitty and iTerm are
   apps, not libraries — Skylight won't pretend to embed them.
 - No tabs. Sessions survive app relaunch, not reboot (launchd persistence
@@ -124,6 +127,11 @@ want a given agent to stop asking, the New sheet's **Full autonomy** toggle
 with. It is off until you turn it on, per agent.
 
 ## Architecture
+
+```
+Skylight.app ── unix socket ──▶ skylightd ── pty ──▶ zsh · agents
+ (a renderer)                 (owns the sessions)
+```
 
 Two targets, tests on the pure part:
 
