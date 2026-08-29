@@ -75,6 +75,9 @@ then walk top to bottom. Every line should feel instant.
       cursor `--force`.
 - [ ] Idle CPU ≈ 0% in Activity Monitor with 3 idle terminals after a
       minute; drag a tile in circles — smooth the whole way on the 45".
+- [ ] Hidden surfaces idle: put `top` tiles on a canvas, select a different
+      terminal — CPU drops (hidden surfaces stop rendering); switching back
+      shows the canvas instantly with current content, no stale frames.
 - [ ] Mouse-wheel pan: free-spin the MX wheel over a canvas — smooth, no
       hitching (commits now settle trailing, not per notch).
 - [ ] `SKYLIGHT_APPEARANCE=dark` and `=light` both look clean.

@@ -6,6 +6,15 @@ A macOS-native terminal canvas. Terminal instances live in a left sidebar;
 drag one and the window becomes an endless canvas where terminals are live,
 draggable, resizable tiles. Swift + SwiftUI, with real Ghostty terminals.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/media/hero-dark.png">
+  <img alt="Skylight — live Ghostty terminals as draggable tiles on an endless canvas"
+       src="docs/media/hero-light.png">
+</picture>
+
+*Real sessions, not mockups: the tiles above are live zsh surfaces — one ran
+this repo's test suite, one its git log.*
+
 ## What it does
 
 - **Real terminals** — GhosttyKit surfaces running your actual shell (zsh,
