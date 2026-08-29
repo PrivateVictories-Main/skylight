@@ -84,6 +84,12 @@ struct SkylightApp: App {
                 }
             }
         }
+        // ⌘, — the look is interchangeable (light/dark, glass/flat) from one
+        // small pane. No terminal ever renders here, so the single-window
+        // constraint above is untouched.
+        Settings {
+            SettingsView()
+        }
     }
 }
 
@@ -99,10 +105,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.activate(ignoringOtherApps: true)
         }
         // Debug hook: force an appearance without touching system settings.
+        // Otherwise the stored Settings choice applies (or clears to system).
         switch ProcessInfo.processInfo.environment["SKYLIGHT_APPEARANCE"] {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
-        default: break
+        default:
+            Appearance.apply(UserDefaults.standard.string(forKey: Appearance.appearanceKey))
         }
         // Debug hook, like the appearance override: lets screenshot
         // automation exercise the sheet without synthesizing clicks.

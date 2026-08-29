@@ -19,6 +19,8 @@ extension EnvironmentValues {
 struct ContentView: View {
     @EnvironmentObject private var state: AppState
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
+    @AppStorage(Appearance.backgroundKey) private var windowBackground = "glass"
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -29,7 +31,15 @@ struct ContentView: View {
         }
         .environment(\.sidebarCollapsed, columnVisibility == .detailOnly)
         .frame(minWidth: 1080, minHeight: 700)
-        .background(WindowBlur().ignoresSafeArea())
+        .background(WindowBlur(glass: windowBackground == "glass").ignoresSafeArea())
+        // Debug hook, screenshot lane: ⌘, is a click automation can't send,
+        // and the supported route to the Settings scene is this environment
+        // action — which only exists inside a scene's view tree.
+        .onAppear {
+            if ProcessInfo.processInfo.environment["SKYLIGHT_OPEN_SETTINGS"] != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { openSettings() }
+            }
+        }
         // Owned by the split view, not the sidebar: a collapsed sidebar must
         // never strand ⌘T with nowhere to present.
         .sheet(isPresented: $state.newSheetShown) {
@@ -877,26 +887,46 @@ final class TerminalHostContainer: NSView {
 }
 
 /// The whole window carries a soft blur so the app reads as one piece of
-/// glass — sidebar, canvas, and terminals all sit on it.
+/// glass — sidebar, canvas, and terminals all sit on it. Or none of it does:
+/// the Settings choice flips the window between glass and a standard solid
+/// background, live, because the choice is the WINDOW's — flipping opacity
+/// here also turns the sidebar's own material flat, which no overlay painted
+/// on top of the blur could ever do.
 struct WindowBlur: NSViewRepresentable {
+    var glass = true
+
     func makeNSView(context: Context) -> NSVisualEffectView {
         let view = TransparentWindowEffectView()
         view.material = .underWindowBackground
         view.blendingMode = .behindWindow
         view.state = .active
+        view.glass = glass
         return view
     }
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {
+        (nsView as? TransparentWindowEffectView)?.glass = glass
+    }
 }
 
 /// A behind-window blur only samples the desktop once the hosting window
-/// stops painting an opaque backing behind it.
+/// stops painting an opaque backing behind it — and stops sampling the
+/// moment that backing returns.
 private final class TransparentWindowEffectView: NSVisualEffectView {
+    var glass = true {
+        didSet { if glass != oldValue { applyBackground() } }
+    }
+
+    private func applyBackground() {
+        guard let window else { return }
+        window.isOpaque = !glass
+        window.backgroundColor = glass ? .clear : .windowBackgroundColor
+        isHidden = !glass
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        window?.isOpaque = false
-        window?.backgroundColor = .clear
+        applyBackground()
         // The window moves like any macOS window — titlebar band, plus the
         // explicit handles (sidebar bottom bar, collapsed-sidebar top strip).
         // Tile drags are protected surgically instead: CanvasView flips
