@@ -17,6 +17,9 @@ final class Server: @unchecked Sendable {
         /// -1 once the master has drained and closed — INPUT/RESIZE frames
         /// arriving after that must never touch a recycled fd number.
         var masterFD: Int32
+        /// Our held slave (see SpawnedChild.slaveFD): released on the first
+        /// proof the child owns the tty — first output, or its reap.
+        var slaveFD: Int32 = -1
         var readSource: DispatchSourceRead?
         /// Pending keystrokes for a tty whose input queue is full (child
         /// stopped, or just slow). Bounded: past the cap the NEWEST bytes are
@@ -45,6 +48,10 @@ final class Server: @unchecked Sendable {
 
     private final class Client: @unchecked Sendable {
         let fd: Int32
+        /// True once this connection claimed the APP role via hello. A
+        /// status probe never hellos (it lists), so it can neither trip the
+        /// one-app gate nor bounce a launching app into the exec lane.
+        var isApp = false
         var readSource: DispatchSourceRead?
         var buffer = Data()
         /// Frames waiting for a socket that can't take them right now. A
@@ -69,6 +76,22 @@ final class Server: @unchecked Sendable {
     private var sigchld: DispatchSourceSignal?
     private var sigterm: DispatchSourceSignal?
     private var sessions: [UUID: Session] = [:]
+    /// Spawns waiting for their surface's size: a pty born at a guessed
+    /// 80×24 lets the shell draw its first prompt for the wrong width — a
+    /// wrapped right-prompt before the real size ever arrives. The surface
+    /// reports a grid within a frame of mounting, but the FIRST report can
+    /// still be one layout pass early (padding-balance settles a column
+    /// later), so the birth is debounced briefly and takes the latest size:
+    /// the child is born into the settled grid, never resized into it.
+    private final class PendingSpawn: @unchecked Sendable {
+        let request: SpawnRequest
+        var latest: ResizePayload?
+        /// Bumped per resize; a birth timer only fires for its own
+        /// generation, so every fresh size restarts the quiet period.
+        var generation = 0
+        init(request: SpawnRequest) { self.request = request }
+    }
+    private var pendingSpawns: [UUID: PendingSpawn] = [:]
     private var clients: [ObjectIdentifier: Client] = [:]
     /// A daemon that never gets a client is an orphan from a crashed launch —
     /// it exits rather than lingering; one that served a client exits when
@@ -285,7 +308,8 @@ final class Server: @unchecked Sendable {
             // the same session ids (SPAWN-replace SIGKILLs the first one's
             // children silently); the loser gets busy=true, falls back to
             // the exec lane, and hurts nothing.
-            if frame.type == .hello, clients.count > 1 {
+            if frame.type == .hello,
+               clients.values.contains(where: { $0 !== client && $0.isApp }) {
                 let reply = HelloReply(protocolVersion: Wire.protocolVersion,
                                        daemonPID: getpid(), sessions: [], busy: true)
                 send(WireFrame(type: .helloReply,
@@ -299,13 +323,17 @@ final class Server: @unchecked Sendable {
                 }
                 return
             }
+            if frame.type == .hello { client.isApp = true }
             let reply = HelloReply(
                 protocolVersion: Wire.protocolVersion,
                 daemonPID: getpid(),
                 sessions: sessions.values.map {
                     SessionInfo(id: $0.id, argv: $0.argv,
-                                alive: !$0.exited, exitCode: $0.exitCode)
-                })
+                                alive: !$0.exited, exitCode: $0.exitCode,
+                                startSeconds: $0.startSeconds,
+                                ringBytes: $0.ring.count)
+                },
+                daemonStartSeconds: processStartSeconds(getpid()))
             let payload = (try? JSONEncoder().encode(reply)) ?? Data()
             send(WireFrame(type: frame.type == .hello ? .helloReply : .listReply,
                            payload: payload), to: client)
@@ -348,14 +376,46 @@ final class Server: @unchecked Sendable {
             flushInput(session)
         case .resize:
             guard let resize = WirePayload.parseResize(frame.payload),
-                  let session = sessions[resize.id], !session.exited,
+                  resize.columns > 0, resize.rows > 0 else { return }
+            if let pending = pendingSpawns[resize.id] {
+                // Quiet-period birth: the surface's grid moves through
+                // transitional sizes while layout settles, and a shell born
+                // into one draws its first prompt for a width that is about
+                // to be wrong — worse, zsh can miss the corrective SIGWINCH
+                // during its own startup. Every DIFFERING size restarts the
+                // clock; the child is born only once the grid holds still.
+                let changed = pending.latest.map {
+                    $0.columns != resize.columns || $0.rows != resize.rows
+                } ?? true
+                pending.latest = resize
+                guard changed else { return }
+                pending.generation += 1
+                let generation = pending.generation
+                // Identity- and generation-guarded: a kill-then-respawn
+                // replaces the pending object, and a newer size obsoletes
+                // this timer.
+                queue.asyncAfter(deadline: .now() + 0.2) { [weak self, weak pending] in
+                    guard let self, let pending,
+                          self.pendingSpawns[resize.id] === pending,
+                          pending.generation == generation,
+                          let size = pending.latest else { return }
+                    self.pendingSpawns.removeValue(forKey: resize.id)
+                    self.performSpawn(pending.request,
+                                      columns: size.columns, rows: size.rows,
+                                      widthPixels: size.widthPixels,
+                                      heightPixels: size.heightPixels)
+                }
+                return
+            }
+            guard let session = sessions[resize.id], !session.exited,
                   session.masterFD >= 0 else { return }
             PTY.resize(masterFD: session.masterFD,
                        columns: resize.columns, rows: resize.rows,
                        widthPixels: resize.widthPixels, heightPixels: resize.heightPixels)
         case .kill:
-            guard let id = WirePayload.uuid(from: frame.payload),
-                  let session = sessions[id] else { return }
+            guard let id = WirePayload.uuid(from: frame.payload) else { return }
+            if pendingSpawns.removeValue(forKey: id) != nil { return }
+            guard let session = sessions[id] else { return }
             requestKill(session)
         case .helloReply, .output, .exited, .listReply:
             break   // daemon→client types arriving here are a client bug; ignore
@@ -371,6 +431,7 @@ final class Server: @unchecked Sendable {
             if !existing.exited { kill(existing.pid, SIGKILL) }
             remove(existing)
         }
+        pendingSpawns.removeValue(forKey: request.id)
         // Client-controlled data crashes nothing: an unrunnable request is an
         // instant honest exit, exactly like a binary that fails to exec.
         guard !request.argv.isEmpty else {
@@ -379,6 +440,29 @@ final class Server: @unchecked Sendable {
                  to: client)
             return
         }
+        // Enqueue, don't exec: the child waits for its surface's settled
+        // size (see pendingSpawns). A fallback covers a client that never
+        // resizes at all.
+        let pending = PendingSpawn(request: request)
+        pendingSpawns[request.id] = pending
+        client.attached.insert(request.id)
+        queue.asyncAfter(deadline: .now() + 2) { [weak self, weak pending] in
+            guard let self, let pending,
+                  self.pendingSpawns[request.id] === pending else { return }
+            self.pendingSpawns.removeValue(forKey: request.id)
+            let size = pending.latest
+            self.log("grid never settled for \(request.id); spawning at "
+                + "\(size?.columns ?? 80)x\(size?.rows ?? 24)")
+            self.performSpawn(pending.request,
+                              columns: size?.columns ?? 80, rows: size?.rows ?? 24,
+                              widthPixels: size?.widthPixels ?? 0,
+                              heightPixels: size?.heightPixels ?? 0)
+        }
+    }
+
+    private func performSpawn(_ request: SpawnRequest,
+                              columns: UInt16, rows: UInt16,
+                              widthPixels: UInt16, heightPixels: UInt16) {
         // A working directory deleted while the app was closed is the common
         // spawn killer — the shell still deserves to exist. Home instead.
         var cwd = request.cwd
@@ -388,7 +472,10 @@ final class Server: @unchecked Sendable {
         }
         do {
             let child = try PTY.spawn(argv: request.argv, cwd: cwd,
-                                      extraEnv: request.env)
+                                      extraEnv: request.env,
+                                      columns: max(2, columns), rows: max(2, rows),
+                                      widthPixels: widthPixels,
+                                      heightPixels: heightPixels)
             // Non-blocking master, both directions: a full tty input queue
             // (stopped child) or a torrent of output must never block the
             // one queue every session lives on.
@@ -396,9 +483,9 @@ final class Server: @unchecked Sendable {
                       fcntl(child.masterFD, F_GETFL) | O_NONBLOCK)
             let session = Session(id: request.id, argv: request.argv,
                                   pid: child.pid, masterFD: child.masterFD)
+            session.slaveFD = child.slaveFD
             session.startSeconds = processStartSeconds(child.pid) ?? 0
             sessions[request.id] = session
-            client.attached.insert(request.id)
             persistLedger()
             let source = DispatchSource.makeReadSource(fileDescriptor: child.masterFD,
                                                        queue: queue)
@@ -409,14 +496,16 @@ final class Server: @unchecked Sendable {
             source.setCancelHandler { [masterFD = child.masterFD] in close(masterFD) }
             source.resume()
             session.readSource = source
-            log("spawned \(request.argv[0]) pid=\(child.pid) id=\(request.id)")
+            log("spawned \(request.argv[0]) pid=\(child.pid) id=\(request.id) grid=\(columns)x\(rows)")
         } catch {
             log("spawn failed for \(request.argv): \(error)")
-            // The child never existed: report it as an instant exit so the
-            // client's surface shows an honest end instead of hanging empty.
-            send(WireFrame(type: .exited,
-                           payload: WirePayload.encodeExited(request.id, code: 127)),
-                 to: client)
+            // The child never existed: report an instant exit so the
+            // surface shows an honest end instead of hanging empty. To every
+            // attached client — the requester attached at enqueue time.
+            let payload = WirePayload.encodeExited(request.id, code: 127)
+            for client in clients.values where client.attached.contains(request.id) {
+                send(WireFrame(type: .exited, payload: payload), to: client)
+            }
         }
     }
 
@@ -424,6 +513,12 @@ final class Server: @unchecked Sendable {
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         let n = read(session.masterFD, &chunk, chunk.count)
         if n > 0 {
+            // Output proves the child owns the tty: our winsize-preserving
+            // slave can go, and child-exit EOF detection takes over.
+            if session.slaveFD >= 0 {
+                close(session.slaveFD)
+                session.slaveFD = -1
+            }
             let data = Data(chunk[0..<n])
             session.ring.append(data)
             let payload = WirePayload.idPrefixed(session.id, data)
@@ -497,6 +592,12 @@ final class Server: @unchecked Sendable {
                 code = 128 + (status & 0x7F)  // signal deaths, shell-style
             }
             session.exitCode = code
+            // A child that never spoke still holds our slave hostage — its
+            // reap is the other proof, and the master needs the close to EOF.
+            if session.slaveFD >= 0 {
+                close(session.slaveFD)
+                session.slaveFD = -1
+            }
             session.killEscalation?.cancel()
             session.killEscalation = nil
             if session.killRequested, !session.drained {
@@ -563,6 +664,10 @@ final class Server: @unchecked Sendable {
         session.readSource?.cancel()
         session.readSource = nil
         session.masterFD = -1
+        if session.slaveFD >= 0 {
+            close(session.slaveFD)
+            session.slaveFD = -1
+        }
         session.killEscalation?.cancel()
         session.killEscalation = nil
         sessions.removeValue(forKey: session.id)
@@ -595,8 +700,15 @@ final class Server: @unchecked Sendable {
         }
     }
 
+    private let logStamp: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
+        return formatter
+    }()
+
     private func log(_ message: String) {
-        FileHandle.standardError.write(Data("[skylightd] \(message)\n".utf8))
+        let stamp = logStamp.string(from: Date())
+        FileHandle.standardError.write(Data("\(stamp) [skylightd] \(message)\n".utf8))
     }
 
     /// Environmental failures end the daemon with a logged reason and a

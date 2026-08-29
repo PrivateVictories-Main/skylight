@@ -757,7 +757,7 @@ struct TileView: View {
         }
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+        .overlay(alignment: .top) { SurfaceBanners(instance: instance) }
         .overlay(
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(
@@ -903,7 +903,7 @@ struct TileView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.pressable(scale: 0.8))
-            .help("Return to a full-window terminal")
+            .help("Remove from canvas — back to a full-window terminal")
             .accessibilityLabel("Remove \(instance.name) from canvas")
         }
         .padding(.horizontal, 10)
@@ -970,6 +970,7 @@ struct TileView: View {
             .overlay(Circle().strokeBorder(Color.primary.opacity(0.1)))
             .padding(5)
             .contentShape(Rectangle())
+            .help("Drag to resize")
             .gesture(
                 // Same 1pt threshold as the ring: two grab affordances that
                 // start at different distances feel like two different tools.

@@ -7,14 +7,6 @@ import Foundation
 
 signal(SIGPIPE, SIG_IGN)
 
-// Detach from whatever launched us: our lifetime must not be the app's.
-// setsid fails harmlessly if we already lead a session.
-_ = setsid()
-_ = chdir("/")
-// Everything this process creates — socket, lock, log — is user-only from
-// birth; the later chmod is belt-and-braces, not the mechanism.
-umask(0o077)
-
 let supportDir = FileManager.default
     .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     .appendingPathComponent("Skylight", isDirectory: true)
@@ -23,6 +15,20 @@ try? FileManager.default.createDirectory(at: supportDir,
 
 let socketPath = ProcessInfo.processInfo.environment["SKYLIGHTD_SOCKET"]
     ?? supportDir.appendingPathComponent("daemon.sock").path
+
+// `skylightd status` — introspection in the caller's terminal, then out.
+// Before any daemonizing: status must keep stdout and never detach.
+if CommandLine.arguments.dropFirst().first == "status" {
+    Status.run(socketPath: socketPath)
+}
+
+// Detach from whatever launched us: our lifetime must not be the app's.
+// setsid fails harmlessly if we already lead a session.
+_ = setsid()
+_ = chdir("/")
+// Everything this process creates — socket, lock, log — is user-only from
+// birth; the later chmod is belt-and-braces, not the mechanism.
+umask(0o077)
 
 // stdio → log file (stdin → /dev/null). Truncate a log that outgrew 1 MiB —
 // it is a diagnostic, not a record.

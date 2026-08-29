@@ -56,6 +56,7 @@ final class DaemonE2ETests: XCTestCase {
                                  argv: ["/bin/sh", "-c", "echo SKYLIGHT_E2E_MARKER; exec cat"])
         try conn.send(WireFrame(type: .spawn,
                                 payload: JSONEncoder().encode(spawn)))
+        try conn.sendResize(id)
         let banner = try conn.collectOutput(for: id, until: "SKYLIGHT_E2E_MARKER")
         XCTAssertTrue(banner.contains("SKYLIGHT_E2E_MARKER"))
 
@@ -102,6 +103,7 @@ final class DaemonE2ETests: XCTestCase {
         let spawn = SpawnRequest(id: id,
                                  argv: ["/bin/sh", "-c", #"trap "" HUP; echo up; exec sleep 1000"#])
         try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(spawn)))
+        try conn.sendResize(id)
         _ = try conn.collectOutput(for: id, until: "up")
         // Find the child via the ledger the daemon just wrote.
         let ledgerData = try Data(contentsOf: URL(fileURLWithPath: socketPath + ".ledger"))
@@ -145,6 +147,7 @@ final class DaemonE2ETests: XCTestCase {
         // Nonexistent binary: same honest ending.
         let missing = SpawnRequest(id: UUID(), argv: ["/no/such/binary"])
         try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(missing)))
+        try conn.sendResize(missing.id)
         XCTAssertEqual(WirePayload.parseExited(try conn.expect(.exited).payload)?.code, 127)
 
         // A deleted cwd falls back to home instead of failing the spawn.
@@ -152,6 +155,7 @@ final class DaemonE2ETests: XCTestCase {
                                     argv: ["/bin/sh", "-c", "pwd; exec cat"],
                                     cwd: "/no/such/dir/anywhere")
         try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(homeless)))
+        try conn.sendResize(homeless.id)
         let output = try conn.collectOutput(for: homeless.id,
                                             until: NSHomeDirectory())
         XCTAssertTrue(output.contains(NSHomeDirectory()))
@@ -202,6 +206,13 @@ final class DaemonE2ETests: XCTestCase {
                 usleep(100_000)
             }
             throw NSError(domain: NSPOSIXErrorDomain, code: Int(lastError))
+        }
+
+        /// The daemon defers exec until the surface's first resize — the
+        /// birth certificate. Tests play the client's part.
+        func sendResize(_ id: UUID, columns: UInt16 = 80, rows: UInt16 = 24) throws {
+            try send(WireFrame(type: .resize, payload: WirePayload.encodeResize(
+                ResizePayload(id: id, columns: columns, rows: rows))))
         }
 
         func send(_ frame: WireFrame) throws {

@@ -34,12 +34,12 @@ final class DaemonClient: @unchecked Sendable {
     /// The daemon is gone (crash, protocol error). Carries every id this
     /// client was routing, so the store can stop lying about them.
     var onConnectionLost: (@MainActor ([UUID]) -> Void)?
-    /// Dead-inherited attaches whose EXITED must wait for the surface: a
-    /// finish delivered before the surface mounts is dropped by the library,
-    /// and the in-surface ended state would never render. The first resize
-    /// proves the surface exists; the code waits in pendingExitCodes.
-    private var deferExitUntilResize: Set<UUID> = []
-    private var pendingExitCodes: [UUID: Int32] = [:]
+    // Deliberately ABSENT: `session.finish(exitCode:)` is never called. The
+    // library's in-surface ending renders ghostty's app-model UI ("failed to
+    // launch…", "Press any key to close the window") — two lies in this
+    // app's model. The honesty layer is the sidebar's "Session ended" +
+    // Restart; the surface simply holds its last output, which is the
+    // bare-bones truth.
 
     private init(fd: Int32, inherited: [SessionInfo], leftover: Data) {
         self.fd = fd
@@ -189,14 +189,14 @@ final class DaemonClient: @unchecked Sendable {
 
     /// Reattach to a session the daemon already holds. Replay arrives as
     /// ordinary output; a live one gets the repaint jiggle on its first
-    /// resize; a dead one gets its finish deferred to the first resize —
-    /// delivered before the surface mounts, the library drops it and the
-    /// in-surface ended state would never render.
+    /// resize.
     func attach(_ id: UUID, session: InMemoryTerminalSession, live: Bool) {
         register(session, for: id)
-        lock.lock()
-        if live { jigglePending.insert(id) } else { deferExitUntilResize.insert(id) }
-        lock.unlock()
+        if live {
+            lock.lock()
+            jigglePending.insert(id)
+            lock.unlock()
+        }
         // A clean slate before the replay: without it, replayed absolute
         // cursor moves land on whatever the fresh grid holds and the first
         // frame reads as debris. Queued on the session before the attach
@@ -210,10 +210,13 @@ final class DaemonClient: @unchecked Sendable {
     }
 
     func resize(_ payload: ResizePayload) {
+        // A surface reports a zeroed grid while detaching or hidden. Forwarded,
+        // that reshaped the pty to 0×0 — and every shell falls back to 80×24,
+        // drawing prompts for a width the renderer doesn't have. A zero-size
+        // terminal is never a real request; it dies here.
+        guard payload.columns > 0, payload.rows > 0 else { return }
         lock.lock()
         let jiggle = jigglePending.remove(payload.id) != nil
-        let deliverExit = pendingExitCodes.removeValue(forKey: payload.id)
-        let session = routes[payload.id]
         lock.unlock()
         if jiggle, payload.rows > 1 {
             var smaller = payload
@@ -221,20 +224,12 @@ final class DaemonClient: @unchecked Sendable {
             enqueue(WireFrame(type: .resize, payload: WirePayload.encodeResize(smaller)))
         }
         enqueue(WireFrame(type: .resize, payload: WirePayload.encodeResize(payload)))
-        // The resize came from the surface — it exists now; a deferred
-        // dead-inherited finish can finally land where it will render.
-        if let deliverExit {
-            session?.finish(exitCode: UInt32(bitPattern: deliverExit),
-                            runtimeMilliseconds: 0)
-        }
     }
 
     func kill(_ id: UUID) {
         lock.lock()
         routes.removeValue(forKey: id)
         jigglePending.remove(id)
-        deferExitUntilResize.remove(id)
-        pendingExitCodes.removeValue(forKey: id)
         lock.unlock()
         // Killed means gone from the daemon too: a later terminal(for:) under
         // this id must SPAWN, never re-attach to the corpse this removed.
@@ -290,20 +285,9 @@ final class DaemonClient: @unchecked Sendable {
             case .exited:
                 guard let (id, code) = WirePayload.parseExited(frame.payload) else { continue }
                 lock.lock()
-                let deferred = deferExitUntilResize.remove(id) != nil
-                let session: InMemoryTerminalSession?
-                if deferred {
-                    session = routes[id]   // route survives for the deferred finish
-                    if session != nil { pendingExitCodes[id] = code }
-                } else {
-                    session = routes.removeValue(forKey: id)
-                }
+                let session = routes.removeValue(forKey: id)
                 lock.unlock()
-                guard let session else { continue }   // ghost echo for a deleted id
-                if !deferred {
-                    session.finish(exitCode: UInt32(bitPattern: code),
-                                   runtimeMilliseconds: 0)
-                }
+                guard session != nil else { continue }   // ghost echo for a deleted id
                 if let onExited {
                     Task { @MainActor in onExited(id, code) }
                 }
@@ -327,8 +311,6 @@ final class DaemonClient: @unchecked Sendable {
         let ids = Array(routes.keys)
         routes.removeAll()
         jigglePending.removeAll()
-        deferExitUntilResize.removeAll()
-        pendingExitCodes.removeAll()
         lock.unlock()
         if let onConnectionLost {
             Task { @MainActor in onConnectionLost(ids) }

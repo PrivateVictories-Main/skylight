@@ -16,6 +16,7 @@ struct SkylightApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
+            // File: the three ways something new comes to exist.
             CommandGroup(after: .newItem) {
                 Button("New Terminal…") { state.newSheetShown = true }
                     .keyboardShortcut("t", modifiers: [.command])
@@ -24,6 +25,9 @@ struct SkylightApp: App {
                 Divider()
                 Button("New Canvas") { state.selection = .canvas(state.newCanvas().id) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+            // View: where a Mac hand reaches for zoom and navigation.
+            CommandGroup(after: .sidebar) {
                 Divider()
                 Button("Back to Canvas") { state.endFocus() }
                     .keyboardShortcut(".", modifiers: [.command])
@@ -31,7 +35,12 @@ struct SkylightApp: App {
                 Divider()
                 // Zoom is a property of the VISIBLE canvas — with no canvas
                 // shown, or one covered by focus mode, these would be silent
-                // no-ops rather than commands.
+                // no-ops rather than commands. ⌘0 = Actual Size, the
+                // platform's muscle memory (Safari, Preview) — and 100% is
+                // this canvas's magic number.
+                Button("Actual Size") { state.requestZoom(.actual) }
+                    .keyboardShortcut("0", modifiers: [.command])
+                    .disabled(!state.canvasZoomAvailable)
                 Button("Zoom In") { state.requestZoom(.zoomIn) }
                     .keyboardShortcut("+", modifiers: [.command])
                     .disabled(!state.canvasZoomAvailable)
@@ -39,10 +48,7 @@ struct SkylightApp: App {
                     .keyboardShortcut("-", modifiers: [.command])
                     .disabled(!state.canvasZoomAvailable)
                 Button("Zoom to Fit") { state.requestZoom(.fit) }
-                    .keyboardShortcut("0", modifiers: [.command])
-                    .disabled(!state.canvasZoomAvailable)
-                Button("Actual Size") { state.requestZoom(.actual) }
-                    .keyboardShortcut("1", modifiers: [.command])
+                    .keyboardShortcut("9", modifiers: [.command])
                     .disabled(!state.canvasZoomAvailable)
                 Divider()
                 // Arrange needs everything zoom needs AND at least two tiles
@@ -52,7 +58,9 @@ struct SkylightApp: App {
                 Button("Arrange Canvas") { state.requestArrange() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
                     .disabled(!state.canArrange)
-                Divider()
+            }
+            // App menu: FDA is an app-level grant, not a document action.
+            CommandGroup(after: .appSettings) {
                 // Granted once to Skylight, inherited by every terminal and
                 // agent inside it — and, with a stable signing identity, kept
                 // across rebuilds. See scripts/setup-signing.sh.
@@ -65,6 +73,14 @@ struct SkylightApp: App {
                     let legacy = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")
                     if let modern, NSWorkspace.shared.open(modern) { return }
                     if let legacy { _ = NSWorkspace.shared.open(legacy) }
+                }
+            }
+            // The README is the manual; the stock item opened an error dialog.
+            CommandGroup(replacing: .help) {
+                Button("Skylight Help") {
+                    if let url = URL(string: "https://github.com/PrivateVictories-Main/skylight#readme") {
+                        NSWorkspace.shared.open(url)
+                    }
                 }
             }
         }

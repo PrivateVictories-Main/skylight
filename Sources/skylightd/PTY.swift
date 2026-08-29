@@ -10,6 +10,13 @@ enum PTYError: Error {
 struct SpawnedChild {
     let pid: pid_t
     let masterFD: Int32
+    /// Our own open slave fd. Load-bearing: macOS wipes a pty's winsize when
+    /// its LAST slave closes — close this before the child opens its own and
+    /// the child inherits a 0×0 terminal (every shell then guesses 80×24 and
+    /// draws for a width the renderer doesn't have). The server holds it
+    /// until the child provably has the tty, then closes it so child-exit
+    /// EOF detection works again.
+    let slaveFD: Int32
 }
 
 enum PTY {
@@ -23,20 +30,25 @@ enum PTY {
     /// `POSIX_SPAWN_CLOEXEC_DEFAULT` closes everything else (our master fd,
     /// the socket, the log) in the child, so hygiene is structural.
     static func spawn(argv: [String], cwd: String?,
-                      extraEnv: [String: String]) throws -> SpawnedChild {
+                      extraEnv: [String: String],
+                      columns: UInt16 = 80, rows: UInt16 = 24,
+                      widthPixels: UInt16 = 0, heightPixels: UInt16 = 0) throws -> SpawnedChild {
         // Thrown, never trapped: argv arrives over the socket, and a daemon
         // must not carry a crash primitive in client-controlled data.
         guard !argv.isEmpty else { throw PTYError.spawnFailed(EINVAL) }
         var master: Int32 = -1
         var slave: Int32 = -1
-        var size = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)
+        var size = winsize(ws_row: rows, ws_col: columns,
+                           ws_xpixel: widthPixels, ws_ypixel: heightPixels)
         guard openpty(&master, &slave, nil, nil, &size) == 0 else {
             throw PTYError.openptyFailed(errno)
         }
-        // The child re-opens the slave by path; our copy would only leak.
-        close(slave)
+        // Our slave stays OPEN — see SpawnedChild.slaveFD. The child still
+        // re-opens the slave by path (that is what makes it the controlling
+        // terminal under SETSID).
         guard let slaveNamePtr = ptsname(master) else {
             close(master)
+            close(slave)
             throw PTYError.ptsnameFailed
         }
         let slavePath = String(cString: slaveNamePtr)
@@ -78,9 +90,10 @@ enum PTY {
         }
         guard result == 0 else {
             close(master)
+            close(slave)
             throw PTYError.spawnFailed(result)
         }
-        return SpawnedChild(pid: pid, masterFD: master)
+        return SpawnedChild(pid: pid, masterFD: master, slaveFD: slave)
     }
 
     static func resize(masterFD: Int32, columns: UInt16, rows: UInt16,

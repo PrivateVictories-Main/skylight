@@ -32,11 +32,11 @@ this repo's test suite, one its git log.*
   move.
 - **Zoom with an honest contract** — at exactly 100% every tile is a real,
   typable terminal; at any other zoom the board is an overview, and clicking
-  a tile flies back to it at 100%. Pinch, or ⌘+/−/0/1. (Scaling a live
+  a tile flies back to it at 100%. Pinch, or ⌘+/−/9 (⌘0 = 100%). (Scaling a live
   terminal can't be crisply interactive — so Skylight never pretends it is.)
 - **Tiles that behave like windows** — drag by the header (or ⌘-drag
   anywhere), resize from any edge or corner, Rectangle-style magnet snapping
-  against neighbors, 16pt grid otherwise. ⌘⇧A packs the whole board tidy.
+  against neighbors, 16pt grid otherwise. ⇧⌘A packs the whole board tidy.
   Shrink the window and the arrangement reflows to stay visible.
 - **Focus mode** — expand any tile to the full window; ⌘. puts it back with
   the canvas exactly as it was. (Escape belongs to the terminal — vim and
@@ -54,7 +54,8 @@ this repo's test suite, one its git log.*
 - **Honest session state** — a background terminal that rings its bell gets
   a pulsing sidebar dot (and a Dock badge) until you look; a session whose
   process ended says "Session ended" instead of posing as live, with a
-  one-click restart. Quitting with live sessions asks first.
+  one-click restart. And if the session keeper ever isn't there to catch
+  them, quitting warns before ending live sessions.
 
 ## What it deliberately isn't
 
@@ -76,8 +77,8 @@ this repo's test suite, one its git log.*
 - **⇧⌘T** — new shell terminal, launched instantly
 - **⇧⌘N** — new canvas
 - **⌘.** — back to canvas (leave focus mode)
-- **⌘+ / ⌘− / ⌘0 / ⌘1** — zoom in / out / to fit / to 100% (⌘= works too)
-- **⌘⇧A** — arrange the canvas
+- **⌘0 / ⌘+ / ⌘− / ⌘9** — 100% / zoom in / out / to fit (⌘= works too)
+- **⇧⌘A** — arrange the canvas
 
 ## Build & run
 

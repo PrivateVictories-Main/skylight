@@ -46,6 +46,15 @@ struct ContentView: View {
                 .frame(width: 0, height: 0)
                 .opacity(0)
                 .accessibilityHidden(true)
+            // ⌘N is the platform's most reflexive shortcut; on a
+            // single-window app it would otherwise be dead air. Both it and
+            // ⌘T land on the sheet — the menu keeps advertising ⌘T.
+            Button("New Terminal") { state.newSheetShown = true }
+                .keyboardShortcut("n", modifiers: [.command])
+                .buttonStyle(.plain)
+                .frame(width: 0, height: 0)
+                .opacity(0)
+                .accessibilityHidden(true)
         }
     }
 }
@@ -77,9 +86,12 @@ struct SidebarView: View {
                     InstanceRow(instance: instance, onRename: beginRename)
                 }
                 if state.freeInstances.isEmpty {
-                    Text("⌘T for a new terminal · ⇧⌘T for an instant shell")
+                    // Two deliberate lines — a hint that truncates is a
+                    // rough edge, not a hint.
+                    Text("⌘T new terminal\n⇧⌘T instant shell")
                         .font(.system(size: 11))
                         .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             } header: {
                 // Dropping a canvas-resident row here frees it again. The
@@ -111,11 +123,19 @@ struct SidebarView: View {
                     }
                 }
             }
+            if state.canvases.isEmpty {
+                // The product's whole story, one line, gone the moment a
+                // canvas exists.
+                Text("Drag a terminal here to start a canvas")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom) { bottomBar }
         .navigationTitle("Skylight")
-        .alert("Rename", isPresented: Binding(
+        .alert("Rename “\(renameTargetName)”", isPresented: Binding(
             get: { renameTarget != nil },
             set: { if !$0 { renameTarget = nil } }
         )) {
@@ -128,7 +148,17 @@ struct SidebarView: View {
                 }
                 renameTarget = nil
             }
+            // A cleared field silently no-oped; disabled says so up front.
+            .disabled(renameDraft.trimmingCharacters(in: .whitespaces).isEmpty)
             Button("Cancel", role: .cancel) { renameTarget = nil }
+        }
+    }
+
+    private var renameTargetName: String {
+        switch renameTarget {
+        case let .instance(instance): instance.name
+        case let .canvas(board): board.name
+        case nil: ""
         }
     }
 
@@ -157,6 +187,7 @@ struct SidebarView: View {
                     .frame(maxWidth: .infinity)
                     .frame(height: 30)
                     .contentShape(Rectangle())
+                    .accessibilityLabel("New Terminal")
                     .background(
                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                             .fill(Color.primary.opacity(0.07))
@@ -220,7 +251,7 @@ struct InstanceRow: View {
         } message: {
             // A dead session must not be deleted under a live one's warning.
             Text(state.endedInstances.contains(instance.id)
-                ? "The session already ended."
+                ? "The session has already ended."
                 : "The running session will end.")
         }
     }
@@ -336,6 +367,8 @@ struct CanvasRow: View {
     let onRename: (CanvasBoard) -> Void
     @State private var confirmDelete = false
 
+    private var residentCount: Int { state.residents(of: board).count }
+
     var body: some View {
         HStack(spacing: 6) {
             // Split-init Label so the glyph can hold its own weight and tone:
@@ -353,13 +386,14 @@ struct CanvasRow: View {
             Spacer()
             // How many tiles are parked on this board — the one number you
             // want from a collapsed glance at the sidebar.
-            Text("\(state.residents(of: board).count)")
+            Text("\(residentCount)")
                 .font(.system(size: 10.5, weight: .semibold))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1.5)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
-                .accessibilityLabel("\(state.residents(of: board).count) terminals")
+                .accessibilityLabel(residentCount == 1
+                    ? "1 terminal" : "\(residentCount) terminals")
         }
         .tag(Selection.canvas(board.id))
         .dropDestination(for: String.self) { ids, _ in
@@ -508,9 +542,9 @@ struct EmptyDetail: View {
 
     var body: some View {
         ContentUnavailableView(
-            "No Terminal Selected",
+            "Nothing Selected",
             systemImage: "terminal",
-            description: Text("Pick a terminal or canvas from the sidebar, or press ⌘T.")
+            description: Text("Select a terminal or canvas in the sidebar, or press ⌘T for a new terminal.")
         )
         .toolbarBackground(.hidden, for: .windowToolbar)
         .padding(.top, sidebarCollapsed ? 30 : 0)
@@ -543,7 +577,7 @@ private struct TerminalPanel: ViewModifier {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
             )
-            .overlay(alignment: .top) { MissingHarnessBanner(instance: instance) }
+            .overlay(alignment: .top) { SurfaceBanners(instance: instance) }
             // A sliver of window glass around all four sides so the hairline
             // outline reads, sidebar-row style. Six points, not four: the
             // window's own corner mask must clear our corners or it slices
@@ -642,6 +676,48 @@ struct FocusView: View {
         .background(.bar)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { state.endFocus() }
+    }
+}
+
+/// The surface's two honest-state capsules, one slot: a session whose
+/// process ended outranks a launch-time fallback note — it is the state
+/// with an action attached.
+struct SurfaceBanners: View {
+    @EnvironmentObject private var state: AppState
+    let instance: TerminalInstance
+
+    var body: some View {
+        if state.endedInstances.contains(instance.id) {
+            SessionEndedBanner(instance: instance)
+        } else {
+            MissingHarnessBanner(instance: instance)
+        }
+    }
+}
+
+/// Without this, an ended session's surface would pose: frozen scrollback,
+/// a keyboard that goes nowhere, and the truth hiding in a sidebar caption.
+/// Same capsule as the missing-harness banner — a second tenant of an
+/// existing pattern — plus the one affordance a dead session has.
+struct SessionEndedBanner: View {
+    @EnvironmentObject private var state: AppState
+    let instance: TerminalInstance
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text("Session ended")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+            Button("Restart") { state.restartInstance(instance.id) }
+                .buttonStyle(.pressable(scale: 0.95))
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(.bar))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
+        .padding(.top, 8)
     }
 }
 

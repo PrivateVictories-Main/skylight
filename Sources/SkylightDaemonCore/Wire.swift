@@ -97,12 +97,19 @@ public struct SessionInfo: Codable, Equatable, Sendable {
     public var argv: [String]
     public var alive: Bool
     public var exitCode: Int32?
+    /// Diagnostics (optional on the wire for cross-version decode): the
+    /// child's kernel start time and how much replay the ring holds.
+    public var startSeconds: Int64?
+    public var ringBytes: Int?
 
-    public init(id: UUID, argv: [String], alive: Bool, exitCode: Int32? = nil) {
+    public init(id: UUID, argv: [String], alive: Bool, exitCode: Int32? = nil,
+                startSeconds: Int64? = nil, ringBytes: Int? = nil) {
         self.id = id
         self.argv = argv
         self.alive = alive
         self.exitCode = exitCode
+        self.startSeconds = startSeconds
+        self.ringBytes = ringBytes
     }
 }
 
@@ -115,13 +122,16 @@ public struct HelloReply: Codable, Equatable, Sendable {
     /// first app's surfaces for ptys. Optional so both directions decode
     /// across the version that introduced it.
     public var busy: Bool?
+    /// The daemon's own kernel start time — uptime for diagnostics.
+    public var daemonStartSeconds: Int64?
 
     public init(protocolVersion: Int, daemonPID: Int32, sessions: [SessionInfo],
-                busy: Bool? = nil) {
+                busy: Bool? = nil, daemonStartSeconds: Int64? = nil) {
         self.protocolVersion = protocolVersion
         self.daemonPID = daemonPID
         self.sessions = sessions
         self.busy = busy
+        self.daemonStartSeconds = daemonStartSeconds
     }
 }
 

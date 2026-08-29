@@ -17,6 +17,10 @@ struct NewTerminalSheet: View {
     @State private var shellsExpanded = false
     @State private var savingPreset = false
     @State private var presetName = ""
+    @FocusState private var presetFieldFocused: Bool
+    /// The harness whose install command was just copied — brief visual
+    /// receipt, then back.
+    @State private var copiedHarnessID: String?
     @State private var shells: [Shell] = []
     @State private var installed: [String: String] = [:]   // harness id → binary path
     /// True once install state has been sampled — the one-click rows wait for
@@ -114,6 +118,8 @@ struct NewTerminalSheet: View {
             }
             .buttonStyle(.pressable(scale: 0.85))
             .keyboardShortcut(.cancelAction)
+            .help("Close (esc)")
+            .accessibilityLabel("Close")
         }
     }
 
@@ -263,7 +269,7 @@ struct NewTerminalSheet: View {
 
     private var modeSection: some View {
         HStack {
-            Text("Runs")
+            Text("Mode")
                 .font(.system(size: 11, weight: .semibold))
                 .textCase(.uppercase)
                 .kerning(0.6)
@@ -277,7 +283,7 @@ struct NewTerminalSheet: View {
         .padding(.horizontal, 10)
     }
 
-    /// Eight agent CLIs is taller than the sheet should ever be, so the list
+    /// The agent-CLI list is taller than the sheet should ever be, so it
     /// scrolls inside a fixed window and the sheet stays compact.
     private var harnessSection: some View {
         ScrollView {
@@ -322,9 +328,15 @@ struct NewTerminalSheet: View {
             }
             .buttonStyle(.plain)
             if path == nil {
-                Button("Copy") {
+                // The label is the receipt: silence after a click reads as
+                // "did that work?".
+                Button(copiedHarnessID == harness.id ? "Copied" : "Copy") {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(harness.installCommand, forType: .string)
+                    copiedHarnessID = harness.id
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) {
+                        if copiedHarnessID == harness.id { copiedHarnessID = nil }
+                    }
                 }
                 .buttonStyle(.pressable(scale: 0.94))
                 .font(.system(size: 11, weight: .medium))
@@ -405,6 +417,7 @@ struct NewTerminalSheet: View {
                 }
                 .buttonStyle(.pressable(scale: 0.85))
                 .help("Reset to Home")
+                .accessibilityLabel("Reset to Home")
             }
         }
         .padding(.horizontal, 10)
@@ -417,6 +430,7 @@ struct NewTerminalSheet: View {
                     TextField("Preset name", text: $presetName)
                         .textFieldStyle(.roundedBorder)
                         .font(.system(size: 12))
+                        .focused($presetFieldFocused)
                         // Return in this field saves the preset; it must not
                         // fall through to Create and launch a terminal.
                         .onSubmit { commitPreset() }
@@ -441,6 +455,9 @@ struct NewTerminalSheet: View {
                     withAnimation(Motion.disclose) {
                         savingPreset.toggle()
                     }
+                    // Name-it-and-hit-Return is the whole flow; a field that
+                    // appears unfocused adds the one click it exists to save.
+                    presetFieldFocused = savingPreset
                 }
                 .buttonStyle(.pressable(scale: 0.97))
                 .font(.system(size: 12))
