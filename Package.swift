@@ -14,10 +14,20 @@ let package = Package(
             name: "SkylightCore",
             path: "Sources/SkylightCore"
         ),
+        .target(
+            name: "SkylightDaemonCore",
+            path: "Sources/SkylightDaemonCore"
+        ),
+        .executableTarget(
+            name: "skylightd",
+            dependencies: ["SkylightDaemonCore"],
+            path: "Sources/skylightd"
+        ),
         .executableTarget(
             name: "Skylight",
             dependencies: [
                 "SkylightCore",
+                "SkylightDaemonCore",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
             ],
             path: "Sources/Skylight",
@@ -25,7 +35,7 @@ let package = Package(
         ),
         .testTarget(
             name: "SkylightCoreTests",
-            dependencies: ["SkylightCore"],
+            dependencies: ["SkylightCore", "SkylightDaemonCore"],
             path: "Tests/SkylightCoreTests"
         ),
     ]
