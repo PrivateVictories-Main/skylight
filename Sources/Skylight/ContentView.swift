@@ -21,6 +21,9 @@ struct ContentView: View {
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
     @AppStorage(Appearance.backgroundKey) private var windowBackground = "glass"
     @Environment(\.openSettings) private var openSettings
+    // Reduce Transparency outranks the stored choice, live: flipping it in
+    // System Settings solidifies the window without a relaunch.
+    @State private var reduceTransparency = Appearance.reduceTransparency
 
     var body: some View {
         NavigationSplitView(columnVisibility: $columnVisibility) {
@@ -31,7 +34,12 @@ struct ContentView: View {
         }
         .environment(\.sidebarCollapsed, columnVisibility == .detailOnly)
         .frame(minWidth: 1080, minHeight: 700)
-        .background(WindowBlur(glass: windowBackground == "glass").ignoresSafeArea())
+        .background(WindowBlur(glass: windowBackground == "glass" && !reduceTransparency)
+            .ignoresSafeArea())
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in
+            reduceTransparency = Appearance.reduceTransparency
+        }
         // Debug hook, screenshot lane: ⌘, is a click automation can't send,
         // and the supported route to the Settings scene is this environment
         // action — which only exists inside a scene's view tree.
@@ -577,18 +585,26 @@ private struct TerminalPanel: ViewModifier {
     // dead. Same stored value, both layers, and the glass actually arrives.
     @AppStorage(Appearance.terminalOpacityKey)
     private var terminalOpacity = Appearance.terminalOpacityDefault
+    @State private var reduceTransparency = Appearance.reduceTransparency
     let instance: TerminalInstance
+
+    private var backingOpacity: Double {
+        guard !reduceTransparency else { return 1.0 }
+        return min(max(terminalOpacity, Appearance.terminalOpacityRange.lowerBound),
+                   Appearance.terminalOpacityRange.upperBound)
+    }
 
     func body(content: Content) -> some View {
         content
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
-            .background(Color(nsColor: .textBackgroundColor)
-                            .opacity(min(max(terminalOpacity,
-                                             Appearance.terminalOpacityRange.lowerBound),
-                                         Appearance.terminalOpacityRange.upperBound)),
+            .background(Color(nsColor: .textBackgroundColor).opacity(backingOpacity),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+                for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in
+                reduceTransparency = Appearance.reduceTransparency
+            }
             // Hard clip on top of the layer mask: ghostty's Metal surface is
             // sized in whole cells and overhangs a few pixels on the right —
             // the layer mask misses that sliver, this catches it.

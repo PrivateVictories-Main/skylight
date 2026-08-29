@@ -107,3 +107,7 @@ then walk top to bottom. Every line should feel instant.
       Solid toward Clear — the open terminal follows the thumb live, glass
       arriving through the text area; canvas tiles follow too. Choices all
       survive a relaunch.
+- [ ] Reduce Transparency (System Settings → Accessibility → Display):
+      flip it ON with terminals open — window AND terminal surfaces go
+      solid live; the Settings pane says the system setting is in charge;
+      flip OFF → the stored glass choices return.

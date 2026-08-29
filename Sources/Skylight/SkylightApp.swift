@@ -120,6 +120,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 AppState.shared?.newSheetShown = true
             }
         }
+        // Reduce Transparency reaches INSIDE the terminals too: ghostty's
+        // background-opacity is per-surface config, so the toggle re-applies
+        // it to every live surface (the SwiftUI layers watch on their own).
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification,
+            object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated {
+                AppState.shared?.sessions.refreshSurfaceOpacity()
+            }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

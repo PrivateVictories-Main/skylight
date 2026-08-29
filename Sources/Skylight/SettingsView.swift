@@ -15,12 +15,21 @@ enum Appearance {
     static let terminalOpacityDefault = 0.92
 
     /// The stored terminal translucency, clamped so a hand-edited or stale
-    /// default can never produce an unreadable surface.
+    /// default can never produce an unreadable surface — and forced solid
+    /// while Reduce Transparency is on: the system setting outranks ours,
+    /// exactly as Motion defers to Reduce Motion. Read fresh, like Motion.
     static var terminalOpacity: Double {
+        guard !reduceTransparency else { return 1.0 }
         let stored = UserDefaults.standard.object(forKey: terminalOpacityKey) as? Double
         return min(max(stored ?? terminalOpacityDefault,
                        terminalOpacityRange.lowerBound),
                    terminalOpacityRange.upperBound)
+    }
+
+    /// The accessibility master switch over everything translucent here:
+    /// window glass and terminal alike go solid while it is on.
+    static var reduceTransparency: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
     }
 
     /// Apply a stored appearance choice to the app. "system" clears the
@@ -42,6 +51,7 @@ struct SettingsView: View {
     @AppStorage(Appearance.backgroundKey) private var background = "glass"
     @AppStorage(Appearance.terminalOpacityKey)
     private var terminalOpacity = Appearance.terminalOpacityDefault
+    @State private var reduceTransparency = Appearance.reduceTransparency
 
     var body: some View {
         Form {
@@ -72,6 +82,15 @@ struct SettingsView: View {
             } maximumValueLabel: {
                 Text("Solid").font(.system(size: 11)).foregroundStyle(.secondary)
             }
+            .disabled(reduceTransparency)
+
+            // Controls that silently do nothing are worse than none: while
+            // the system setting overrides these, the pane says so.
+            if reduceTransparency {
+                Text("Reduce Transparency is on in System Settings, so the window and terminals stay solid.")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 380)
@@ -79,6 +98,10 @@ struct SettingsView: View {
         .onChange(of: appearance) { _, raw in Appearance.apply(raw) }
         .onChange(of: terminalOpacity) { _, _ in
             AppState.shared?.sessions.refreshSurfaceOpacity()
+        }
+        .onReceive(NSWorkspace.shared.notificationCenter.publisher(
+            for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in
+            reduceTransparency = Appearance.reduceTransparency
         }
     }
 }
