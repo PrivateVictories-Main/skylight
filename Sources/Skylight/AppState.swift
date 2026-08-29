@@ -40,6 +40,10 @@ final class AppState: ObservableObject {
     @Published var selection: Selection?
     /// Instances whose terminal rang the bell while not being viewed.
     @Published var attention: Set<UUID> = []
+    /// Instances whose process ended (shell exited, agent quit, crash) while
+    /// the surface stayed on screen. The sidebar says so instead of letting a
+    /// dead session pose as a live one.
+    @Published private(set) var endedInstances: Set<UUID> = []
     /// Instance temporarily filling the window (focus mode). Leaving focus
     /// returns to whatever was selected — the canvas is untouched.
     @Published var focusedInstance: UUID?
@@ -86,10 +90,16 @@ final class AppState: ObservableObject {
 
     init() {
         var saved: SavedState?
-        if let data = try? Data(contentsOf: Self.stateURL) {
-            saved = WorkspacePersistence.decode(data)
+        // "Exists but can't be READ" must rescue exactly like "can't be
+        // decoded": either way a workspace is in that file, and the first
+        // persist() would atomically rename right over it — rename needs only
+        // directory access, so an unreadable file offers no protection at all.
+        if FileManager.default.fileExists(atPath: Self.stateURL.path) {
+            if let data = try? Data(contentsOf: Self.stateURL) {
+                saved = WorkspacePersistence.decode(data)
+            }
             if saved == nil {
-                // Unreadable state is kept as .bak, never clobbered.
+                // Kept as .bak, never clobbered.
                 try? FileManager.default.removeItem(at: Self.stateURL.appendingPathExtension("bak"))
                 try? FileManager.default.moveItem(
                     at: Self.stateURL,
@@ -101,7 +111,15 @@ final class AppState: ObservableObject {
             instances = saved.instances
             canvases = saved.canvases
             if let id = saved.selectedInstance, saved.instances.contains(where: { $0.id == id }) {
-                selection = .item(id)
+                // A canvas resident restored as a full-window `.item` is the
+                // one contradictory state the sidebar cannot draw (no row
+                // would be highlighted) — its board is what that selection
+                // honestly means.
+                if let board = Residency.board(of: id, in: saved.canvases) {
+                    selection = .canvas(board)
+                } else {
+                    selection = .item(id)
+                }
             } else if let id = saved.selectedCanvas,
                       saved.canvases.contains(where: { $0.id == id }) {
                 selection = .canvas(id)
@@ -112,14 +130,11 @@ final class AppState: ObservableObject {
             canvases = []
             selection = .item(first.id)
         }
-        presets = (try? Data(contentsOf: Self.presetsURL))
-            .flatMap { try? JSONDecoder().decode([LaunchPreset].self, from: $0) } ?? []
-        usage = (try? Data(contentsOf: Self.usageURL))
-            .flatMap { try? JSONDecoder().decode(UsageLog.self, from: $0) } ?? UsageLog()
+        presets = Self.loadSidecar([LaunchPreset].self, from: Self.presetsURL) ?? []
+        usage = Self.loadSidecar(UsageLog.self, from: Self.usageURL) ?? UsageLog()
         // Unreadable or absent = trusted nothing. A grant this consequential
         // must never be recovered by guessing.
-        trustedHarnesses = (try? Data(contentsOf: Self.trustedURL))
-            .flatMap { try? JSONDecoder().decode(Set<String>.self, from: $0) } ?? []
+        trustedHarnesses = Self.loadSidecar(Set<String>.self, from: Self.trustedURL) ?? []
 
         // Every stored property is initialized before `self` is read.
         if selection == nil { selection = instances.first.map { .item($0.id) } }
@@ -127,6 +142,10 @@ final class AppState: ObservableObject {
         sessions.onBell = { [weak self] id in
             guard let self, !self.isVisible(id) else { return }
             self.attention.insert(id)
+        }
+        // The surface reports its process gone — the sidebar stops pretending.
+        sessions.onSessionEnd = { [weak self] id in
+            self?.endedInstances.insert(id)
         }
         // An agent terminal names itself after the first thing you ask it.
         sessions.onAutoName = { [weak self] id, title in
@@ -200,6 +219,23 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Persistence
+
+    /// Decode a sidecar JSON file, preserving — never clobbering — one that
+    /// exists but cannot be read or decoded: it moves to `.bak` exactly like
+    /// the workspace, because "corrupt file → .bak" is a rule about files,
+    /// not about workspace.json specifically. One truncated write used to
+    /// cost every preset silently. Returns nil for absent or rescued.
+    private static func loadSidecar<T: Decodable>(_ type: T.Type, from url: URL) -> T? {
+        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        if let data = try? Data(contentsOf: url),
+           let value = try? JSONDecoder().decode(T.self, from: data) {
+            return value
+        }
+        let bak = url.appendingPathExtension("bak")
+        try? FileManager.default.removeItem(at: bak)
+        try? FileManager.default.moveItem(at: url, to: bak)
+        return nil
+    }
 
     func persist() {
         var selectedInstance: UUID?
@@ -371,11 +407,39 @@ final class AppState: ObservableObject {
         }
         sessions.discard(id)
         attention.remove(id)
+        endedInstances.remove(id)
         if focusedInstance == id { endFocus() }
         if case let .item(selected)? = selection, selected == id {
-            selection = (freeInstances.first ?? instances.first).map { .item($0.id) }
+            selection = fallbackSelection
         }
         persist()
+    }
+
+    /// Somewhere honest to land after a delete: a free terminal full-window,
+    /// else the board of the first surviving resident — never a resident as
+    /// a full-window `.item`, which is a state the sidebar cannot draw.
+    private var fallbackSelection: Selection? {
+        if let free = freeInstances.first { return .item(free.id) }
+        if let resident = instances.first,
+           let board = Residency.board(of: resident.id, in: canvases) {
+            return .canvas(board)
+        }
+        return nil
+    }
+
+    /// A dead session's one useful affordance: run the same spec again in the
+    /// same instance. The old surface is torn down; the next render lazily
+    /// builds a fresh one, exactly like a first open.
+    func restartInstance(_ id: UUID) {
+        guard endedInstances.contains(id) else { return }
+        sessions.discard(id)
+        endedInstances.remove(id)
+        attention.remove(id)
+    }
+
+    /// What ⌘Q would actually kill: sessions that exist and have not ended.
+    var liveSessionCount: Int {
+        sessions.openSessionIDs.filter { !endedInstances.contains($0) }.count
     }
 
     /// Reorder within the FREE instances (sidebar Terminals section) while
@@ -436,7 +500,7 @@ final class AppState: ObservableObject {
     func deleteCanvas(_ id: UUID) {
         canvases.removeAll { $0.id == id }
         if case let .canvas(selected)? = selection, selected == id {
-            selection = (freeInstances.first ?? instances.first).map { .item($0.id) }
+            selection = fallbackSelection
         }
         persist()
     }
@@ -587,11 +651,20 @@ final class AppState: ObservableObject {
 
     // MARK: - Sidebar drag session
 
-    func beginSidebarDrag(_ itemID: UUID) {
+    /// Identity of the CURRENT drag. A cancelled drag's token deinits at
+    /// AppKit's leisure — possibly during the NEXT drag of the same row —
+    /// and an item-id comparison alone would let that stale token tear the
+    /// live drag down. Returned so the token can check it is still theirs.
+    private(set) var dragSession = UUID()
+
+    @discardableResult
+    func beginSidebarDrag(_ itemID: UUID) -> UUID {
         // The drop overlay reveals the canvas through the base view — focus
         // would cover it, so dragging leaves focus first.
         focusedInstance = nil
         draggingItemID = itemID
+        dragSession = UUID()
+        return dragSession
     }
     func endSidebarDrag() { draggingItemID = nil }
 }
@@ -609,9 +682,30 @@ final class LiveSessionStore {
     private var bellObservers: [UUID: AnyCancellable] = [:]
     private var resolvedHarnesses: [String: String?] = [:]
     private var cachedShells: [Shell]?
+    private var launchOutcomes: [UUID: LaunchOutcome] = [:]
+
+    /// Every instance with a surface right now — what quitting would kill.
+    var openSessionIDs: [UUID] { Array(terminals.keys) }
+
+    /// What a surface ACTUALLY launched with, recorded when its config was
+    /// built. The missing-harness banner reads this, not live install state:
+    /// a CLI installed after the fact must not erase the truth that this
+    /// running surface fell back to a shell — and uninstalling one must not
+    /// hang a false banner on a healthy running agent.
+    struct LaunchOutcome {
+        var missingHarness: String?
+        var missingShell: String?
+    }
+
+    func launchOutcome(for id: UUID) -> LaunchOutcome? { launchOutcomes[id] }
 
     /// Fired when a terminal rings the bell (a CLI is done / needs input).
     var onBell: ((UUID) -> Void)?
+
+    /// Fired when a surface reports its session over — the shell exited, the
+    /// agent quit, the process died. The surface stays (its scrollback is
+    /// still worth reading); the honesty obligation moves to the caller.
+    var onSessionEnd: ((UUID) -> Void)?
 
     /// Fired once per agent terminal, with a name derived from the first
     /// thing its human asked for.
@@ -695,7 +789,17 @@ final class LiveSessionStore {
     /// quotes (minimal shell-style quoting; single words pass through).
     /// Ghostty word-splits the `command` value, so an unquoted "/Applications/
     /// My Tool/bin/agent" silently becomes two arguments and the launch fails.
+    ///
+    /// Control characters do not survive at all: the generated config is
+    /// LINE-based, so a newline smuggled inside a stored argument would end
+    /// the command line early and turn the remainder into an arbitrary config
+    /// directive — the terminal running something other than every field the
+    /// UI shows. Stored specs are hostile data; this is where that rule meets
+    /// the config file.
     nonisolated private static func quoted(_ word: String) -> String {
+        let word = String(String.UnicodeScalarView(word.unicodeScalars.filter {
+            !CharacterSet.newlines.contains($0) && !CharacterSet.controlCharacters.contains($0)
+        }))
         guard word.rangeOfCharacter(from: .whitespaces) != nil || word.contains("\"") else {
             return word
         }
@@ -729,6 +833,17 @@ final class LiveSessionStore {
         window-padding-balance = true
 
         """
+        // Record what this surface ACTUALLY gets — the banner's source of
+        // truth for the life of the session, immune to installs/uninstalls
+        // that happen after the process is already running.
+        var outcome = LaunchOutcome()
+        if let harness = instance.spec.harness, cachedResolveHarness(harness) == nil {
+            outcome.missingHarness = harness
+        }
+        if let shell = instance.spec.shellPath,
+           !FileManager.default.isExecutableFile(atPath: shell) {
+            outcome.missingShell = shell
+        }
         if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
             let command = ([binary] + autonomousArguments(for: instance.spec, harness: harness))
@@ -740,6 +855,7 @@ final class LiveSessionStore {
             // login shell (the default branch); the banner says so (Task 9).
             config += "command = \(Self.quoted(shell))\n"
         }
+        launchOutcomes[instance.id] = outcome
         let state = TerminalViewState(configSource: .generated(config),
                                       terminalConfiguration: .default)
         state.configuration = TerminalSurfaceOptions(
@@ -753,6 +869,10 @@ final class LiveSessionStore {
         bellObservers[id] = state.$bellCount
             .dropFirst()
             .sink { [weak self] _ in self?.onBell?(id) }
+        // The surface's close report is the one honest "this session is over"
+        // signal there is. processAlive is ignored on purpose: alive or not,
+        // the surface is done hosting it.
+        state.onClose = { [weak self] _ in self?.onSessionEnd?(id) }
         // Only agents name themselves, and only while they still answer to
         // the name the launcher gave them.
         if instance.spec.harness != nil, Self.wearsLaunchName(instance) {
@@ -768,6 +888,7 @@ final class LiveSessionStore {
         terminals.removeValue(forKey: id)
         terminalNSViews.removeValue(forKey: id)
         bellObservers.removeValue(forKey: id)
+        launchOutcomes.removeValue(forKey: id)
         cancelTitleCapture(id)
     }
 

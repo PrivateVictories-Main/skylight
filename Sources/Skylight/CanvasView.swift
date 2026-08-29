@@ -56,6 +56,8 @@ struct CanvasView: View {
     /// invisible move grip. Driven by PanView's flags monitor, because SwiftUI
     /// never sees a bare modifier press over an AppKit terminal.
     @State private var commandHeld = false
+    /// A reflow tick that arrived mid-gesture, waiting for the hands to lift.
+    @State private var reflowPending = false
     @StateObject private var reflowCoalescer = ReflowCoalescer()
 
     private var board: CanvasBoard? {
@@ -127,13 +129,27 @@ struct CanvasView: View {
                 }
             }
             .onReceive(reflowCoalescer.output) {
-                if !tileInteracting { applyReflow(in: viewport) }
+                // A tick landing mid-gesture is deferred, not dropped — the
+                // spec's promise is "keep the arrangement visible", and a
+                // shrink that happened during a drag is still a shrink.
+                if tileInteracting { reflowPending = true }
+                else { applyReflow(in: viewport) }
             }
             .onChange(of: state.pendingReveal) { _, _ in revealIfPending(in: viewport) }
             // While a tile is being dragged or resized, the window must not
             // contest the pointer — pause window movement for exactly that long.
             .onChange(of: tileInteracting) { _, interacting in
                 state.hostWindow?.isMovable = !interacting
+                if !interacting, reflowPending {
+                    reflowPending = false
+                    applyReflow(in: viewport)
+                }
+            }
+            // The isMovable latch belongs to the WINDOW, which outlives this
+            // view: unmounting mid-gesture (⇧⌘T during a tile drag swaps the
+            // detail view out from under it) must not leave it stuck off.
+            .onDisappear {
+                state.hostWindow?.isMovable = true
             }
             .onChange(of: board?.tiles.count ?? 0) { old, new in
                 // The board grew: if the arrangement no longer fits, the canvas
@@ -144,8 +160,12 @@ struct CanvasView: View {
             }
             .onChange(of: state.canvasZoomRequest) { _, request in
                 guard let request, request.canvasID == boardID else { return }
-                apply(request.action, in: viewport)
                 state.canvasZoomRequest = nil
+                // A drag owns the tiles: re-zooming under it detaches the
+                // tile from the cursor and commits mixed-scale math. Dropped,
+                // not queued — same rule as arrange.
+                guard !tileInteracting else { return }
+                apply(request.action, in: viewport)
             }
             .onChange(of: state.canvasArrangeRequest) { _, request in
                 // `reflowEnabled` is belt-and-braces, matching the reflow
@@ -230,13 +250,22 @@ struct CanvasView: View {
         return frames.dropFirst().reduce(first) { $0.union($1) }
     }
 
+    /// A menu-zoom step that CROSSES 100% lands exactly ON it: hit-testing
+    /// keys off zoom == 1, and stepping 0.80 → 1.05 stranded the board in a
+    /// looks-interactive-but-isn't state a snap tolerance of 0.02 can't save.
+    private func steppedZoom(by delta: CGFloat) -> CGFloat {
+        let target = zoom + delta
+        if (zoom - 1) * (target - 1) < 0 { return 1 }
+        return CanvasZoom.snapped(target)
+    }
+
     private func apply(_ action: CanvasZoomAction, in viewport: CGSize) {
         withAnimation(Motion.viewport) {
             switch action {
             case .zoomIn:
-                setZoom(CanvasZoom.snapped(zoom + 0.25), around: viewportCenter)
+                setZoom(steppedZoom(by: 0.25), around: viewportCenter)
             case .zoomOut:
-                setZoom(CanvasZoom.snapped(zoom - 0.25), around: viewportCenter)
+                setZoom(steppedZoom(by: -0.25), around: viewportCenter)
             case .actual:
                 setZoom(1, around: viewportCenter)
             case .fit:
@@ -387,13 +416,14 @@ struct CanvasView: View {
     /// the pan travels in and out of content space with it.
     private func applyReflow(in viewport: CGSize) {
         guard let board else { return }
-        // Zoom-out sees more content; zoom-in must never shrink real tiles.
-        // Viewport clamp keeps zoom-in from shrinking tiles; the pan maps
-        // through the REAL zoom so the settled arrangement lands where the
-        // renderer draws it.
-        let scaleClamp = min(1, safeZoom)
-        let contentViewport = CGSize(width: viewport.width / scaleClamp,
-                                     height: viewport.height / scaleClamp)
+        // Reflow is a ≤100% contract. Above it the user has deliberately
+        // magnified one part of the board; shrinking their tiles to satisfy
+        // a window resize would be wrong there — and the old clamped math
+        // validated a phantom double-size viewport instead of doing nothing
+        // honestly. Zoomed in, ghostty still rewraps the focused work.
+        guard safeZoom <= 1 else { return }
+        let contentViewport = CGSize(width: viewport.width / safeZoom,
+                                     height: viewport.height / safeZoom)
         let contentPan = CGPoint(x: pan.x / safeZoom, y: pan.y / safeZoom)
         guard let result = CanvasLayout.reflowed(tiles: board.tiles, pan: contentPan,
                                                  viewport: contentViewport) else { return }
@@ -468,6 +498,10 @@ struct PanSurface: NSViewRepresentable {
         var installsEventMonitors = true
         private var dragOrigin: CGPoint?
         private var dragged = false
+        /// Trailing commit for phaseless (mouse-wheel) pans. Not cancelled in
+        /// deinit on purpose: the work item holds only a weak self, so a
+        /// dead view's tick is a no-op — the MonitorBox dance isn't needed.
+        private var wheelSettle: DispatchWorkItem?
         /// Nonisolated, Sendable storage: a `deinit` runs outside the main
         /// actor's guarantees, and it is the last chance to let the monitor go.
         private final class MonitorBox: @unchecked Sendable {
@@ -558,9 +592,22 @@ struct PanSurface: NSViewRepresentable {
             let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 14
             onPan?(CGSize(width: event.scrollingDeltaX * scale,
                           height: event.scrollingDeltaY * scale))
-            if event.phase == .ended || event.momentumPhase == .ended
-                || (event.phase == [] && event.momentumPhase == []) {
+            if event.phase == .ended || event.momentumPhase == .ended {
+                wheelSettle?.cancel()
+                wheelSettle = nil
                 onPanEnded?()
+            } else if event.phase == [], event.momentumPhase == [] {
+                // Phaseless notches used to commit per event — a whole-app
+                // @Published diff per click of a free-spinning MX wheel.
+                // Settle once, trailing; a dropped work item (view gone)
+                // costs one uncommitted pan, same as a lost momentum end.
+                wheelSettle?.cancel()
+                let work = DispatchWorkItem { [weak self] in
+                    self?.wheelSettle = nil
+                    self?.onPanEnded?()
+                }
+                wheelSettle = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
             }
         }
 
@@ -672,6 +719,11 @@ struct TileView: View {
     /// lives in SkylightCore, where it is testable.
     @State private var edges = CanvasLayout.EdgeDeltas()
     @State private var grabbing = false
+    /// The zoom the CURRENT gesture started under. A menu zoom mid-drag is
+    /// dropped (CanvasView guards it), but a gesture surviving any zoom
+    /// change must keep dividing by the scale its translations were made at,
+    /// or the tile detaches from the cursor and commits somewhere unshown.
+    @State private var gestureZoom: CGFloat = 1
 
     /// AppKit hit-tests by untransformed frames, so a scaled-down terminal
     /// cannot reliably receive a click anyway. Below/above 100% the tile is a
@@ -731,7 +783,9 @@ struct TileView: View {
         // so it is hit-tested first and the edges still resize while ⌘ is held.
         .overlay { if interactive && commandHeld { moveAnywhereTarget } }
         .overlay { if interactive { resizeRing } }
-        .overlay(alignment: .bottomTrailing) { resizeHandle }
+        // Gated like the ring: at overview zoom the badge was still drawn —
+        // dead under allowsHitTesting, a visible affordance that did nothing.
+        .overlay(alignment: .bottomTrailing) { if interactive { resizeHandle } }
         // The tile keeps its 100% LAYOUT size at every zoom: the pty is never
         // resized, the layer transform does the minifying.
         .frame(width: liveFrame.width, height: liveFrame.height)
@@ -838,6 +892,7 @@ struct TileView: View {
             }
             .buttonStyle(.pressable(scale: 0.8))
             .help("Focus — fill the window (⌘. returns)")
+            .accessibilityLabel("Focus \(instance.name)")
             Button {
                 state.removeFromCanvas(instance.id)
             } label: {
@@ -849,6 +904,7 @@ struct TileView: View {
             }
             .buttonStyle(.pressable(scale: 0.8))
             .help("Return to a full-window terminal")
+            .accessibilityLabel("Remove \(instance.name) from canvas")
         }
         .padding(.horizontal, 10)
         .frame(height: 30)
@@ -868,10 +924,10 @@ struct TileView: View {
     /// layer, and an overview drag. Nothing but the offset moves here — any
     /// extra state written per event is a stutter you can see.
     private func moveChanged(_ value: DragGesture.Value) {
-        if !grabbing { grabbing = true }
+        if !grabbing { grabbing = true; gestureZoom = safeZoom }
         if !interacting { interacting = true }
-        dragOffset = CGSize(width: value.translation.width / safeZoom,
-                            height: value.translation.height / safeZoom)
+        dragOffset = CGSize(width: value.translation.width / gestureZoom,
+                            height: value.translation.height / gestureZoom)
     }
 
     /// The one place a move lands, at every zoom: screen translation into
@@ -882,8 +938,8 @@ struct TileView: View {
     private func moveEnded(_ value: DragGesture.Value) {
         var updated = tile
         let proposed = CGRect(
-            x: tile.origin.x + value.translation.width / safeZoom,
-            y: tile.origin.y + value.translation.height / safeZoom,
+            x: tile.origin.x + value.translation.width / gestureZoom,
+            y: tile.origin.y + value.translation.height / gestureZoom,
             width: tile.size.width,
             height: tile.size.height
         )
@@ -917,7 +973,11 @@ struct TileView: View {
             .gesture(
                 // Same 1pt threshold as the ring: two grab affordances that
                 // start at different distances feel like two different tools.
-                DragGesture(minimumDistance: 1)
+                // Global space like every other grip — local space under the
+                // tile's scaleEffect is already zoom-divided, and applyResize
+                // divides again (identical at the only reachable zoom, 1, but
+                // un-gating resize later must not move tiles at 1/zoom²).
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { applyResize(.bottomRight, translation: $0.translation) }
                     .onEnded { _ in commitResize() }
             )
@@ -981,9 +1041,9 @@ struct TileView: View {
     /// per-edge deltas. Nothing else is written per event — a stray state write
     /// here is a stutter you can see.
     private func applyResize(_ edge: ResizeEdge, translation: CGSize) {
-        if !interacting { interacting = true }
-        let dx = translation.width / safeZoom
-        let dy = translation.height / safeZoom
+        if !interacting { interacting = true; gestureZoom = safeZoom }
+        let dx = translation.width / gestureZoom
+        let dy = translation.height / gestureZoom
         switch edge {
         case .left: edges.left = dx
         case .right: edges.right = dx
@@ -1123,7 +1183,9 @@ private struct ResizeZone: View {
                 syncCursor()
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                // Global space — see resizeHandle for why local space under
+                // the tile's scaleEffect would double-divide by the zoom.
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         if !dragging {
                             dragging = true

@@ -79,7 +79,7 @@ struct SidebarView: View {
                 if state.freeInstances.isEmpty {
                     Text("⌘T for a new terminal · ⇧⌘T for an instant shell")
                         .font(.system(size: 11))
-                        .foregroundStyle(.quaternary)
+                        .foregroundStyle(.tertiary)
                 }
             } header: {
                 // Dropping a canvas-resident row here frees it again. The
@@ -203,20 +203,25 @@ struct InstanceRow: View {
         }
         .onDrag {
             let token = DragToken(object: instance.id.uuidString as NSString)
-            let id = instance.id
+            // The session id, not the item id: a cancelled drag's token can
+            // deinit DURING the next drag of the same row, and an item
+            // comparison would let it tear that live drag down.
+            let session = state.beginSidebarDrag(instance.id)
             token.onEnd = {
-                if AppState.shared?.draggingItemID == id {
+                if AppState.shared?.dragSession == session {
                     AppState.shared?.endSidebarDrag()
                 }
             }
-            state.beginSidebarDrag(id)
             return token
         }
         .contextMenu { menu }
         .confirmationDialog("Delete “\(instance.name)”?", isPresented: $confirmDelete) {
             Button("Delete", role: .destructive) { state.deleteInstance(instance.id) }
         } message: {
-            Text("The running session will end.")
+            // A dead session must not be deleted under a live one's warning.
+            Text(state.endedInstances.contains(instance.id)
+                ? "The session already ended."
+                : "The running session will end.")
         }
     }
 
@@ -233,7 +238,12 @@ struct InstanceRow: View {
                 // object, so the observation lives one view deeper — see
                 // TitleCaption. Rendering a row still never spawns a process:
                 // existingTerminal is non-creating.
-                if let terminal = state.sessions.existingTerminal(for: instance.id) {
+                if state.endedInstances.contains(instance.id) {
+                    Text("Session ended")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                } else if let terminal = state.sessions.existingTerminal(for: instance.id) {
                     TitleCaption(name: instance.name, terminal: terminal)
                 }
             }
@@ -273,6 +283,10 @@ struct InstanceRow: View {
     @ViewBuilder
     private var menu: some View {
         Button("Rename…") { onRename?(instance) }
+        if state.endedInstances.contains(instance.id) {
+            // The one thing a dead session is still good for.
+            Button("Restart Session") { state.restartInstance(instance.id) }
+        }
         Divider()
         if resident {
             Button("Remove from Canvas") { state.removeFromCanvas(instance.id) }
@@ -345,6 +359,7 @@ struct CanvasRow: View {
                 .padding(.horizontal, 6)
                 .padding(.vertical, 1.5)
                 .background(Capsule().fill(Color.primary.opacity(0.07)))
+                .accessibilityLabel("\(state.residents(of: board).count) terminals")
         }
         .tag(Selection.canvas(board.id))
         .dropDestination(for: String.self) { ids, _ in
@@ -393,6 +408,7 @@ struct AttentionDot: View {
                        value: reduceMotion ? false : pulse)
             .onAppear { pulse = !reduceMotion }
             .help("This session finished or needs your input")
+            .accessibilityLabel("Needs attention")
     }
 }
 
@@ -629,23 +645,26 @@ struct FocusView: View {
     }
 }
 
-/// Honest state for a terminal whose configured CLI or shell has vanished:
-/// the surface falls back to the login shell (LiveSessionStore already
-/// does), and this banner says so instead of failing silently.
+/// Honest state for a terminal whose configured CLI or shell was missing at
+/// LAUNCH: the surface fell back (LiveSessionStore already did), and this
+/// banner says so instead of failing silently. It reads the outcome recorded
+/// when the surface was configured — not live install state, which changes
+/// under a running session: installing the CLI afterwards must not erase the
+/// truth that THIS surface is a fallback shell, and uninstalling one must
+/// not hang a false banner on a healthy running agent.
 struct MissingHarnessBanner: View {
     @EnvironmentObject private var state: AppState
     let instance: TerminalInstance
 
     private var message: String? {
-        if let id = instance.spec.harness,
-           state.sessions.cachedResolveHarness(id) == nil {
+        guard let outcome = state.sessions.launchOutcome(for: instance.id) else { return nil }
+        if let id = outcome.missingHarness {
             let harness = Catalog.harnesses.first { $0.id == id }
             let name = harness?.displayName ?? id
             let install = harness.map { " Install: \($0.installCommand)" } ?? ""
             return "\(name) isn't installed — running your shell.\(install)"
         }
-        if let shell = instance.spec.shellPath,
-           !FileManager.default.isExecutableFile(atPath: shell) {
+        if let shell = outcome.missingShell {
             return "\((shell as NSString).lastPathComponent) is gone — running your login shell."
         }
         return nil
@@ -670,6 +689,16 @@ struct MissingHarnessBanner: View {
 /// Hosts the store-owned terminal NSView. The ghostty surface (and its shell
 /// process) lives exactly as long as the store keeps the view — navigation
 /// only reparents it.
+///
+/// The container indirection is the double-hosting defense. During an
+/// animated branch swap (entering focus, the drop overlay fading out after a
+/// drop) TWO representables briefly exist for the SAME terminal NSView, and
+/// an NSView renders in exactly one hierarchy: whoever called `addSubview`
+/// last owns it, and SwiftUI dismantling the loser used to be able to rip the
+/// view out of the winner. Each representable now owns a plain container;
+/// `claim()` re-parents the shared view into whichever container needs it,
+/// dismantle removes only the dying container, and the reclaim notification
+/// wakes the survivor to take the view back. Self-healing by construction.
 struct PersistentTerminalView: NSViewRepresentable {
     let view: TerminalView
     /// Rounding lives on the terminal's OWN layer, not a SwiftUI clip: a
@@ -679,13 +708,29 @@ struct PersistentTerminalView: NSViewRepresentable {
     var maskedCorners: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
                                        .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
 
-    func makeNSView(context: Context) -> TerminalView {
+    func makeNSView(context: Context) -> TerminalHostContainer {
+        let container = TerminalHostContainer()
+        container.hosted = view
         applyRounding(view)
-        return view
+        container.claim()
+        return container
     }
 
-    func updateNSView(_ nsView: TerminalView, context: Context) {
-        applyRounding(nsView)
+    func updateNSView(_ container: TerminalHostContainer, context: Context) {
+        container.hosted = view
+        applyRounding(view)
+        container.claim()
+    }
+
+    static func dismantleNSView(_ container: TerminalHostContainer, coordinator: ()) {
+        // The dying host must never claim again — and whoever still wants the
+        // view gets a deterministic chance to take it back, next runloop turn
+        // (the view may still be this container's subview until AppKit
+        // finishes the removal).
+        container.hosted = nil
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: TerminalHostContainer.reclaim, object: nil)
+        }
     }
 
     private func applyRounding(_ v: TerminalView) {
@@ -694,6 +739,63 @@ struct PersistentTerminalView: NSViewRepresentable {
         v.layer?.cornerCurve = .continuous
         v.layer?.maskedCorners = maskedCorners
         v.layer?.masksToBounds = cornerRadius > 0
+    }
+}
+
+/// The claiming container behind PersistentTerminalView.
+final class TerminalHostContainer: NSView {
+    static let reclaim = Notification.Name("SkylightReclaimTerminalHosts")
+
+    weak var hosted: NSView?
+    private let observer = ObserverBox()
+
+    /// Nonisolated, Sendable storage for the notification token — a deinit
+    /// runs outside the main actor's guarantees (same pattern as PanView's
+    /// MonitorBox).
+    private final class ObserverBox: @unchecked Sendable {
+        var token: (any NSObjectProtocol)?
+    }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        observer.token = NotificationCenter.default.addObserver(
+            forName: Self.reclaim, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.claim() }
+        }
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    deinit {
+        if let token = observer.token {
+            NotificationCenter.default.removeObserver(token)
+        }
+    }
+
+    func claim() {
+        // Only a container that is actually ON SCREEN may take the view — a
+        // live-but-unparented host answering the reclaim broadcast would
+        // otherwise steal the terminal into an invisible hierarchy.
+        guard window != nil, let hosted else { return }
+        if hosted.superview !== self {
+            hosted.removeFromSuperview()
+            hosted.frame = bounds
+            hosted.autoresizingMask = [.width, .height]
+            addSubview(hosted)
+        } else {
+            hosted.frame = bounds
+        }
+    }
+
+    override func layout() {
+        super.layout()
+        claim()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil { claim() }
     }
 }
 

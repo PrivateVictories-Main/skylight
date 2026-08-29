@@ -85,6 +85,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // Deleting ONE terminal asks first; a reflexive ⌘Q was ending six
+        // agents mid-task with no question at all. Same care, same copy —
+        // and only when there is actually something alive to lose.
+        MainActor.assumeIsolated {
+            guard let live = AppState.shared?.liveSessionCount, live > 0 else {
+                return .terminateNow
+            }
+            let alert = NSAlert()
+            alert.messageText = "Quit Skylight?"
+            alert.informativeText = live == 1
+                ? "The running session will end."
+                : "\(live) running sessions will end."
+            alert.addButton(withTitle: "Quit")
+            alert.addButton(withTitle: "Cancel")
+            return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         // A debounced pan write may still be pending — flush the real state.
         MainActor.assumeIsolated {

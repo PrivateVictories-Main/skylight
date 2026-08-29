@@ -27,7 +27,9 @@ struct NewTerminalSheet: View {
         TerminalSpec(
             shellPath: shellPath,
             harness: agentMode ? harnessID : nil,
-            arguments: arguments.split(separator: " ").map(String.init),
+            // Shell-style splitting: `--dir "/Applications/My Tool"` is one
+            // argument, not three mangled ones (SkylightCore.Arguments).
+            arguments: Arguments.split(arguments),
             workingDirectory: workingDirectory
         )
     }
@@ -196,7 +198,7 @@ struct NewTerminalSheet: View {
     private var shellSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                withAnimation(Motion.disclose) {
                     shellsExpanded.toggle()
                 }
             } label: {
@@ -232,7 +234,7 @@ struct NewTerminalSheet: View {
     private func shellRow(_ path: String?, label: String) -> some View {
         Button {
             shellPath = path
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            withAnimation(Motion.disclose) {
                 shellsExpanded = false
             }
         } label: {
@@ -436,7 +438,7 @@ struct NewTerminalSheet: View {
                 .font(.system(size: 12))
                 .help("Create an empty canvas (⇧⌘N)")
                 Button(savingPreset ? "Cancel Preset" : "Save as Preset…") {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    withAnimation(Motion.disclose) {
                         savingPreset.toggle()
                     }
                 }

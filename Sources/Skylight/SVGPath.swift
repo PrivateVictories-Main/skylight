@@ -204,7 +204,7 @@ private struct TokenScanner {
 
     var hasNumber: Bool {
         var i = index
-        while i < chars.count, chars[i] == " " || chars[i] == "," || chars[i] == "\n" || chars[i] == "\t" { i += 1 }
+        while i < chars.count, chars[i] == " " || chars[i] == "," || chars[i] == "\n" || chars[i] == "\t" || chars[i] == "\r" { i += 1 }
         guard i < chars.count else { return false }
         let c = chars[i]
         return c.isNumber || c == "-" || c == "+" || c == "."

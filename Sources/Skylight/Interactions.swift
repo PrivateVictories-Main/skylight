@@ -22,6 +22,28 @@ enum Motion {
             ? .easeOut(duration: 0.12)
             : .spring(response: 0.35, dampingFraction: 0.85)
     }
+
+    /// Button press feedback — the one bounce Reduce Motion users still see
+    /// least of.
+    static var press: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.08)
+            : .spring(response: 0.28, dampingFraction: 0.55)
+    }
+
+    /// A selection thumb gliding between options.
+    static var slide: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.1)
+            : .spring(response: 0.32, dampingFraction: 0.78)
+    }
+
+    /// A section expanding or collapsing in place (the New sheet's tiers).
+    static var disclose: Animation {
+        NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+            ? .easeOut(duration: 0.1)
+            : .spring(response: 0.3, dampingFraction: 0.85)
+    }
 }
 
 /// Springy press feedback for buttons — the subtle scale-and-settle that makes
@@ -44,7 +66,7 @@ struct PressableStyle: ButtonStyle {
             configuration.label
                 .scaleEffect(configuration.isPressed ? scale : (hovering && hoverable ? 1.06 : 1))
                 .opacity(configuration.isPressed ? 0.85 : 1)
-                .animation(.spring(response: 0.28, dampingFraction: 0.55), value: configuration.isPressed)
+                .animation(Motion.press, value: configuration.isPressed)
                 .animation(.easeOut(duration: 0.14), value: hovering)
                 .onHover { hovering = $0 }
                 .contentShape(Rectangle())
@@ -94,7 +116,7 @@ struct SlidingSegments<T: Hashable>: View {
         HStack(spacing: 2) {
             ForEach(options, id: \.0) { value, label in
                 Button {
-                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) {
+                    withAnimation(Motion.slide) {
                         selection = value
                     }
                 } label: {
