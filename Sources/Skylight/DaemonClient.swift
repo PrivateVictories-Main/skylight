@@ -51,6 +51,13 @@ final class DaemonClient: @unchecked Sendable {
         var timeout = timeval(tv_sec: 0, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
                    &timeout, socklen_t(MemoryLayout<timeval>.size))
+        // Sends, however, get a bound: a wedged daemon behind a full socket
+        // buffer once parked the client queue in write() forever — and quit's
+        // flush() then hung the app at the exact moment the survival promise
+        // was being exercised. Two seconds, then the loss is handled honestly.
+        var sendTimeout = timeval(tv_sec: 2, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+                   &sendTimeout, socklen_t(MemoryLayout<timeval>.size))
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
         source.setCancelHandler { close(fd) }
@@ -247,16 +254,20 @@ final class DaemonClient: @unchecked Sendable {
         let data = Wire.encode(frame)
         queue.async { [weak self] in
             guard let self, self.fd >= 0 else { return }
-            _ = data.withUnsafeBytes { raw -> Int in
+            let complete = data.withUnsafeBytes { raw -> Bool in
                 var offset = 0
                 let base = raw.baseAddress!
                 while offset < raw.count {
                     let n = write(self.fd, base + offset, raw.count - offset)
-                    if n <= 0 { return offset }
-                    offset += n
+                    if n > 0 { offset += n; continue }
+                    if n < 0, errno == EINTR { continue }
+                    return false   // SNDTIMEO expiry or a dead socket
                 }
-                return offset
+                return true
             }
+            // A short write mid-frame has already corrupted the framing;
+            // the only honest continuation is no continuation.
+            if !complete { self.connectionLost("write stalled") }
         }
     }
 

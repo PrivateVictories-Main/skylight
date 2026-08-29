@@ -2,6 +2,31 @@ import XCTest
 import SkylightDaemonCore
 
 final class WireTests: XCTestCase {
+    func testDecoderSurvivesFuzzedStreams() {
+        // The daemon feeds every socket byte through this decoder; whatever
+        // arrives, the only acceptable outcomes are frames, a clean throw
+        // (the caller drops the connection), or waiting for more — never a
+        // crash, never runaway memory.
+        var seed: UInt64 = 0xF0221
+        func next() -> UInt64 {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return seed >> 16
+        }
+        for _ in 0..<300 {
+            var buffer = Data((0..<(next() % 512)).map { _ in UInt8(truncatingIfNeeded: next()) })
+            let before = buffer.count
+            do {
+                let frames = try Wire.decodeAvailable(&buffer)
+                // Whatever was consumed must be accounted for by frames.
+                let consumed = before - buffer.count
+                let framed = frames.reduce(0) { $0 + 5 + $1.payload.count }
+                XCTAssertEqual(consumed, framed)
+            } catch {
+                // A throw is a valid verdict on garbage; the stream is dead.
+            }
+        }
+    }
+
     func testFrameRoundTrip() throws {
         let frame = WireFrame(type: .input,
                               payload: WirePayload.idPrefixed(UUID(), Data("ls\r".utf8)))

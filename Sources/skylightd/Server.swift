@@ -100,6 +100,10 @@ final class Server: @unchecked Sendable {
     /// Bumped on every accept so a stale corpse-expiry timer from an earlier
     /// quiet period can never fire against a newer one's clock.
     private var clientGeneration = 0
+    /// Orphans HUPped at boot whose SIGKILL escalation hasn't run yet. The
+    /// daemon must not exit inside that window — the ledger is already gone,
+    /// and a HUP-immune straggler would leak with no record anywhere.
+    private var pendingOrphanKills: [LedgerEntry] = []
     private var lockFD: Int32 = -1
 
     init(socketPath: String) {
@@ -199,6 +203,13 @@ final class Server: @unchecked Sendable {
         for session in sessions.values where !session.exited {
             kill(session.pid, SIGHUP)
         }
+        // A SIGTERM mid-sweep cannot wait 3s (our replacement is waiting on
+        // the flock) — settle the escalation right now instead of leaking it.
+        for entry in pendingOrphanKills
+        where processStartSeconds(entry.pid) == entry.startSeconds {
+            log("escalating orphan sweep for pid=\(entry.pid) at shutdown")
+            kill(entry.pid, SIGKILL)
+        }
         unlink(socketPath)
         exit(0)
     }
@@ -209,8 +220,6 @@ final class Server: @unchecked Sendable {
         let fd = Darwin.accept(listenFD, nil, nil)
         guard fd >= 0 else { return }
         _ = fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK)
-        everServed = true
-        clientGeneration += 1
         let client = Client(fd: fd)
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self, weak client] in
@@ -251,6 +260,12 @@ final class Server: @unchecked Sendable {
         client.readSource?.cancel()
         client.readSource = nil
         clients.removeValue(forKey: ObjectIdentifier(client))
+        // Unborn spawns leave with their requester: a session that never
+        // started is not one the quit promise covers, and a fallback-spawned
+        // ghost would pin the daemon open for nobody.
+        for id in client.attached where pendingSpawns[id] != nil {
+            pendingSpawns.removeValue(forKey: id)
+        }
         log("client gone (\(clients.count))")
         exitIfIdle()
     }
@@ -303,6 +318,14 @@ final class Server: @unchecked Sendable {
     private func handle(_ frame: WireFrame, from client: Client) {
         switch frame.type {
         case .hello, .list:
+            if frame.type == .hello {
+                // Serving is an APP thing: a status probe connecting and
+                // leaving must neither arm the idle-exit (it once killed the
+                // daemon it had just reported on) nor restart the corpse
+                // clock. The 60s no-client timer covers a never-helloed run.
+                everServed = true
+                clientGeneration += 1
+            }
             // One app at a time — the spec's single-client rule, enforced
             // where it can be. Two app instances would otherwise fight over
             // the same session ids (SPAWN-replace SIGKILLs the first one's
@@ -324,6 +347,7 @@ final class Server: @unchecked Sendable {
                 return
             }
             if frame.type == .hello { client.isApp = true }
+            let appConnected = clients.values.contains { $0.isApp }
             let reply = HelloReply(
                 protocolVersion: Wire.protocolVersion,
                 daemonPID: getpid(),
@@ -333,6 +357,7 @@ final class Server: @unchecked Sendable {
                                 startSeconds: $0.startSeconds,
                                 ringBytes: $0.ring.count)
                 },
+                busy: frame.type == .list && appConnected ? true : nil,
                 daemonStartSeconds: processStartSeconds(getpid()))
             let payload = (try? JSONEncoder().encode(reply)) ?? Data()
             send(WireFrame(type: frame.type == .hello ? .helloReply : .listReply,
@@ -414,7 +439,10 @@ final class Server: @unchecked Sendable {
                        widthPixels: resize.widthPixels, heightPixels: resize.heightPixels)
         case .kill:
             guard let id = WirePayload.uuid(from: frame.payload) else { return }
-            if pendingSpawns.removeValue(forKey: id) != nil { return }
+            if pendingSpawns.removeValue(forKey: id) != nil {
+                for client in clients.values { client.attached.remove(id) }
+                return
+            }
             guard let session = sessions[id] else { return }
             requestKill(session)
         case .helloReply, .output, .exited, .listReply:
@@ -676,6 +704,9 @@ final class Server: @unchecked Sendable {
     }
 
     private func exitIfIdle() {
+        // The sweep's escalation must complete first: exiting mid-window
+        // leaks a HUP-immune orphan whose ledger record is already gone.
+        guard pendingOrphanKills.isEmpty else { return }
         guard everServed, clients.isEmpty else { return }
         if sessions.isEmpty {
             log("idle; exiting")
@@ -702,6 +733,7 @@ final class Server: @unchecked Sendable {
 
     private let logStamp: DateFormatter = {
         let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
         return formatter
     }()
@@ -750,23 +782,26 @@ final class Server: @unchecked Sendable {
     }
 
     private func sweepOrphans() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: ledgerPath)),
-              let previous = try? JSONDecoder().decode([LedgerEntry].self, from: data)
-        else { return }
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: ledgerPath)) else { return }
         try? FileManager.default.removeItem(atPath: ledgerPath)
+        guard let previous = try? JSONDecoder().decode([LedgerEntry].self, from: data)
+        else { return }
         let orphans = OrphanSweep.orphans(in: previous) { processStartSeconds($0) }
         guard !orphans.isEmpty else { return }
         for entry in orphans {
             log("sweeping orphan pid=\(entry.pid) left by a crashed predecessor")
             kill(entry.pid, SIGHUP)
         }
+        pendingOrphanKills = orphans
         queue.asyncAfter(deadline: .now() + 3) { [weak self] in
             guard let self else { return }
-            for entry in orphans
+            for entry in self.pendingOrphanKills
             where self.processStartSeconds(entry.pid) == entry.startSeconds {
                 self.log("escalating orphan sweep for pid=\(entry.pid)")
                 kill(entry.pid, SIGKILL)
             }
+            self.pendingOrphanKills = []
+            self.exitIfIdle()
         }
     }
 }

@@ -15,6 +15,12 @@ draggable, resizable tiles. Swift + SwiftUI, with real Ghostty terminals.
 *Real sessions, not mockups: the tiles above are live zsh surfaces — one ran
 this repo's test suite, one its git log.*
 
+![A running job ticking in a tile; the app is SIGKILLed; on relaunch the same
+job, same pid, is still ticking — scrollback intact](docs/media/survival.gif)
+
+*The flagship, uncut: a running job, the app killed outright, and the same
+process — same pid, unbroken step count — still going when the app returns.*
+
 ## What it does
 
 - **Real terminals** — GhosttyKit surfaces running your actual shell (zsh,
