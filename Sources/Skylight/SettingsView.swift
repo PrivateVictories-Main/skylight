@@ -32,6 +32,20 @@ enum Appearance {
         NSWorkspace.shared.accessibilityDisplayShouldReduceTransparency
     }
 
+    static let fontSizeKey = "terminalFontSize"
+
+    /// The offered sizes. 0 is the sentinel for "ghostty's own default" —
+    /// when unset, the generated config says nothing about fonts at all, so
+    /// the curated engine default keeps ruling rather than being frozen to
+    /// whatever number it happened to be when this shipped.
+    static let fontSizes = [11, 12, 13, 14, 15, 16, 18]
+
+    /// The stored terminal text size; 0 (or anything unoffered) = default.
+    static var terminalFontSize: Int {
+        let stored = UserDefaults.standard.integer(forKey: fontSizeKey)
+        return fontSizes.contains(stored) ? stored : 0
+    }
+
     /// Apply a stored appearance choice to the app. "system" clears the
     /// override so the OS setting rules again — including live changes.
     @MainActor
@@ -51,6 +65,7 @@ struct SettingsView: View {
     @AppStorage(Appearance.backgroundKey) private var background = "glass"
     @AppStorage(Appearance.terminalOpacityKey)
     private var terminalOpacity = Appearance.terminalOpacityDefault
+    @AppStorage(Appearance.fontSizeKey) private var fontSize = 0
     @State private var reduceTransparency = Appearance.reduceTransparency
 
     var body: some View {
@@ -91,13 +106,25 @@ struct SettingsView: View {
                     .font(.system(size: 11))
                     .foregroundStyle(.secondary)
             }
+
+            // Same live lane as the slider — every open terminal reflows.
+            Picker("Text Size", selection: $fontSize) {
+                Text("Default").tag(0)
+                Divider()
+                ForEach(Appearance.fontSizes, id: \.self) { size in
+                    Text("\(size) pt").tag(size)
+                }
+            }
         }
         .formStyle(.grouped)
         .frame(width: 380)
         .fixedSize()
         .onChange(of: appearance) { _, raw in Appearance.apply(raw) }
         .onChange(of: terminalOpacity) { _, _ in
-            AppState.shared?.sessions.refreshSurfaceOpacity()
+            AppState.shared?.sessions.refreshSurfaceConfig()
+        }
+        .onChange(of: fontSize) { _, _ in
+            AppState.shared?.sessions.refreshSurfaceConfig()
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(
             for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in

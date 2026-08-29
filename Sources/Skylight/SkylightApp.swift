@@ -128,7 +128,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             object: nil, queue: .main
         ) { _ in
             MainActor.assumeIsolated {
-                AppState.shared?.sessions.refreshSurfaceOpacity()
+                AppState.shared?.sessions.refreshSurfaceConfig()
             }
         }
     }

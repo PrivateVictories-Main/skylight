@@ -981,7 +981,6 @@ final class LiveSessionStore {
     /// where text still reads).
     static func surfaceConfig() -> String {
         """
-        background-opacity = \(String(format: "%.2f", Appearance.terminalOpacity))
         window-padding-x = 10
         window-padding-y = 10
         window-padding-balance = true
@@ -989,21 +988,40 @@ final class LiveSessionStore {
         """
     }
 
-    /// Apply the current stored opacity to every LIVE surface — the slider
-    /// works on open terminals, not just future ones. Coalesced: a drag
+    /// The dynamic half of a surface's look, on the library's composition
+    /// lane: the renderer layers base config → this → theme, so overrides
+    /// here never strip the color theme, and appended commands outrank the
+    /// library default's own font-size = 14 (last key wins in ghostty
+    /// config). The opacity default 0.92 lives in Appearance (spec Addendum
+    /// A1); font size only when chosen, so the engine default keeps ruling
+    /// rather than being frozen to today's number.
+    static func surfaceConfiguration() -> TerminalConfiguration {
+        var configuration = TerminalConfiguration.default
+            .backgroundOpacity(Appearance.terminalOpacity)
+        if Appearance.terminalFontSize > 0 {
+            configuration = configuration.fontSize(Float(Appearance.terminalFontSize))
+        }
+        return configuration
+    }
+
+    /// Apply the current stored appearance config to every LIVE surface —
+    /// the Settings controls work on open terminals, not just future ones.
+    /// setTerminalConfiguration (not updateConfigSource: that lane replaces
+    /// the whole source WITHOUT theme composition — a slider drag would
+    /// have washed the colors off every open terminal). Coalesced: a drag
     /// fires continuously, ghostty re-parses a config per apply, and the
-    /// latest value is read at fire time, so ≤20 applies/second always
-    /// converge on where the thumb stopped.
-    private var opacityRefreshQueued = false
-    func refreshSurfaceOpacity() {
-        guard !opacityRefreshQueued else { return }
-        opacityRefreshQueued = true
+    /// latest values are read at fire time, so ≤20 applies/second always
+    /// converge on where the controls stopped.
+    private var configRefreshQueued = false
+    func refreshSurfaceConfig() {
+        guard !configRefreshQueued else { return }
+        configRefreshQueued = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
             guard let self else { return }
-            self.opacityRefreshQueued = false
-            let config = Self.surfaceConfig()
+            self.configRefreshQueued = false
+            let configuration = Self.surfaceConfiguration()
             for terminal in self.terminals.values {
-                terminal.controller.updateConfigSource(.generated(config))
+                terminal.controller.setTerminalConfiguration(configuration)
             }
         }
     }
@@ -1024,7 +1042,7 @@ final class LiveSessionStore {
         }
         launchOutcomes[instance.id] = outcome
         let state = TerminalViewState(configSource: .generated(config),
-                                      terminalConfiguration: .default)
+                                      terminalConfiguration: Self.surfaceConfiguration())
         if let daemon = daemon() {
             // The survival lane: the daemon owns the pty; this surface is a
             // renderer attached over the socket. Keystrokes and resizes go

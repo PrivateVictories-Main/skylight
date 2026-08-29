@@ -63,9 +63,10 @@ process — same pid, unbroken step count — still going when the app returns.*
   one-click restart. And if the session keeper ever isn't there to catch
   them, quitting warns before ending live sessions.
 - **The look is yours** — one small Settings pane (⌘,): light/dark/system,
-  window glass or a solid flat background, and a terminal translucency
-  slider from clear to solid. Every control applies instantly — the slider
-  moves every open terminal live, not just future ones.
+  window glass or a solid flat background, a terminal translucency slider
+  from clear to solid, and terminal text size. Every control applies
+  instantly to every open terminal — live, not just future ones — and
+  Reduce Transparency in System Settings outranks all of it.
 
 ## What it deliberately isn't
 

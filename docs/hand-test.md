@@ -111,3 +111,6 @@ then walk top to bottom. Every line should feel instant.
       flip it ON with terminals open — window AND terminal surfaces go
       solid live; the Settings pane says the system setting is in charge;
       flip OFF → the stored glass choices return.
+- [ ] Text Size: change it in ⌘, with terminals open — every open
+      terminal reflows live at the new size, colors untouched; Default
+      returns to the engine size; the choice survives relaunch.
