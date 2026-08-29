@@ -101,6 +101,32 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(state.canvases[1].tiles.count, 0)
     }
 
+    func testV2HostileDataIsSanitized() throws {
+        // The current format is stored data too: dup residency, an orphan
+        // tile, and dangling selections must not survive a load.
+        let json = """
+        {"version":2,
+         "instances":[{"id":"11111111-1111-1111-1111-111111111111","name":"T",
+                       "spec":{"arguments":[]}}],
+         "canvases":[
+           {"id":"44444444-4444-4444-4444-444444444444","name":"A","tiles":[
+             {"id":"55555555-5555-5555-5555-555555555555",
+              "itemID":"11111111-1111-1111-1111-111111111111","origin":[0,0],"size":[560,400]},
+             {"id":"66666666-6666-6666-6666-666666666666",
+              "itemID":"99999999-9999-9999-9999-999999999999","origin":[0,0],"size":[560,400]}]},
+           {"id":"77777777-7777-7777-7777-777777777777","name":"B","tiles":[
+             {"id":"88888888-8888-8888-8888-888888888888",
+              "itemID":"11111111-1111-1111-1111-111111111111","origin":[0,0],"size":[560,400]}]}],
+         "selectedInstance":"22222222-2222-2222-2222-222222222222",
+         "selectedCanvas":"33333333-3333-3333-3333-333333333333"}
+        """
+        let state = try XCTUnwrap(WorkspacePersistence.decode(Data(json.utf8)))
+        XCTAssertEqual(state.canvases[0].tiles.count, 1)   // orphan dropped
+        XCTAssertEqual(state.canvases[1].tiles.count, 0)   // second residency dropped
+        XCTAssertNil(state.selectedInstance)               // dangling → nil
+        XCTAssertNil(state.selectedCanvas)
+    }
+
     func testGarbageReturnsNil() {
         XCTAssertNil(WorkspacePersistence.decode(Data("not json".utf8)))
         XCTAssertNil(WorkspacePersistence.decode(Data("{\"unrelated\":true}".utf8)))

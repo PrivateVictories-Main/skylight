@@ -110,17 +110,30 @@ public enum CanvasLayout {
     /// Commit snapping for an edge resize: each edge that MOVED snaps to the
     /// grid; edges that did not move stay byte-exact (independent origin/size
     /// rounding slides the stationary edge on half-grid ties).
+    ///
+    /// When the snapped span lands under the minimum, the MOVED edge yields —
+    /// off-grid if it must. The old width clamp pushed the stationary edge
+    /// instead, which on an off-grid frame (reflow produces them) slid the one
+    /// edge this function promises never to move.
     public static func resizeCommit(_ frame: CGRect, by edges: EdgeDeltas) -> CGRect {
         let live = resized(frame, by: edges)
         let leftMoved = min(edges.left, max(0, frame.width - minTileSize.width + edges.right)) != 0
         let topMoved = min(edges.top, max(0, frame.height - minTileSize.height + edges.bottom)) != 0
-        let x0 = leftMoved ? (live.minX / grid).rounded() * grid : frame.minX
-        let y0 = topMoved ? (live.minY / grid).rounded() * grid : frame.minY
-        let x1 = edges.right != 0 ? (live.maxX / grid).rounded() * grid : frame.maxX
-        let y1 = edges.bottom != 0 ? (live.maxY / grid).rounded() * grid : frame.maxY
-        return CGRect(x: x0, y: y0,
-                      width: max(minTileSize.width, x1 - x0),
-                      height: max(minTileSize.height, y1 - y0))
+        let rightMoved = edges.right != 0
+        let bottomMoved = edges.bottom != 0
+        var x0 = leftMoved ? (live.minX / grid).rounded() * grid : frame.minX
+        var y0 = topMoved ? (live.minY / grid).rounded() * grid : frame.minY
+        var x1 = rightMoved ? (live.maxX / grid).rounded() * grid : frame.maxX
+        var y1 = bottomMoved ? (live.maxY / grid).rounded() * grid : frame.maxY
+        if x1 - x0 < minTileSize.width {
+            if leftMoved, !rightMoved { x0 = x1 - minTileSize.width }
+            else { x1 = x0 + minTileSize.width }
+        }
+        if y1 - y0 < minTileSize.height {
+            if topMoved, !bottomMoved { y0 = y1 - minTileSize.height }
+            else { y1 = y0 + minTileSize.height }
+        }
+        return CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)
     }
 
     /// Window-shrink reflow: keep the whole arrangement visible and readable.

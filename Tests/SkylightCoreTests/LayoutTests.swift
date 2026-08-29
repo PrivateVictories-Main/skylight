@@ -50,6 +50,30 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(live.maxX, 704)   // far edge pinned even past the min
     }
 
+    func testResizeCommitOffGridNearMinKeepsFarEdge() {
+        // Reflow produces off-grid frames. When the snap pulls the moved edge
+        // in far enough that the span dips under the minimum, the MOVED edge
+        // must yield — the old width clamp slid the stationary one instead.
+        let frame = CGRect(x: 132.5, y: 96, width: 340, height: 400)
+        let commit = CanvasLayout.resizeCommit(frame,
+            by: CanvasLayout.EdgeDeltas(left: 20))
+        XCTAssertEqual(commit.maxX, 472.5)                     // untouched, byte-exact
+        XCTAssertEqual(commit.width, CanvasLayout.minTileSize.width)
+        for dx in stride(from: -64.0, through: 64.0, by: 0.5) {
+            let c = CanvasLayout.resizeCommit(frame, by: CanvasLayout.EdgeDeltas(left: dx))
+            XCTAssertEqual(c.maxX, 472.5, "left drag dx=\(dx) slid the right edge")
+            XCTAssertGreaterThanOrEqual(c.width, CanvasLayout.minTileSize.width)
+        }
+    }
+
+    func testResizeCommitOffGridNearMinKeepsBottomEdge() {
+        let frame = CGRect(x: 96, y: 70.5, width: 400, height: 240)
+        let commit = CanvasLayout.resizeCommit(frame,
+            by: CanvasLayout.EdgeDeltas(top: 20))
+        XCTAssertEqual(commit.maxY, 310.5)
+        XCTAssertEqual(commit.height, CanvasLayout.minTileSize.height)
+    }
+
     func testResizeNoOpWhenClampedToZero() {
         // Min-width tile, off-grid origin, inward left drag: nothing may move.
         let frame = CGRect(x: 105, y: 96, width: 320, height: 400)

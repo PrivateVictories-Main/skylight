@@ -26,10 +26,35 @@ public enum WorkspacePersistence {
     public static func decode(_ data: Data) -> SavedState? {
         let decoder = JSONDecoder()
         if let v2 = try? decoder.decode(SavedState.self, from: data), v2.version >= 2 {
-            return v2
+            return sanitized(v2)
         }
         guard let legacy = try? decoder.decode(LegacyState.self, from: data) else { return nil }
         return migrate(legacy)
+    }
+
+    /// Stored data is hostile on the CURRENT format too, not just the legacy
+    /// one: the whole app leans on single residency and on tiles pointing at
+    /// real instances, and a hand-edited or corrupted v2 file used to load
+    /// verbatim — one live terminal view claimed by two boards, orphan tiles
+    /// counting toward arrange geometry. Same rules the migration enforces:
+    /// orphan tiles dropped, first board keeps a doubly-tiled instance,
+    /// selections must point at something that exists.
+    private static func sanitized(_ state: SavedState) -> SavedState {
+        var state = state
+        let ids = Set(state.instances.map(\.id))
+        var seen = Set<UUID>()
+        state.canvases = state.canvases.map { board in
+            var board = board
+            board.tiles = board.tiles.filter {
+                ids.contains($0.itemID) && seen.insert($0.itemID).inserted
+            }
+            return board
+        }
+        state.selectedInstance = state.selectedInstance.flatMap { ids.contains($0) ? $0 : nil }
+        state.selectedCanvas = state.selectedCanvas.flatMap { id in
+            state.canvases.contains { $0.id == id } ? id : nil
+        }
+        return state
     }
 
     public static func encode(_ state: SavedState) -> Data? {

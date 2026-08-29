@@ -2,6 +2,19 @@ import XCTest
 import SkylightCore
 
 final class RecommendationTests: XCTestCase {
+    func testRecordCapsGrowthAndKeepsTheHabit() {
+        var log = UsageLog()
+        for i in 0..<200 { log.record(TerminalSpec(arguments: ["--n", "\(i)"])) }
+        XCTAssertLessThanOrEqual(log.counts.count, 64)
+        XCTAssertEqual(Set(log.counts.keys), Set(log.specs.keys))   // never drift apart
+
+        var habitual = UsageLog()
+        let habit = TerminalSpec(harness: "claude")
+        for _ in 0..<5 { habitual.record(habit) }
+        for i in 0..<100 { habitual.record(TerminalSpec(arguments: ["--x", "\(i)"])) }
+        XCTAssertEqual(habitual.topCombo(), habit)                  // the habit survives
+    }
+
     private let claude = TerminalSpec(harness: "claude")
     private let plain = TerminalSpec()
 
