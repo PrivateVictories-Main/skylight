@@ -22,6 +22,8 @@ struct NewTerminalSheet: View {
     /// receipt, then back.
     @State private var copiedHarnessID: String?
     @State private var shells: [Shell] = []
+    @State private var harnessEdges = ScrollEdges()
+    @State private var harnessViewportHeight: CGFloat = 0
     @State private var installed: [String: String] = [:]   // harness id → binary path
     /// True once install state has been sampled — the one-click rows wait for
     /// it rather than flashing as ready before anything has been checked.
@@ -288,6 +290,11 @@ struct NewTerminalSheet: View {
 
     /// The agent-CLI list is taller than the sheet should ever be, so it
     /// scrolls inside a fixed window and the sheet stays compact.
+    ///
+    /// The edges fade exactly where content continues — a hard mid-row chop
+    /// at the viewport boundary is a sharp edge, and a permanent fade over a
+    /// fully-visible first row is a lie. Offset-aware: parked at the top
+    /// there is no top fade; scrolled to the end, the bottom one melts away.
     private var harnessSection: some View {
         ScrollView {
             VStack(spacing: 4) {
@@ -295,7 +302,41 @@ struct NewTerminalSheet: View {
                     harnessRow(harness)
                 }
             }
+            .background(
+                GeometryReader { geo in
+                    let frame = geo.frame(in: .named("harnessScroll"))
+                    Color.clear.preference(
+                        key: ScrollEdgesKey.self,
+                        value: ScrollEdges(top: frame.minY < -1,
+                                           bottom: frame.maxY > harnessViewportHeight + 1))
+                }
+            )
         }
+        .coordinateSpace(name: "harnessScroll")
+        .background(
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { harnessViewportHeight = geo.size.height }
+                    .onChange(of: geo.size.height) { _, height in
+                        harnessViewportHeight = height
+                    }
+            }
+        )
+        .onPreferenceChange(ScrollEdgesKey.self) { edges in
+            harnessEdges = edges
+        }
+        .mask(
+            VStack(spacing: 0) {
+                LinearGradient(colors: [.clear, .black],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: harnessEdges.top ? 20 : 0)
+                Rectangle().fill(.black)
+                LinearGradient(colors: [.black, .clear],
+                               startPoint: .top, endPoint: .bottom)
+                    .frame(height: harnessEdges.bottom ? 20 : 0)
+            }
+            .animation(.easeOut(duration: 0.15), value: harnessEdges)
+        )
         .frame(maxHeight: 292)
     }
 
@@ -442,7 +483,7 @@ struct NewTerminalSheet: View {
                     .disabled(presetName.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
-            HStack {
+            HStack(spacing: 16) {
                 // Canvases don't wait on terminals: an empty app can make one
                 // straight from here.
                 Button {
@@ -512,5 +553,21 @@ struct NewTerminalSheet: View {
         if !spec.arguments.isEmpty { parts.append(spec.arguments.joined(separator: " ")) }
         if let dir = spec.workingDirectory { parts.append((dir as NSString).lastPathComponent) }
         return parts.joined(separator: " · ")
+    }
+}
+
+/// Which edges of the harness list have more content past them — drives the
+/// scroll-edge fades above.
+private struct ScrollEdges: Equatable, Sendable {
+    var top = false
+    var bottom = false
+}
+
+private struct ScrollEdgesKey: PreferenceKey {
+    static let defaultValue = ScrollEdges()
+    static func reduce(value: inout ScrollEdges, nextValue: () -> ScrollEdges) {
+        let next = nextValue()
+        value = ScrollEdges(top: value.top || next.top,
+                            bottom: value.bottom || next.bottom)
     }
 }
