@@ -80,6 +80,9 @@ then walk top to bottom. Every line should feel instant.
       shows the canvas instantly with current content, no stale frames.
 - [ ] Mouse-wheel pan: free-spin the MX wheel over a canvas — smooth, no
       hitching (commits now settle trailing, not per notch).
+- [ ] Flood: run `yes hello` in a tile — the app stays responsive (other
+      tiles type fine), memory holds steady, and ⌃C stops it instantly.
+      Quit mid-flood, relaunch: the flood resumes into the replay.
 - [ ] `SKYLIGHT_APPEARANCE=dark` and `=light` both look clean.
 - [ ] Focus transition: enter/leave focus mode repeatedly — the terminal
       surface must never go blank or vanish after the cross-fade.

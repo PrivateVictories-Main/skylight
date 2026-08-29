@@ -65,7 +65,11 @@ final class Server: @unchecked Sendable {
         /// Frames waiting for a socket that can't take them right now. A
         /// blocking write here once meant one SIGSTOP'd app froze EVERY
         /// session's IO — the daemon's single queue must never block.
+        /// Offset-consumed: removeFirst per write slice memmoved the whole
+        /// backlog and pinned a flood at 99% CPU for 14 MB/s.
         var outbound = Data()
+        var outboundStart = 0
+        var outboundPending: Int { outbound.count - outboundStart }
         var writeSource: DispatchSourceWrite?
         var attached: Set<UUID> = []
 
@@ -84,12 +88,16 @@ final class Server: @unchecked Sendable {
     /// …resume when it drains to here. The child then blocks on its tty
     /// exactly as it would under any real terminal with a slow consumer.
     private static let clientLowWater = 64 << 10
-    /// A detached flood is read in pulses of this much, then rests 250ms.
-    /// Small on purpose: a pty master hands out ~1 KiB reads, so the pulse
-    /// cost is EVENTS, not bytes — and nobody is watching a detached
-    /// session anyway (attach resumes reading instantly, and the replay
-    /// carries the tail).
+    /// A detached flood is read in pulses of this much, then rests 250ms —
+    /// nobody is watching a detached session anyway (attach resumes reading
+    /// instantly, and the replay carries the tail).
     private static let detachedBurstLimit = 256 << 10
+    /// How much one read EVENT may drain before yielding the queue: a pty
+    /// master hands out ~1 KiB reads, and one-frame-per-read once turned a
+    /// flood into ~90k tiny frames/sec of overhead on both ends of the
+    /// socket. Draining to EAGAIN (capped, for fairness to other sessions)
+    /// coalesces a flood into a few large frames per wake instead.
+    private static let readBatchLimit = 256 << 10
 
     private let queue = DispatchQueue(label: "skylightd.server")
     private let socketPath: String
@@ -126,6 +134,11 @@ final class Server: @unchecked Sendable {
     /// daemon must not exit inside that window — the ledger is already gone,
     /// and a HUP-immune straggler would leak with no record anywhere.
     private var pendingOrphanKills: [LedgerEntry] = []
+    /// One scratch buffer for every pty read, allocated once: a zeroed 64 KiB
+    /// Array per wake event plus generic byte-by-byte slice appends was —
+    /// per the profiler — most of a core at 14 MB/s. Single-queue confinement
+    /// makes sharing it free.
+    private var readScratch = [UInt8](repeating: 0, count: Server.readBatchLimit)
     private var lockFD: Int32 = -1
 
     init(socketPath: String) {
@@ -300,7 +313,34 @@ final class Server: @unchecked Sendable {
     /// — a wedged client loses its connection, not everyone's IO.
     private func send(_ frame: WireFrame, to client: Client) {
         client.outbound.append(Wire.encode(frame))
-        guard client.outbound.count <= Self.maxClientBacklog else {
+        finishEnqueue(client)
+    }
+
+    /// The hot path, framed straight into the outbound buffer: the generic
+    /// route copied every output byte four times (batch → id-prefix →
+    /// encode → outbound); this is a header plus ONE memcpy from wherever
+    /// the bytes already live.
+    private func sendOutput(_ id: UUID, _ raw: UnsafeRawBufferPointer,
+                            to client: Client) {
+        var header = Data(capacity: 21)
+        header.append(WireType.output.rawValue)
+        var length = UInt32(16 + raw.count).bigEndian
+        withUnsafeBytes(of: &length) { header.append(contentsOf: $0) }
+        header.append(WirePayload.uuidData(id))
+        client.outbound.append(header)
+        if let base = raw.baseAddress, raw.count > 0 {
+            client.outbound.append(base.assumingMemoryBound(to: UInt8.self),
+                                   count: raw.count)
+        }
+        finishEnqueue(client)
+    }
+
+    private func sendOutput(_ id: UUID, _ bytes: Data, to client: Client) {
+        bytes.withUnsafeBytes { sendOutput(id, $0, to: client) }
+    }
+
+    private func finishEnqueue(_ client: Client) {
+        guard client.outboundPending <= Self.maxClientBacklog else {
             log("client backlog exceeded; dropping")
             return drop(client)
         }
@@ -308,16 +348,24 @@ final class Server: @unchecked Sendable {
     }
 
     private func flushOutbound(_ client: Client) {
-        while !client.outbound.isEmpty {
-            let n = client.outbound.withUnsafeBytes { raw in
-                write(client.fd, raw.baseAddress, min(raw.count, 128 * 1024))
+        while client.outboundPending > 0 {
+            let start = client.outboundStart
+            let n = client.outbound.withUnsafeBytes { raw -> Int in
+                let base = raw.baseAddress! + start
+                return write(client.fd, base, min(raw.count - start, 128 * 1024))
             }
             if n > 0 {
-                client.outbound.removeFirst(n)
-                if client.outbound.count <= Self.clientLowWater {
+                client.outboundStart += n
+                if client.outboundPending <= Self.clientLowWater {
                     releaseBackpressure(from: client)
                 }
             } else if n < 0, errno == EAGAIN {
+                // Compact opportunistically so a long-lived slow client's
+                // buffer doesn't carry a dead prefix forever.
+                if client.outboundStart > 1 << 20 {
+                    client.outbound.removeFirst(client.outboundStart)
+                    client.outboundStart = 0
+                }
                 armWrite(client)
                 return
             } else if n < 0, errno == EINTR {
@@ -326,6 +374,8 @@ final class Server: @unchecked Sendable {
                 return drop(client)
             }
         }
+        client.outbound.removeAll(keepingCapacity: true)
+        client.outboundStart = 0
         client.writeSource?.cancel()
         client.writeSource = nil
         releaseBackpressure(from: client)
@@ -418,9 +468,7 @@ final class Server: @unchecked Sendable {
             // someone is watching.
             resumeReading(session)
             if session.ring.count > 0 {
-                send(WireFrame(type: .output,
-                               payload: WirePayload.idPrefixed(id, session.ring.contents)),
-                     to: client)
+                sendOutput(id, session.ring.contents, to: client)
             }
             if session.exited, let code = session.exitCode {
                 send(WireFrame(type: .exited,
@@ -579,24 +627,41 @@ final class Server: @unchecked Sendable {
     }
 
     private func readFromPTY(_ session: Session) {
-        var chunk = [UInt8](repeating: 0, count: 64 * 1024)
-        let n = read(session.masterFD, &chunk, chunk.count)
-        if n > 0 {
+        // Drain the master to EAGAIN in one wake, coalescing into ONE frame:
+        // events, not bytes, are the flood cost. The cap yields the queue so
+        // one loud session cannot starve its siblings' IO. Reads land
+        // straight in the shared scratch; exactly one copy makes the frame.
+        var filled = 0
+        var reachedEnd = false
+        let fd = session.masterFD
+        readScratch.withUnsafeMutableBytes { raw in
+            let base = raw.baseAddress!
+            while filled < raw.count {
+                let n = read(fd, base + filled, raw.count - filled)
+                if n > 0 { filled += n; continue }
+                if n < 0, errno == EINTR { continue }
+                if n < 0, errno == EAGAIN { break }
+                reachedEnd = true   // 0 or EIO: the child side is gone
+                break
+            }
+        }
+        if filled > 0 {
             // Output proves the child owns the tty: our winsize-preserving
             // slave can go, and child-exit EOF detection takes over.
             if session.slaveFD >= 0 {
                 close(session.slaveFD)
                 session.slaveFD = -1
             }
-            let data = Data(chunk[0..<n])
-            session.ring.append(data)
-            let payload = WirePayload.idPrefixed(session.id, data)
             var anyAttached = false
             var anyDrowning = false
-            for client in clients.values where client.attached.contains(session.id) {
-                anyAttached = true
-                send(WireFrame(type: .output, payload: payload), to: client)
-                if client.outbound.count > Self.clientHighWater { anyDrowning = true }
+            readScratch.withUnsafeBytes { raw in
+                let window = UnsafeRawBufferPointer(rebasing: raw[0..<filled])
+                session.ring.append(window)
+                for client in clients.values where client.attached.contains(session.id) {
+                    anyAttached = true
+                    sendOutput(session.id, window, to: client)
+                    if client.outboundPending > Self.clientHighWater { anyDrowning = true }
+                }
             }
             // Flow control, both directions of absence:
             // — an attached client that can't keep up gets BACKPRESSURE (the
@@ -608,7 +673,7 @@ final class Server: @unchecked Sendable {
             if anyDrowning {
                 pauseReading(session)
             } else if !anyAttached {
-                session.detachedBurst += n
+                session.detachedBurst += filled
                 if session.detachedBurst >= Self.detachedBurstLimit {
                     session.detachedBurst = 0
                     pauseReading(session)
@@ -620,15 +685,11 @@ final class Server: @unchecked Sendable {
             } else {
                 session.detachedBurst = 0
             }
-        } else if n < 0, errno == EAGAIN || errno == EINTR {
-            // A non-blocking master can wake spuriously — this is NOT the
-            // drain signal, and treating it as one would announce an exit
-            // that never happened.
-            return
-        } else {
-            // EOF/EIO: the child side is gone. Drain complete. The fd is
-            // closed by the cancel handler; -1 keeps INPUT/RESIZE frames off
-            // whatever recycles the number.
+        }
+        if reachedEnd {
+            // Drain complete — after the final bytes above went out. The fd
+            // is closed by the cancel handler; -1 keeps INPUT/RESIZE frames
+            // off whatever recycles the number.
             session.inputSource?.cancel()
             session.inputSource = nil
             session.readSource?.cancel()

@@ -21,6 +21,19 @@ final class DaemonClient: @unchecked Sendable {
     /// Reattaching surfaces whose next resize should jiggle (rows−1, rows) so
     /// a replayed full-screen TUI repaints — dtach's winch trick.
     private var jigglePending: Set<UUID> = []
+    /// The last link of end-to-end flow control: the read queue admits
+    /// output to the parser through a token bucket, and when the bucket is
+    /// dry it BLOCKS — the socket fills, the daemon's high-water pauses the
+    /// pty, and the CHILD blocks on its tty. Renderer speed governs the
+    /// producer, exactly like a real terminal; without this, a flood grew
+    /// the parse queue without bound (the library's own drain barrier is
+    /// internal, so the brake is a stated rate: the parser clocks ~2× this
+    /// on one core, so the queue can never grow — and no human reads 32
+    /// MB/s of terminal).
+    private var floodTokens = Double(DaemonClient.floodBurst)
+    private var floodRefillAt = DispatchTime.now()
+    private static let floodRate = Double(32 << 20)   // bytes/second
+    private static let floodBurst = 16 << 20
 
     /// What the daemon already held when we connected, by session id.
     /// Mutated (main actor only, like every store-facing call here) when a
@@ -292,7 +305,18 @@ final class DaemonClient: @unchecked Sendable {
                 lock.lock()
                 let session = routes[id]
                 lock.unlock()
-                session?.receive(bytes)
+                guard let session else { continue }
+                // Refill, spend, and — dry — deliberately block this
+                // (background) read queue: the brake IS the point.
+                let now = DispatchTime.now()
+                let elapsed = Double(now.uptimeNanoseconds - floodRefillAt.uptimeNanoseconds) / 1e9
+                floodRefillAt = now
+                floodTokens = min(Double(Self.floodBurst), floodTokens + elapsed * Self.floodRate)
+                floodTokens -= Double(bytes.count)
+                session.receive(bytes)
+                if floodTokens < 0 {
+                    usleep(UInt32(min(0.25, -floodTokens / Self.floodRate) * 1e6))
+                }
             case .exited:
                 guard let (id, code) = WirePayload.parseExited(frame.payload) else { continue }
                 lock.lock()

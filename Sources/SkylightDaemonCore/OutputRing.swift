@@ -23,38 +23,43 @@ public struct OutputRing: Sendable {
     }
 
     public mutating func append(_ data: Data) {
-        guard !data.isEmpty else { return }
-        if data.count >= capacity {
+        data.withUnsafeBytes { append($0) }
+    }
+
+    /// The zero-copy lane: the daemon appends straight from its read
+    /// scratch — no intermediate Data churn on the flood path.
+    public mutating func append(_ raw: UnsafeRawBufferPointer) {
+        guard raw.count > 0, let base = raw.baseAddress else { return }
+        let source = base.assumingMemoryBound(to: UInt8.self)
+        if storage.count < capacity {
+            storage = [UInt8](repeating: 0, count: capacity)
+        }
+        if raw.count >= capacity {
             // One write larger than the whole ring: keep its tail.
-            storage = [UInt8](data.suffix(capacity))
-            if storage.count < capacity {
-                storage.append(contentsOf: [UInt8](repeating: 0, count: capacity - storage.count))
+            storage.withUnsafeMutableBufferPointer { dest in
+                dest.baseAddress!.update(from: source + (raw.count - capacity),
+                                         count: capacity)
             }
             head = 0
             filled = capacity
             return
         }
-        if storage.count < capacity {
-            storage = [UInt8](repeating: 0, count: capacity)
-        }
         var index = (head + filled) % capacity
-        data.withUnsafeBytes { raw in
-            let source = raw.bindMemory(to: UInt8.self)
-            var copied = 0
-            while copied < source.count {
-                let chunk = min(source.count - copied, capacity - index)
-                storage.replaceSubrange(index..<index + chunk,
-                                        with: source[copied..<copied + chunk])
+        var copied = 0
+        storage.withUnsafeMutableBufferPointer { dest in
+            while copied < raw.count {
+                let chunk = min(raw.count - copied, capacity - index)
+                (dest.baseAddress! + index).update(from: source + copied, count: chunk)
                 index = (index + chunk) % capacity
                 copied += chunk
             }
         }
-        let overflow = filled + data.count - capacity
+        let overflow = filled + raw.count - capacity
         if overflow > 0 {
             head = (head + overflow) % capacity
             filled = capacity
         } else {
-            filled += data.count
+            filled += raw.count
         }
     }
 
