@@ -91,6 +91,47 @@ final class DaemonE2ETests: XCTestCase {
         daemonProcess = nil
     }
 
+    func testSixSessionsAllSurviveAClientDeath() throws {
+        // The flagship at breadth: a whole workspace of sessions rides out
+        // the app dying, and every one is listed, alive, and replayable.
+        var conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .hello))
+        _ = try conn.expect(.helloReply)
+        let ids = (1...6).map { _ in UUID() }
+        // Spawn→confirm per session: the collector discards other ids'
+        // frames, so interleaved batch collection would drop them.
+        for (index, id) in ids.enumerated() {
+            let spawn = SpawnRequest(id: id,
+                                     argv: ["/bin/sh", "-c", "echo READY-\(index); exec cat"])
+            try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(spawn)))
+            try conn.sendResize(id)
+            _ = try conn.collectOutput(for: id, until: "READY-\(index)", timeout: 10)
+        }
+
+        conn.close()
+        usleep(300_000)
+        XCTAssertTrue(daemonProcess?.isRunning ?? false)
+
+        conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .hello))
+        let back = try JSONDecoder().decode(HelloReply.self,
+                                            from: try conn.expect(.helloReply).payload)
+        XCTAssertEqual(Set(back.sessions.map(\.id)), Set(ids))
+        XCTAssertTrue(back.sessions.allSatisfy(\.alive), "a session died with the client")
+        // Spot-check replay on the last one.
+        try conn.send(WireFrame(type: .attach, payload: WirePayload.uuidData(ids[5])))
+        let replay = try conn.collectOutput(for: ids[5], until: "READY-5")
+        XCTAssertTrue(replay.contains("READY-5"))
+
+        for id in ids {
+            try conn.send(WireFrame(type: .kill, payload: WirePayload.uuidData(id)))
+        }
+        conn.close()
+        for _ in 0..<50 where daemonProcess?.isRunning == true { usleep(100_000) }
+        XCTAssertFalse(daemonProcess?.isRunning ?? true)
+        daemonProcess = nil
+    }
+
     func testMegabyteReplayKeepsTheTailNotTheHead() throws {
         let id = UUID()
         var conn = try Conn(path: socketPath)

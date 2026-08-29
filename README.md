@@ -74,7 +74,8 @@ process — same pid, unbroken step count — still going when the app returns.*
   8,333µs), moves output at ~150 MB/s per core in ~11 MB of memory, and
   runs flow control end to end: a slow consumer blocks the child on its
   tty like any real terminal, and a detached flood is sampled in pulses
-  for under 1% CPU instead of pegging a core.
+  for under 1% CPU instead of pegging a core. Reproduce every number
+  yourself: `./scripts/bench.py`.
 - One terminal engine: Ghostty, embedded via GhosttyKit. kitty and iTerm are
   apps, not libraries — Skylight won't pretend to embed them.
 - No tabs. Sessions survive app relaunch, not reboot (launchd persistence
