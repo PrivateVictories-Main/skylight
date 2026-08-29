@@ -7,6 +7,21 @@ import SwiftUI
 enum Appearance {
     static let appearanceKey = "appearanceOverride"
     static let backgroundKey = "windowBackground"
+    static let terminalOpacityKey = "terminalOpacity"
+
+    /// The slider's floor keeps text readable over any desktop; 0 would be
+    /// an invisible terminal, which no one means.
+    static let terminalOpacityRange = 0.5...1.0
+    static let terminalOpacityDefault = 0.92
+
+    /// The stored terminal translucency, clamped so a hand-edited or stale
+    /// default can never produce an unreadable surface.
+    static var terminalOpacity: Double {
+        let stored = UserDefaults.standard.object(forKey: terminalOpacityKey) as? Double
+        return min(max(stored ?? terminalOpacityDefault,
+                       terminalOpacityRange.lowerBound),
+                   terminalOpacityRange.upperBound)
+    }
 
     /// Apply a stored appearance choice to the app. "system" clears the
     /// override so the OS setting rules again — including live changes.
@@ -25,6 +40,8 @@ enum Appearance {
 struct SettingsView: View {
     @AppStorage(Appearance.appearanceKey) private var appearance = "system"
     @AppStorage(Appearance.backgroundKey) private var background = "glass"
+    @AppStorage(Appearance.terminalOpacityKey)
+    private var terminalOpacity = Appearance.terminalOpacityDefault
 
     var body: some View {
         Form {
@@ -46,10 +63,22 @@ struct SettingsView: View {
                 : "The window sits on a solid, standard background.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
+
+            // Live on every open terminal, not a promise about future ones.
+            Slider(value: $terminalOpacity, in: Appearance.terminalOpacityRange) {
+                Text("Terminal Background")
+            } minimumValueLabel: {
+                Text("Clear").font(.system(size: 11)).foregroundStyle(.secondary)
+            } maximumValueLabel: {
+                Text("Solid").font(.system(size: 11)).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 380)
         .fixedSize()
         .onChange(of: appearance) { _, raw in Appearance.apply(raw) }
+        .onChange(of: terminalOpacity) { _, _ in
+            AppState.shared?.sessions.refreshSurfaceOpacity()
+        }
     }
 }

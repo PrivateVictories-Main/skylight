@@ -973,18 +973,44 @@ final class LiveSessionStore {
         return [flag] + spec.arguments
     }
 
-    func terminal(for instance: TerminalInstance) -> TerminalViewState {
-        if let existing = terminals[instance.id] { return existing }
-        // Glass + breathing room: translucency (never below 0.9 — readability beats effect, spec Addendum A1) plus balanced inner padding so
-        // no row — least of all an agent's bottom status line — ever clips
-        // against the rounded chrome.
-        let config = """
-        background-opacity = 0.92
+    /// The generated per-surface config: translucency plus balanced inner
+    /// padding so no row — least of all an agent's bottom status line — ever
+    /// clips against the rounded chrome. The opacity is the Settings slider's
+    /// stored choice (default 0.92 — readability beats effect, spec Addendum
+    /// A1; going clearer than that is the user's own deliberate call, floored
+    /// where text still reads).
+    static func surfaceConfig() -> String {
+        """
+        background-opacity = \(String(format: "%.2f", Appearance.terminalOpacity))
         window-padding-x = 10
         window-padding-y = 10
         window-padding-balance = true
 
         """
+    }
+
+    /// Apply the current stored opacity to every LIVE surface — the slider
+    /// works on open terminals, not just future ones. Coalesced: a drag
+    /// fires continuously, ghostty re-parses a config per apply, and the
+    /// latest value is read at fire time, so ≤20 applies/second always
+    /// converge on where the thumb stopped.
+    private var opacityRefreshQueued = false
+    func refreshSurfaceOpacity() {
+        guard !opacityRefreshQueued else { return }
+        opacityRefreshQueued = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return }
+            self.opacityRefreshQueued = false
+            let config = Self.surfaceConfig()
+            for terminal in self.terminals.values {
+                terminal.controller.updateConfigSource(.generated(config))
+            }
+        }
+    }
+
+    func terminal(for instance: TerminalInstance) -> TerminalViewState {
+        if let existing = terminals[instance.id] { return existing }
+        let config = Self.surfaceConfig()
         // Record what this surface ACTUALLY gets — the banner's source of
         // truth for the life of the session, immune to installs/uninstalls
         // that happen after the process is already running.

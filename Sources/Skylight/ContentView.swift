@@ -571,6 +571,12 @@ struct EmptyDetail: View {
 /// that fills the detail pane with a terminal wears this and nothing else.
 private struct TerminalPanel: ViewModifier {
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
+    // The backing tracks the surface's own translucency: ghostty's
+    // background-opacity composites OVER this layer, so a slider that only
+    // thinned the surface would still hit a near-solid backing and read as
+    // dead. Same stored value, both layers, and the glass actually arrives.
+    @AppStorage(Appearance.terminalOpacityKey)
+    private var terminalOpacity = Appearance.terminalOpacityDefault
     let instance: TerminalInstance
 
     func body(content: Content) -> some View {
@@ -578,7 +584,10 @@ private struct TerminalPanel: ViewModifier {
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.92),
+            .background(Color(nsColor: .textBackgroundColor)
+                            .opacity(min(max(terminalOpacity,
+                                             Appearance.terminalOpacityRange.lowerBound),
+                                         Appearance.terminalOpacityRange.upperBound)),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             // Hard clip on top of the layer mask: ghostty's Metal surface is
             // sized in whole cells and overhangs a few pixels on the right —
