@@ -41,11 +41,14 @@ public enum Catalog {
                 installCommand: "npm i -g @openai/codex", brand: .openai,
                 autonomyFlag: "--dangerously-bypass-approvals-and-sandbox"),
         Harness(id: "gemini", displayName: "Gemini CLI",
-                installCommand: "npm i -g @google/gemini-cli", brand: .gemini),
+                installCommand: "npm i -g @google/gemini-cli", brand: .gemini,
+                autonomyFlag: "--yolo"),
         Harness(id: "copilot", displayName: "Copilot CLI",
-                installCommand: "npm i -g @github/copilot", brand: .copilot),
+                installCommand: "npm i -g @github/copilot", brand: .copilot,
+                autonomyFlag: "--allow-all-tools"),
         Harness(id: "cursor-agent", displayName: "Cursor CLI",
-                installCommand: "curl https://cursor.com/install -fsS | bash", brand: .cursor),
+                installCommand: "curl https://cursor.com/install -fsS | bash", brand: .cursor,
+                autonomyFlag: "--force"),
         Harness(id: "qwen", displayName: "Qwen Code",
                 installCommand: "npm i -g @qwen-code/qwen-code", brand: .qwen),
         Harness(id: "amp", displayName: "Amp",
@@ -53,6 +56,18 @@ public enum Catalog {
         Harness(id: "opencode", displayName: "OpenCode",
                 installCommand: "npm i -g opencode-ai", brand: .opencode,
                 autonomyFlag: "--auto"),
+        // The 2026 wave — real adoption, official CLIs, no official vector
+        // marks yet (brand nil = glyph, per the never-fake-a-mark rule).
+        // Autonomy flags stay nil until verified from live --help: droid's
+        // documented `--auto <level>` takes a value, which the single-word
+        // flag contract here cannot carry honestly.
+        Harness(id: "droid", displayName: "Droid",
+                installCommand: "curl -fsSL https://app.factory.ai/cli | sh", brand: nil),
+        Harness(id: "goose", displayName: "Goose",
+                installCommand: "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash",
+                brand: nil),
+        Harness(id: "crush", displayName: "Crush",
+                installCommand: "npm i -g @charmland/crush", brand: nil),
     ]
 
     /// /etc/shells → shell paths, comments and blank lines stripped.

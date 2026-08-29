@@ -46,10 +46,10 @@ final class CatalogTests: XCTestCase {
     func testHarnessCatalogShape() {
         XCTAssertEqual(Catalog.harnesses.map(\.id),
                        ["claude", "codex", "gemini", "copilot", "cursor-agent",
-                        "qwen", "amp", "opencode"])
+                        "qwen", "amp", "opencode", "droid", "goose", "crush"])
         XCTAssertEqual(Catalog.harnesses.map(\.brand),
                        [.claudeCode, .openai, .gemini, .copilot, .cursor,
-                        .qwen, .amp, .opencode])
+                        .qwen, .amp, .opencode, nil, nil, nil])
         XCTAssertEqual(Catalog.harnesses.first?.brand, .claudeCode)
         // Install commands are user-visible promises — pin them all.
         XCTAssertEqual(Catalog.harnesses.map(\.installCommand), [
@@ -61,21 +61,29 @@ final class CatalogTests: XCTestCase {
             "npm i -g @qwen-code/qwen-code",
             "npm i -g @sourcegraph/amp",
             "npm i -g opencode-ai",
+            "curl -fsSL https://app.factory.ai/cli | sh",
+            "curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash",
+            "npm i -g @charmland/crush",
         ])
-        XCTAssertTrue(Catalog.harnesses.allSatisfy { $0.brand != nil })
         // Autonomy flags are typed straight onto a command line on Ryan's
-        // machine — pin all eight, nils included. A nil here means "not
+        // machine — pin them all, nils included. A nil here means "not
         // verified from live --help output", and inventing one would either
         // break the launch or grant something the toggle never promised.
+        // (gemini --yolo, copilot --allow-all-tools, cursor --force verified
+        // from live help 2026-08-29; qwen REMOVED its yolo flag upstream, so
+        // its nil is a fact, not an omission.)
         XCTAssertEqual(Catalog.harnesses.map(\.autonomyFlag), [
             "--dangerously-skip-permissions",              // claude
             "--dangerously-bypass-approvals-and-sandbox",  // codex
-            nil,                                           // gemini
-            nil,                                           // copilot
-            nil,                                           // cursor-agent
+            "--yolo",                                      // gemini
+            "--allow-all-tools",                           // copilot
+            "--force",                                     // cursor-agent
             nil,                                           // qwen
             nil,                                           // amp
             "--auto",                                      // opencode
+            nil,                                           // droid
+            nil,                                           // goose
+            nil,                                           // crush
         ])
         // No flag may carry whitespace: they are prepended into ghostty's
         // word-split command line, where a space would silently become a

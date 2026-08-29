@@ -49,6 +49,34 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Drop a terminal onto an already-visible canvas: judge the recenter — the board pans to center the new tile. If that feels like a yank, say so.
 - [ ] With an agent terminal whose CLI is NOT installed (or temporarily renamed away): the tile runs your shell and a capsule banner says which CLI is missing and how to install it.
 - [ ] Magnet check at distance: a tile far away VERTICALLY still magnets your X axis — judge whether that helps or surprises.
+- [ ] Zoom: pinch on the trackpad — cursor-anchored, snaps to exactly 100%
+      when close; ⌘+/⌘−/⌘0/⌘1 from the menu; at any zoom other than 100%
+      clicking a tile flies to it at 100% and typing works immediately after.
+- [ ] Zoom crossing: sit at ~80% (⌘0 on a big board), press ⌘+ once —
+      it must land exactly ON 100% (typable), never at 105%.
+- [ ] Overview drag: zoomed out, drag a tile — it moves (doesn't dive);
+      a plain click dives. Resize badges are hidden at overview zoom.
+- [ ] Window drag: with the sidebar open, drag the window by the bottom-left
+      bar band; with it collapsed, by the slim top strip. During a tile drag
+      the window must NOT move; after ⇧⌘T pressed mid-tile-drag (canvas swaps
+      away), the window must still be draggable.
+- [ ] Edge-resize cursors: hover each edge/corner of a tile — correct arrows,
+      no cursor stuck after leaving; resize from every edge, far edge never
+      moves (also after a window-shrink reflow made tiles off-grid).
+- [ ] Arguments with spaces: New sheet → agent + `--dir "/tmp/My Dir"` style
+      argument → the CLI receives it as ONE argument.
+- [ ] Session end honesty: run a ⇧⌘T terminal, type `exit` — the sidebar row
+      says "Session ended"; Restart Session brings it back live; Delete's
+      warning says the session already ended.
+- [ ] Quit confirm: with a live terminal, ⌘Q asks; Cancel keeps everything;
+      with no live sessions it quits silently.
+- [ ] Full autonomy toggles: per-harness switch in ⌘T names the exact flag;
+      newly verified — gemini `--yolo`, copilot `--allow-all-tools`,
+      cursor `--force`.
 - [ ] Idle CPU ≈ 0% in Activity Monitor with 3 idle terminals after a
       minute; drag a tile in circles — smooth the whole way on the 45".
+- [ ] Mouse-wheel pan: free-spin the MX wheel over a canvas — smooth, no
+      hitching (commits now settle trailing, not per notch).
 - [ ] `SKYLIGHT_APPEARANCE=dark` and `=light` both look clean.
+- [ ] Focus transition: enter/leave focus mode repeatedly — the terminal
+      surface must never go blank or vanish after the cross-fade.
