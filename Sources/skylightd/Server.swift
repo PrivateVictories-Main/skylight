@@ -505,10 +505,16 @@ final class Server: @unchecked Sendable {
                 guard changed else { return }
                 pending.generation += 1
                 let generation = pending.generation
+                // Snappy by default, patient when it matters: the FIRST size
+                // births in 60ms — most surfaces report their settled grid
+                // immediately — and only an actually-moving grid (a second,
+                // DIFFERENT size cancels the fast timer via its generation)
+                // pays the full quiet period.
+                let settle = generation == 1 ? 0.06 : 0.2
                 // Identity- and generation-guarded: a kill-then-respawn
                 // replaces the pending object, and a newer size obsoletes
                 // this timer.
-                queue.asyncAfter(deadline: .now() + 0.2) { [weak self, weak pending] in
+                queue.asyncAfter(deadline: .now() + settle) { [weak self, weak pending] in
                     guard let self, let pending,
                           self.pendingSpawns[resize.id] === pending,
                           pending.generation == generation,

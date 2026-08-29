@@ -70,8 +70,8 @@ process — same pid, unbroken step count — still going when the app returns.*
 - No background cost worth naming — measured, not hoped: with live
   terminals on screen the app idles around 0.2% CPU; the session daemon
   holds steady at 0.0% CPU and ~5 MB. Hidden surfaces render nothing.
-  The keeper adds ~150µs to a keystroke's round trip (a 120Hz frame is
-  8,333µs), moves output at >130 MB/s per core in ~11 MB of memory, and
+  The keeper adds ~25µs to a keystroke's round trip (a 120Hz frame is
+  8,333µs), moves output at ~150 MB/s per core in ~11 MB of memory, and
   runs flow control end to end: a slow consumer blocks the child on its
   tty like any real terminal, and a detached flood is sampled in pulses
   for under 1% CPU instead of pegging a core.

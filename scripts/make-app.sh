@@ -3,7 +3,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-CONFIG="${1:-debug}"
+# Release by default: the bundle is the artifact people RUN, and Swift's
+# debug mode is several times slower in the daemon's hot paths. The dev
+# loop (swift build / swift test) is unaffected; pass "debug" to override.
+CONFIG="${1:-release}"
 swift build -c "$CONFIG"
 
 BIN=".build/$CONFIG/Skylight"
