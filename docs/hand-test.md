@@ -99,3 +99,11 @@ then walk top to bottom. Every line should feel instant.
       daemon existed, including the ⌘Q warning dialog.
 - [ ] A session that ends while the app is CLOSED (exit the shell via ssh
       or kill it): next launch shows its final output and "Session ended".
+- [ ] Settings (⌘,): flip Appearance between Light/Dark/System — instant,
+      including ghostty's own colors; System tracks a live OS toggle.
+- [ ] Glass ↔ Flat: flip Window Background — the SIDEBAR goes flat too
+      (its material stops sampling the desktop), and back. No relaunch.
+- [ ] Terminal Background slider: with a busy terminal open, drag from
+      Solid toward Clear — the open terminal follows the thumb live, glass
+      arriving through the text area; canvas tiles follow too. Choices all
+      survive a relaunch.

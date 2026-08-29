@@ -62,6 +62,10 @@ process — same pid, unbroken step count — still going when the app returns.*
   process ended says "Session ended" instead of posing as live, with a
   one-click restart. And if the session keeper ever isn't there to catch
   them, quitting warns before ending live sessions.
+- **The look is yours** — one small Settings pane (⌘,): light/dark/system,
+  window glass or a solid flat background, and a terminal translucency
+  slider from clear to solid. Every control applies instantly — the slider
+  moves every open terminal live, not just future ones.
 
 ## What it deliberately isn't
 
