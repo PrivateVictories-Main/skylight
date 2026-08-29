@@ -110,11 +110,18 @@ public struct HelloReply: Codable, Equatable, Sendable {
     public var protocolVersion: Int
     public var daemonPID: Int32
     public var sessions: [SessionInfo]
+    /// One app at a time: a second concurrent client gets busy=true and no
+    /// sessions — it falls back to the exec lane instead of fighting the
+    /// first app's surfaces for ptys. Optional so both directions decode
+    /// across the version that introduced it.
+    public var busy: Bool?
 
-    public init(protocolVersion: Int, daemonPID: Int32, sessions: [SessionInfo]) {
+    public init(protocolVersion: Int, daemonPID: Int32, sessions: [SessionInfo],
+                busy: Bool? = nil) {
         self.protocolVersion = protocolVersion
         self.daemonPID = daemonPID
         self.sessions = sessions
+        self.busy = busy
     }
 }
 

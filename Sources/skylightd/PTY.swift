@@ -24,7 +24,9 @@ enum PTY {
     /// the socket, the log) in the child, so hygiene is structural.
     static func spawn(argv: [String], cwd: String?,
                       extraEnv: [String: String]) throws -> SpawnedChild {
-        precondition(!argv.isEmpty)
+        // Thrown, never trapped: argv arrives over the socket, and a daemon
+        // must not carry a crash primitive in client-controlled data.
+        guard !argv.isEmpty else { throw PTYError.spawnFailed(EINVAL) }
         var master: Int32 = -1
         var slave: Int32 = -1
         var size = winsize(ws_row: 24, ws_col: 80, ws_xpixel: 0, ws_ypixel: 0)

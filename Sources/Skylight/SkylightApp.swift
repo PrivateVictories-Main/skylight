@@ -114,9 +114,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        // A debounced pan write may still be pending — flush the real state.
         MainActor.assumeIsolated {
+            // A debounced pan write may still be pending — flush the real
+            // state. And a delete's kill frame may still be queued for the
+            // daemon: drain it, or the next launch inherits a session whose
+            // instance is gone (the orphan sweep would heal it, but only if
+            // a terminal is ever opened).
             AppState.shared?.persist()
+            AppState.shared?.sessions.flushDaemon()
         }
     }
 }

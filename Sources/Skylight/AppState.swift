@@ -179,6 +179,9 @@ final class AppState: ObservableObject {
         sessions.lookupKnownInstanceIDs = { [weak self] in
             Set(self?.instances.map(\.id) ?? [])
         }
+        // Connect to the keeper in the background NOW — the first surface's
+        // render should find the answer waiting, not go looking for it.
+        sessions.prewarmDaemon()
         Self.shared = self
 
         $selection
@@ -718,37 +721,90 @@ final class LiveSessionStore {
     /// Last visibility pushed per surface, so transitions cost one call and
     /// steady states cost none (the coordinator's own flag is internal).
     private var surfaceVisibility: [UUID: Bool] = [:]
-    /// The session keeper, connected lazily at the first terminal creation.
-    /// nil after bootstrap = the exec lane carries this whole app run
-    /// (SKYLIGHT_NO_DAEMON, or the daemon would not start) — the app then
-    /// behaves exactly as it did before sessions could survive.
+    /// The session keeper. nil = the exec lane carries new terminals
+    /// (SKYLIGHT_NO_DAEMON, the daemon would not start, or the connection
+    /// was lost mid-run) — the app then behaves exactly as it did before
+    /// sessions could survive, truthful quit dialog included.
     private var daemonClient: DaemonClient?
     private var daemonBootstrapped = false
+    /// Prewarm rendezvous: bootstrap runs on a background queue starting at
+    /// app init so the first terminal's render doesn't pay for the connect;
+    /// the semaphore covers the race where the render wins anyway. The box
+    /// is the cross-isolation handoff slot (lock-guarded, like MonitorBox).
+    private final class PrewarmBox: @unchecked Sendable {
+        let lock = NSLock()
+        let done = DispatchSemaphore(value: 0)
+        var result: DaemonClient?
+    }
+    private var prewarmStarted = false
+    private let prewarm = PrewarmBox()
 
     /// The workspace's instance ids, so bootstrap can kill daemon sessions
-    /// whose instance no longer exists (defensive; unreachable today).
+    /// whose instance no longer exists (reachable: a delete raced by an
+    /// instant quit can leave its kill frame undelivered).
     var lookupKnownInstanceIDs: (() -> Set<UUID>)?
 
     /// True when quitting parts with running sessions instead of ending them.
     var sessionsSurviveQuit: Bool { daemonClient != nil }
 
-    /// ⌘Q's "end them anyway" path, and nothing else's.
-    func endAllDaemonSessions() { daemonClient?.killAll() }
+    /// Let queued daemon frames (a just-sent kill) drain before process exit.
+    func flushDaemon() { daemonClient?.flush() }
+
+    /// Start connecting to the keeper now, off the main thread — by the time
+    /// the first surface asks, the answer is usually already here.
+    func prewarmDaemon() {
+        guard !prewarmStarted else { return }
+        prewarmStarted = true
+        let box = prewarm
+        DispatchQueue.global(qos: .userInitiated).async {
+            let client = DaemonClient.bootstrap()
+            box.lock.lock()
+            box.result = client
+            box.lock.unlock()
+            box.done.signal()
+        }
+    }
 
     private func daemon() -> DaemonClient? {
         if !daemonBootstrapped {
             daemonBootstrapped = true
-            daemonClient = DaemonClient.bootstrap()
-            daemonClient?.onExited = { [weak self] id, _ in
-                self?.onSessionEnd?(id)
+            if prewarmStarted {
+                // Bounded wait: covers a first render that beats the
+                // background connect by a few hundred ms; a wedged daemon
+                // already gave up inside bootstrap's own short deadlines.
+                _ = prewarm.done.wait(timeout: .now() + 6)
+                prewarm.lock.lock()
+                daemonClient = prewarm.result
+                prewarm.lock.unlock()
+            } else {
+                daemonClient = DaemonClient.bootstrap()
             }
-            if let client = daemonClient, let known = lookupKnownInstanceIDs?() {
-                for id in client.inheritedSessions.keys where !known.contains(id) {
-                    client.kill(id)
-                }
-            }
+            configureDaemonClient()
         }
         return daemonClient
+    }
+
+    private func configureDaemonClient() {
+        guard let client = daemonClient else { return }
+        client.onExited = { [weak self] id, _ in
+            self?.onSessionEnd?(id)
+        }
+        client.onConnectionLost = { [weak self] ids in
+            guard let self else { return }
+            // The keeper died under these sessions: their lanes are dead,
+            // and pretending otherwise would freeze terminals silently and
+            // let ⌘Q claim survival while losing everything. Ended is the
+            // honest state on offer — and Restart works (exec lane).
+            self.daemonClient = nil
+            for id in ids where self.terminals[id] != nil {
+                self.onSessionEnd?(id)
+            }
+        }
+        if let known = lookupKnownInstanceIDs?() {
+            for id in client.inheritedSessions.keys where !known.contains(id) {
+                client.kill(id)
+            }
+        }
     }
 
     /// Every instance with a surface right now — what quitting would kill.
@@ -940,22 +996,6 @@ final class LiveSessionStore {
            !FileManager.default.isExecutableFile(atPath: shell) {
             outcome.missingShell = shell
         }
-        // The command travels as PER-SURFACE configuration, not a line in the
-        // generated config file: both reach the same ghostty field with the
-        // same word-splitting (so quoted() still matters), but a string that
-        // never crosses a line-based file cannot become a second directive —
-        // the injection class dies structurally, not just by sanitizing.
-        var command: String?
-        if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
-            // Agent terminal: ghostty runs the CLI directly as the surface command.
-            command = ([binary] + autonomousArguments(for: instance.spec, harness: harness))
-                .map(Self.quoted).joined(separator: " ")
-        } else if let shell = instance.spec.shellPath,
-                  FileManager.default.isExecutableFile(atPath: shell) {
-            // A shell that vanished since the spec was saved falls back to the
-            // login shell (the default branch); the banner says so (Task 9).
-            command = Self.quoted(shell)
-        }
         launchOutcomes[instance.id] = outcome
         let state = TerminalViewState(configSource: .generated(config),
                                       terminalConfiguration: .default)
@@ -990,6 +1030,24 @@ final class LiveSessionStore {
             }
             state.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
         } else {
+            // The exec lane. The command travels as PER-SURFACE configuration,
+            // not a line in the generated config file: both reach the same
+            // ghostty field with the same word-splitting (so quoted() still
+            // matters), but a string that never crosses a line-based file
+            // cannot become a second directive — the injection class dies
+            // structurally, not just by sanitizing.
+            var command: String?
+            if let harness = instance.spec.harness,
+               let binary = cachedResolveHarness(harness) {
+                // Agent terminal: ghostty runs the CLI as the surface command.
+                command = ([binary] + autonomousArguments(for: instance.spec, harness: harness))
+                    .map(Self.quoted).joined(separator: " ")
+            } else if let shell = instance.spec.shellPath,
+                      FileManager.default.isExecutableFile(atPath: shell) {
+                // A shell that vanished since the spec was saved falls back to
+                // the login shell (the default branch); the banner says so.
+                command = Self.quoted(shell)
+            }
             state.configuration = TerminalSurfaceOptions(
                 backend: .exec,
                 workingDirectory: instance.spec.workingDirectory

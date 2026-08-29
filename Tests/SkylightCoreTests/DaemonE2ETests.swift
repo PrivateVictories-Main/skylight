@@ -90,6 +90,38 @@ final class DaemonE2ETests: XCTestCase {
         daemonProcess = nil
     }
 
+    func testHostileSpawnPayloadsGetHonestExitsNotCrashes() throws {
+        var conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .hello))
+        _ = try conn.expect(.helloReply)
+
+        // Empty argv: valid JSON, unrunnable request — once a crash primitive.
+        let empty = SpawnRequest(id: UUID(), argv: [])
+        try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(empty)))
+        let exited = try conn.expect(.exited)
+        XCTAssertEqual(WirePayload.parseExited(exited.payload)?.code, 127)
+
+        // Nonexistent binary: same honest ending.
+        let missing = SpawnRequest(id: UUID(), argv: ["/no/such/binary"])
+        try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(missing)))
+        XCTAssertEqual(WirePayload.parseExited(try conn.expect(.exited).payload)?.code, 127)
+
+        // A deleted cwd falls back to home instead of failing the spawn.
+        let homeless = SpawnRequest(id: UUID(),
+                                    argv: ["/bin/sh", "-c", "pwd; exec cat"],
+                                    cwd: "/no/such/dir/anywhere")
+        try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(homeless)))
+        let output = try conn.collectOutput(for: homeless.id,
+                                            until: NSHomeDirectory())
+        XCTAssertTrue(output.contains(NSHomeDirectory()))
+
+        try conn.send(WireFrame(type: .kill, payload: WirePayload.uuidData(homeless.id)))
+        _ = try? conn.expect(.exited)
+        conn.close()
+        daemonProcess?.terminate()
+        daemonProcess = nil
+    }
+
     // MARK: - Minimal blocking client
 
     private struct Conn {

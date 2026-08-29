@@ -23,20 +23,44 @@ final class DaemonClient: @unchecked Sendable {
     private var jigglePending: Set<UUID> = []
 
     /// What the daemon already held when we connected, by session id.
-    let inheritedSessions: [UUID: SessionInfo]
+    /// Mutated (main actor only, like every store-facing call here) when a
+    /// session is killed: a restarted dead-inherited id must SPAWN next
+    /// time, not re-attach to a corpse the kill just removed — that path
+    /// used to produce a permanently blank terminal.
+    private(set) var inheritedSessions: [UUID: SessionInfo]
 
     /// A session's process ended (delivered on the main actor).
     var onExited: (@MainActor (UUID, Int32) -> Void)?
+    /// The daemon is gone (crash, protocol error). Carries every id this
+    /// client was routing, so the store can stop lying about them.
+    var onConnectionLost: (@MainActor ([UUID]) -> Void)?
+    /// Dead-inherited attaches whose EXITED must wait for the surface: a
+    /// finish delivered before the surface mounts is dropped by the library,
+    /// and the in-surface ended state would never render. The first resize
+    /// proves the surface exists; the code waits in pendingExitCodes.
+    private var deferExitUntilResize: Set<UUID> = []
+    private var pendingExitCodes: [UUID: Int32] = [:]
 
-    private init(fd: Int32, inherited: [SessionInfo]) {
+    private init(fd: Int32, inherited: [SessionInfo], leftover: Data) {
         self.fd = fd
+        buffer = leftover   // before resume: the queue owns it afterwards
         inheritedSessions = Dictionary(uniqueKeysWithValues: inherited.map { ($0.id, $0) })
+        // The handshake's receive timeout must not survive onto the
+        // streaming fd: a spurious source wake would block a read for the
+        // timeout and then read as a false connection loss.
+        var timeout = timeval(tv_sec: 0, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                   &timeout, socklen_t(MemoryLayout<timeval>.size))
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
         source.setEventHandler { [weak self] in self?.readAvailable() }
         source.setCancelHandler { close(fd) }
         source.resume()
         readSource = source
     }
+
+    /// Drain queued outbound work (used at quit so a just-sent kill frame
+    /// is not lost to process exit).
+    func flush() { queue.sync {} }
 
     // MARK: - Bootstrap
 
@@ -54,9 +78,7 @@ final class DaemonClient: @unchecked Sendable {
             if let fd = connectSocket(path: socketPath, retries: attempt == 0 ? 1 : 20) {
                 switch handshake(fd: fd) {
                 case let .compatible(sessions, leftover):
-                    let client = DaemonClient(fd: fd, inherited: sessions)
-                    client.buffer = leftover
-                    return client
+                    return DaemonClient(fd: fd, inherited: sessions, leftover: leftover)
                 case let .stale(pid):
                     // A daemon from an older build: it dies (HUPping its
                     // children — they were that build's sessions), and a
@@ -86,9 +108,15 @@ final class DaemonClient: @unchecked Sendable {
     }
 
     private static func connectSocket(path: String, retries: Int) -> Int32? {
-        for _ in 0..<max(1, retries) {
+        let attempts = max(1, retries)
+        for attempt in 0..<attempts {
             let fd = socket(AF_UNIX, SOCK_STREAM, 0)
             guard fd >= 0 else { return nil }
+            // The daemon can die between our write and its read; without
+            // this, that write raises SIGPIPE and kills the whole app.
+            var one: Int32 = 1
+            setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE,
+                       &one, socklen_t(MemoryLayout<Int32>.size))
             var addr = sockaddr_un()
             addr.sun_family = sa_family_t(AF_UNIX)
             path.withCString { cPath in
@@ -104,7 +132,7 @@ final class DaemonClient: @unchecked Sendable {
             }
             if result == 0 { return fd }
             close(fd)
-            usleep(100_000)
+            if attempt < attempts - 1 { usleep(100_000) }
         }
         return nil
     }
@@ -116,18 +144,25 @@ final class DaemonClient: @unchecked Sendable {
     }
 
     private static func handshake(fd: Int32) -> HandshakeResult {
-        var timeout = timeval(tv_sec: 3, tv_usec: 0)
+        // Bounded tightly: this runs before the first terminal can render,
+        // and every worst case here is main-thread stall.
+        var timeout = timeval(tv_sec: 1, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
                    &timeout, socklen_t(MemoryLayout<timeval>.size))
         let hello = Wire.encode(WireFrame(type: .hello))
         let sent = hello.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
         guard sent == hello.count else { return .failed }
         var buffer = Data()
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(2)
         while Date() < deadline {
             var chunk = [UInt8](repeating: 0, count: 64 * 1024)
             let n = read(fd, &chunk, chunk.count)
-            guard n > 0 else { continue }
+            if n == 0 { return .failed }               // EOF: daemon died on us
+            if n < 0 {
+                if errno == EINTR { continue }
+                if errno == EAGAIN { continue }        // recv timeout; deadline decides
+                return .failed
+            }
             buffer.append(contentsOf: chunk[0..<n])
             guard let frames = try? Wire.decodeAvailable(&buffer),
                   let reply = frames.first(where: { $0.type == .helloReply })
@@ -135,6 +170,7 @@ final class DaemonClient: @unchecked Sendable {
             guard let decoded = try? JSONDecoder().decode(HelloReply.self,
                                                           from: reply.payload)
             else { return .failed }
+            guard decoded.busy != true else { return .failed }   // one app at a time
             guard decoded.protocolVersion == Wire.protocolVersion else {
                 return .stale(decoded.daemonPID)
             }
@@ -153,14 +189,14 @@ final class DaemonClient: @unchecked Sendable {
 
     /// Reattach to a session the daemon already holds. Replay arrives as
     /// ordinary output; a live one gets the repaint jiggle on its first
-    /// resize.
+    /// resize; a dead one gets its finish deferred to the first resize —
+    /// delivered before the surface mounts, the library drops it and the
+    /// in-surface ended state would never render.
     func attach(_ id: UUID, session: InMemoryTerminalSession, live: Bool) {
         register(session, for: id)
-        if live {
-            lock.lock()
-            jigglePending.insert(id)
-            lock.unlock()
-        }
+        lock.lock()
+        if live { jigglePending.insert(id) } else { deferExitUntilResize.insert(id) }
+        lock.unlock()
         enqueue(WireFrame(type: .attach, payload: WirePayload.uuidData(id)))
     }
 
@@ -171,6 +207,8 @@ final class DaemonClient: @unchecked Sendable {
     func resize(_ payload: ResizePayload) {
         lock.lock()
         let jiggle = jigglePending.remove(payload.id) != nil
+        let deliverExit = pendingExitCodes.removeValue(forKey: payload.id)
+        let session = routes[payload.id]
         lock.unlock()
         if jiggle, payload.rows > 1 {
             var smaller = payload
@@ -178,25 +216,25 @@ final class DaemonClient: @unchecked Sendable {
             enqueue(WireFrame(type: .resize, payload: WirePayload.encodeResize(smaller)))
         }
         enqueue(WireFrame(type: .resize, payload: WirePayload.encodeResize(payload)))
+        // The resize came from the surface — it exists now; a deferred
+        // dead-inherited finish can finally land where it will render.
+        if let deliverExit {
+            session?.finish(exitCode: UInt32(bitPattern: deliverExit),
+                            runtimeMilliseconds: 0)
+        }
     }
 
     func kill(_ id: UUID) {
         lock.lock()
         routes.removeValue(forKey: id)
         jigglePending.remove(id)
+        deferExitUntilResize.remove(id)
+        pendingExitCodes.removeValue(forKey: id)
         lock.unlock()
+        // Killed means gone from the daemon too: a later terminal(for:) under
+        // this id must SPAWN, never re-attach to the corpse this removed.
+        inheritedSessions.removeValue(forKey: id)
         enqueue(WireFrame(type: .kill, payload: WirePayload.uuidData(id)))
-    }
-
-    /// ⌘Q "Quit and End Sessions": everything this client routes, ended.
-    func killAll() {
-        lock.lock()
-        let ids = Array(routes.keys)
-        routes.removeAll()
-        lock.unlock()
-        for id in ids {
-            enqueue(WireFrame(type: .kill, payload: WirePayload.uuidData(id)))
-        }
     }
 
     private func register(_ session: InMemoryTerminalSession, for id: UUID) {
@@ -227,24 +265,14 @@ final class DaemonClient: @unchecked Sendable {
     private func readAvailable() {
         var chunk = [UInt8](repeating: 0, count: 64 * 1024)
         let n = read(fd, &chunk, chunk.count)
-        guard n > 0 else {
-            // The keeper is gone. Surfaces freeze where they are; the exec
-            // fallback would need new surfaces, and silently swapping a
-            // running terminal is worse than an honest stall. Rare enough
-            // to log and live with.
-            NSLog("Skylight: daemon connection lost")
-            readSource?.cancel()
-            readSource = nil
-            fd = -1
-            return
+        if n < 0 {
+            if errno == EAGAIN || errno == EINTR { return }
+            return connectionLost("read error \(errno)")
         }
+        guard n > 0 else { return connectionLost("EOF") }
         buffer.append(contentsOf: chunk[0..<n])
         guard let frames = try? Wire.decodeAvailable(&buffer) else {
-            NSLog("Skylight: daemon protocol error")
-            readSource?.cancel()
-            readSource = nil
-            fd = -1
-            return
+            return connectionLost("protocol error")
         }
         for frame in frames {
             switch frame.type {
@@ -257,15 +285,48 @@ final class DaemonClient: @unchecked Sendable {
             case .exited:
                 guard let (id, code) = WirePayload.parseExited(frame.payload) else { continue }
                 lock.lock()
-                let session = routes.removeValue(forKey: id)
+                let deferred = deferExitUntilResize.remove(id) != nil
+                let session: InMemoryTerminalSession?
+                if deferred {
+                    session = routes[id]   // route survives for the deferred finish
+                    if session != nil { pendingExitCodes[id] = code }
+                } else {
+                    session = routes.removeValue(forKey: id)
+                }
                 lock.unlock()
-                session?.finish(exitCode: UInt32(bitPattern: code), runtimeMilliseconds: 0)
+                guard let session else { continue }   // ghost echo for a deleted id
+                if !deferred {
+                    session.finish(exitCode: UInt32(bitPattern: code),
+                                   runtimeMilliseconds: 0)
+                }
                 if let onExited {
                     Task { @MainActor in onExited(id, code) }
                 }
             default:
                 break
             }
+        }
+    }
+
+    /// The keeper is gone. The surfaces cannot be silently swapped to the
+    /// exec lane (a running terminal must never be secretly replaced), so
+    /// the store is told exactly which ids just became dead lanes — it marks
+    /// them ended, restores the truthful quit dialog, and routes future
+    /// terminals to the exec lane.
+    private func connectionLost(_ reason: String) {
+        NSLog("Skylight: daemon connection lost (\(reason))")
+        readSource?.cancel()
+        readSource = nil
+        fd = -1
+        lock.lock()
+        let ids = Array(routes.keys)
+        routes.removeAll()
+        jigglePending.removeAll()
+        deferExitUntilResize.removeAll()
+        pendingExitCodes.removeAll()
+        lock.unlock()
+        if let onConnectionLost {
+            Task { @MainActor in onConnectionLost(ids) }
         }
     }
 }

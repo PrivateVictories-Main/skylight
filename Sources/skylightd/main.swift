@@ -11,6 +11,9 @@ signal(SIGPIPE, SIG_IGN)
 // setsid fails harmlessly if we already lead a session.
 _ = setsid()
 _ = chdir("/")
+// Everything this process creates — socket, lock, log — is user-only from
+// birth; the later chmod is belt-and-braces, not the mechanism.
+umask(0o077)
 
 let supportDir = FileManager.default
     .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
