@@ -4,6 +4,7 @@ import Foundation
 import SwiftUI
 import GhosttyTerminal
 import SkylightCore
+import SkylightDaemonCore
 
 /// What the window is showing: one instance full-window, or a canvas.
 enum Selection: Hashable {
@@ -174,6 +175,9 @@ final class AppState: ObservableObject {
         }
         sessions.lookupTrusted = { [weak self] harness in
             self?.trustedHarnesses.contains(harness) ?? false
+        }
+        sessions.lookupKnownInstanceIDs = { [weak self] in
+            Set(self?.instances.map(\.id) ?? [])
         }
         Self.shared = self
 
@@ -714,6 +718,38 @@ final class LiveSessionStore {
     /// Last visibility pushed per surface, so transitions cost one call and
     /// steady states cost none (the coordinator's own flag is internal).
     private var surfaceVisibility: [UUID: Bool] = [:]
+    /// The session keeper, connected lazily at the first terminal creation.
+    /// nil after bootstrap = the exec lane carries this whole app run
+    /// (SKYLIGHT_NO_DAEMON, or the daemon would not start) — the app then
+    /// behaves exactly as it did before sessions could survive.
+    private var daemonClient: DaemonClient?
+    private var daemonBootstrapped = false
+
+    /// The workspace's instance ids, so bootstrap can kill daemon sessions
+    /// whose instance no longer exists (defensive; unreachable today).
+    var lookupKnownInstanceIDs: (() -> Set<UUID>)?
+
+    /// True when quitting parts with running sessions instead of ending them.
+    var sessionsSurviveQuit: Bool { daemonClient != nil }
+
+    /// ⌘Q's "end them anyway" path, and nothing else's.
+    func endAllDaemonSessions() { daemonClient?.killAll() }
+
+    private func daemon() -> DaemonClient? {
+        if !daemonBootstrapped {
+            daemonBootstrapped = true
+            daemonClient = DaemonClient.bootstrap()
+            daemonClient?.onExited = { [weak self] id, _ in
+                self?.onSessionEnd?(id)
+            }
+            if let client = daemonClient, let known = lookupKnownInstanceIDs?() {
+                for id in client.inheritedSessions.keys where !known.contains(id) {
+                    client.kill(id)
+                }
+            }
+        }
+        return daemonClient
+    }
 
     /// Every instance with a surface right now — what quitting would kill.
     var openSessionIDs: [UUID] { Array(terminals.keys) }
@@ -847,6 +883,25 @@ final class LiveSessionStore {
         return "\"" + word.replacingOccurrences(of: "\"", with: "\\\"") + "\""
     }
 
+    /// What the daemon runs for an instance: a real argv, no quoting layer —
+    /// the word-splitting concern of the exec lane's command string does not
+    /// exist here. Missing harness/shell fall back exactly like the exec
+    /// lane (the recorded LaunchOutcome already carries the banner's truth).
+    private func daemonArgv(for instance: TerminalInstance) -> [String] {
+        if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
+            return [binary] + autonomousArguments(for: instance.spec, harness: harness)
+        }
+        if let shell = instance.spec.shellPath,
+           FileManager.default.isExecutableFile(atPath: shell) {
+            return [shell, "-l"]
+        }
+        let login = Catalog.loginShell(environment: ProcessInfo.processInfo.environment)
+        let fallback = login.flatMap {
+            FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil
+        } ?? "/bin/zsh"
+        return [fallback, "-l"]
+    }
+
     /// The spec's arguments, with the harness's verified autonomy flag in
     /// front when Ryan has granted that harness. Local to building the command
     /// line: the saved spec is never rewritten, so revoking the grant is
@@ -904,12 +959,44 @@ final class LiveSessionStore {
         launchOutcomes[instance.id] = outcome
         let state = TerminalViewState(configSource: .generated(config),
                                       terminalConfiguration: .default)
-        state.configuration = TerminalSurfaceOptions(
-            backend: .exec,
-            workingDirectory: instance.spec.workingDirectory
-                ?? FileManager.default.homeDirectoryForCurrentUser.path,
-            command: command
-        )
+        if let daemon = daemon() {
+            // The survival lane: the daemon owns the pty; this surface is a
+            // renderer attached over the socket. Keystrokes and resizes go
+            // out through the session's closures; output lands via receive
+            // on the client's read queue (thread-safe by library contract).
+            let id = instance.id
+            let session = InMemoryTerminalSession(
+                write: { [weak daemon] data in daemon?.input(id, data) },
+                resize: { [weak daemon] viewport in
+                    daemon?.resize(ResizePayload(
+                        id: id,
+                        columns: UInt16(clamping: viewport.columns),
+                        rows: UInt16(clamping: viewport.rows),
+                        widthPixels: UInt16(clamping: viewport.widthPixels),
+                        heightPixels: UInt16(clamping: viewport.heightPixels)))
+                })
+            if let inherited = daemon.inheritedSessions[id] {
+                // A previous app run's session: attach and replay. A dead one
+                // still replays — its final output and honest ending arrive
+                // exactly like a live exit would.
+                daemon.attach(id, session: session, live: inherited.alive)
+            } else {
+                daemon.spawn(SpawnRequest(
+                    id: id,
+                    argv: daemonArgv(for: instance),
+                    cwd: instance.spec.workingDirectory
+                        ?? FileManager.default.homeDirectoryForCurrentUser.path),
+                    session: session)
+            }
+            state.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
+        } else {
+            state.configuration = TerminalSurfaceOptions(
+                backend: .exec,
+                workingDirectory: instance.spec.workingDirectory
+                    ?? FileManager.default.homeDirectoryForCurrentUser.path,
+                command: command
+            )
+        }
         terminals[instance.id] = state
         // The terminal bell is how agent CLIs signal "done / needs input".
         let id = instance.id
@@ -944,6 +1031,9 @@ final class LiveSessionStore {
         bellObservers.removeValue(forKey: id)
         launchOutcomes.removeValue(forKey: id)
         surfaceVisibility.removeValue(forKey: id)
+        // Ending the instance ends its kept session — delete means delete,
+        // and a restart's respawn under the same id replaces it anyway.
+        daemonClient?.kill(id)
         cancelTitleCapture(id)
     }
 

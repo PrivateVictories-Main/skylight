@@ -35,14 +35,19 @@ PLIST
 mkdir -p "$APP/Contents/Resources"
 cp Sources/Skylight/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/Skylight"
+# The session keeper rides beside the app binary; the app spawns it on the
+# first terminal and it outlives every app run that has live sessions.
+cp ".build/$CONFIG/skylightd" "$APP/Contents/MacOS/skylightd"
 # A stable identity is what makes macOS permission grants survive a rebuild:
 # ad-hoc signatures give every build a new code identity, so TCC forgets every
 # grant. Detection only — this script never creates or trusts anything, and so
 # can never raise a dialog of its own. scripts/setup-signing.sh does that once,
 # by hand.
 if security find-identity -v -p codesigning 2>/dev/null | grep -q '"Skylight Dev"'; then
+  codesign --force --sign "Skylight Dev" "$APP/Contents/MacOS/skylightd" >/dev/null 2>&1 || true
   codesign --force --sign "Skylight Dev" "$APP" >/dev/null 2>&1 || echo "warning: signing with Skylight Dev FAILED — app is unsigned; permission grants will not persist. Check Keychain (locked? prompt declined?)." >&2
 else
+  codesign --force --sign - "$APP/Contents/MacOS/skylightd" >/dev/null 2>&1 || true
   codesign --force --sign - "$APP" >/dev/null 2>&1 || true
   echo "note: ad-hoc signed — macOS will re-ask permissions after rebuilds." >&2
   echo "      run scripts/setup-signing.sh once to fix that." >&2

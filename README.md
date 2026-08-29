@@ -19,6 +19,11 @@ this repo's test suite, one its git log.*
 
 - **Real terminals** — GhosttyKit surfaces running your actual shell (zsh,
   bash, fish — whatever `/etc/shells` offers).
+- **Sessions survive the app** — quit Skylight (or crash it) and relaunch:
+  every terminal is still running, same processes, scrollback intact. A
+  tiny bundled daemon (`skylightd`) owns the ptys over a user-only unix
+  socket; the app is just a renderer that reattaches. Quitting doesn't even
+  ask — there is nothing to lose anymore.
 - **Endless canvases** — as many boards as you like; pan forever; every tile
   is a live session. Layout, pan, and zoom persist and restore instantly.
 - **Drag-reveals-canvas** — start dragging a sidebar row and the canvas
@@ -57,8 +62,8 @@ this repo's test suite, one its git log.*
   The launch statistics behind recommendations are one local JSON file.
 - One terminal engine: Ghostty, embedded via GhosttyKit. kitty and iTerm are
   apps, not libraries — Skylight won't pretend to embed them.
-- No tabs. No terminal session survival across app relaunch (yet — that is
-  the roadmap's headline, a zmx-style daemon).
+- No tabs. Sessions survive app relaunch, not reboot (launchd persistence
+  is the next milestone).
 - No interactive tiles at non-100% zoom: a scaled live terminal blurs glyphs
   and breaks hit-testing, so overview zoom is navigation, never a lie.
 
@@ -115,8 +120,13 @@ Two targets, tests on the pure part:
 - **SkylightCore** — models, layout math, shell/harness detection,
   recommendations, persistence + migration. No UI imports; unit-tested
   (`swift test`).
+- **SkylightDaemonCore + skylightd** — the session keeper: framed wire
+  protocol, per-session output ring, pty ownership (`posix_spawn` with a
+  real controlling tty). The daemon exits when its last session ends;
+  end-to-end tested against the real binary.
 - **Skylight** — the SwiftUI app: `AppState` + `LiveSessionStore` (sessions
-  outlive view churn), sidebar / canvas / sheet views.
+  outlive view churn), `DaemonClient` (sessions outlive the app), sidebar /
+  canvas / sheet views.
 
 The invariant everything obeys: **a running session survives every
 transition** — full-window ↔ canvas ↔ other canvas ↔ focus.

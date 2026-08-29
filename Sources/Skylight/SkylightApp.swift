@@ -93,11 +93,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         // Deleting ONE terminal asks first; a reflexive ⌘Q was ending six
         // agents mid-task with no question at all. Same care, same copy —
-        // and only when there is actually something alive to lose.
+        // and only when there is actually something alive to LOSE: with the
+        // session keeper connected, quitting loses nothing (the sessions run
+        // on and reattach next launch), so it asks nothing.
         MainActor.assumeIsolated {
-            guard let live = AppState.shared?.liveSessionCount, live > 0 else {
+            guard let state = AppState.shared, state.liveSessionCount > 0,
+                  !state.sessions.sessionsSurviveQuit else {
                 return .terminateNow
             }
+            let live = state.liveSessionCount
             let alert = NSAlert()
             alert.messageText = "Quit Skylight?"
             alert.informativeText = live == 1

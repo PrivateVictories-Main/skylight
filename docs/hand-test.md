@@ -83,3 +83,16 @@ then walk top to bottom. Every line should feel instant.
 - [ ] `SKYLIGHT_APPEARANCE=dark` and `=light` both look clean.
 - [ ] Focus transition: enter/leave focus mode repeatedly — the terminal
       surface must never go blank or vanish after the cross-fade.
+- [ ] SURVIVAL, the flagship: run `top` in a terminal, ⌘Q (note: no dialog —
+      nothing is lost now), relaunch → the same `top` is still scrolling,
+      scrollback intact. Then Force Quit the app instead → same result.
+- [ ] Survival feel: typing latency through the daemon lane must be
+      indistinguishable from before; open vim, quit the app, relaunch —
+      judge the repaint (a one-row resize jiggle prompts it).
+- [ ] Delete honesty with the keeper: delete a running terminal → its
+      process actually ends (`pgrep` it); deleting the last one ends
+      `skylightd` itself within seconds.
+- [ ] `SKYLIGHT_NO_DAEMON=1` launch: everything behaves as before the
+      daemon existed, including the ⌘Q warning dialog.
+- [ ] A session that ends while the app is CLOSED (exit the shell via ssh
+      or kill it): next launch shows its final output and "Session ended".
