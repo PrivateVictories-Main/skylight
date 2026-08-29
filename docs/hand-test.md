@@ -50,8 +50,8 @@ then walk top to bottom. Every line should feel instant.
 - [ ] With an agent terminal whose CLI is NOT installed (or temporarily renamed away): the tile runs your shell and a capsule banner says which CLI is missing and how to install it.
 - [ ] Magnet check at distance: a tile far away VERTICALLY still magnets your X axis — judge whether that helps or surprises.
 - [ ] Zoom: pinch on the trackpad — cursor-anchored, snaps to exactly 100%
-      when close; ⌘+/⌘−/⌘0/⌘1 from the menu; at any zoom other than 100%
-      clicking a tile flies to it at 100% and typing works immediately after.
+      when close; ⌘0 = 100%, ⌘+/⌘− step, ⌘9 fits; at any zoom other than
+      100% clicking a tile flies to it at 100% and typing works right after.
 - [ ] Zoom crossing: sit at ~80% (⌘0 on a big board), press ⌘+ once —
       it must land exactly ON 100% (typable), never at 105%.
 - [ ] Overview drag: zoomed out, drag a tile — it moves (doesn't dive);
@@ -68,8 +68,8 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Session end honesty: run a ⇧⌘T terminal, type `exit` — the sidebar row
       says "Session ended"; Restart Session brings it back live; Delete's
       warning says the session already ended.
-- [ ] Quit confirm: with a live terminal, ⌘Q asks; Cancel keeps everything;
-      with no live sessions it quits silently.
+- [ ] Quit: with the keeper running, ⌘Q asks nothing (sessions survive);
+      the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
 - [ ] Full autonomy toggles: per-harness switch in ⌘T names the exact flag;
       newly verified — gemini `--yolo`, copilot `--allow-all-tools`,
       cursor `--force`.
