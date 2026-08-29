@@ -197,6 +197,11 @@ final class DaemonClient: @unchecked Sendable {
         lock.lock()
         if live { jigglePending.insert(id) } else { deferExitUntilResize.insert(id) }
         lock.unlock()
+        // A clean slate before the replay: without it, replayed absolute
+        // cursor moves land on whatever the fresh grid holds and the first
+        // frame reads as debris. Queued on the session before the attach
+        // frame goes out, so FIFO guarantees it renders first.
+        session.receive("\u{1b}[H\u{1b}[2J")
         enqueue(WireFrame(type: .attach, payload: WirePayload.uuidData(id)))
     }
 

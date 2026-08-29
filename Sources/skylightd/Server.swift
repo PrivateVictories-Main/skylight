@@ -11,6 +11,9 @@ final class Server: @unchecked Sendable {
         let id: UUID
         let argv: [String]
         var pid: pid_t
+        /// The child's kernel start time — with the pid, its identity proof
+        /// in the orphan ledger (a recycled pid can never match).
+        var startSeconds: Int64 = 0
         /// -1 once the master has drained and closed — INPUT/RESIZE frames
         /// arriving after that must never touch a recycled fd number.
         var masterFD: Int32
@@ -95,8 +98,13 @@ final class Server: @unchecked Sendable {
             log("another daemon holds the lock; exiting")
             exit(0)
         }
+        // Under the lock (so no live daemon owns these), hang up whatever a
+        // crashed predecessor left running: those children's pty masters
+        // died with it, making them unreachable forever — leaked shells and
+        // agents this machine would otherwise carry until reboot.
+        sweepOrphans()
         listenFD = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard listenFD >= 0 else { fatalError("socket() failed: \(errno)") }
+        guard listenFD >= 0 else { fail("socket() failed: \(errno)") }
         var addr = sockaddr_un()
         addr.sun_family = sa_family_t(AF_UNIX)
         socketPath.withCString { path in
@@ -133,9 +141,9 @@ final class Server: @unchecked Sendable {
                 }
             }
         }
-        guard bound == 0 else { fatalError("bind() failed: \(errno)") }
+        guard bound == 0 else { fail("bind() failed: \(errno)") }
         chmod(socketPath, 0o600)
-        guard listen(listenFD, 4) == 0 else { fatalError("listen() failed: \(errno)") }
+        guard listen(listenFD, 4) == 0 else { fail("listen() failed: \(errno)") }
 
         let accept = DispatchSource.makeReadSource(fileDescriptor: listenFD, queue: queue)
         accept.setEventHandler { [weak self] in self?.acceptClient() }
@@ -388,8 +396,10 @@ final class Server: @unchecked Sendable {
                       fcntl(child.masterFD, F_GETFL) | O_NONBLOCK)
             let session = Session(id: request.id, argv: request.argv,
                                   pid: child.pid, masterFD: child.masterFD)
+            session.startSeconds = processStartSeconds(child.pid) ?? 0
             sessions[request.id] = session
             client.attached.insert(request.id)
+            persistLedger()
             let source = DispatchSource.makeReadSource(fileDescriptor: child.masterFD,
                                                        queue: queue)
             source.setEventHandler { [weak self, weak session] in
@@ -496,6 +506,7 @@ final class Server: @unchecked Sendable {
                 // below — a real hangup for whatever still holds the tty.
                 session.drained = true
             }
+            persistLedger()
             announceExitIfComplete(session)
         }
     }
@@ -556,6 +567,7 @@ final class Server: @unchecked Sendable {
         session.killEscalation = nil
         sessions.removeValue(forKey: session.id)
         for client in clients.values { client.attached.remove(session.id) }
+        persistLedger()
     }
 
     private func exitIfIdle() {
@@ -585,5 +597,64 @@ final class Server: @unchecked Sendable {
 
     private func log(_ message: String) {
         FileHandle.standardError.write(Data("[skylightd] \(message)\n".utf8))
+    }
+
+    /// Environmental failures end the daemon with a logged reason and a
+    /// nonzero exit — never an abort trap; a crash report for a missing
+    /// directory helps no one.
+    private func fail(_ message: String) -> Never {
+        log(message)
+        exit(1)
+    }
+
+    // MARK: - Orphan ledger
+
+    private var ledgerPath: String { socketPath + ".ledger" }
+
+    private func processStartSeconds(_ pid: pid_t) -> Int64? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else {
+            return nil
+        }
+        return Int64(info.pbi_start_tvsec)
+    }
+
+    /// Every live child, persisted so a successor can find what a crash of
+    /// ours would orphan. Written on spawn, exit, and removal — tiny and
+    /// rare; removed outright when nothing is running.
+    private func persistLedger() {
+        let entries = sessions.values.compactMap { session -> LedgerEntry? in
+            guard !session.exited else { return nil }
+            return LedgerEntry(pid: session.pid, startSeconds: session.startSeconds)
+        }
+        guard !entries.isEmpty else {
+            try? FileManager.default.removeItem(atPath: ledgerPath)
+            return
+        }
+        if let data = try? JSONEncoder().encode(entries) {
+            try? data.write(to: URL(fileURLWithPath: ledgerPath), options: .atomic)
+        }
+    }
+
+    private func sweepOrphans() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: ledgerPath)),
+              let previous = try? JSONDecoder().decode([LedgerEntry].self, from: data)
+        else { return }
+        try? FileManager.default.removeItem(atPath: ledgerPath)
+        let orphans = OrphanSweep.orphans(in: previous) { processStartSeconds($0) }
+        guard !orphans.isEmpty else { return }
+        for entry in orphans {
+            log("sweeping orphan pid=\(entry.pid) left by a crashed predecessor")
+            kill(entry.pid, SIGHUP)
+        }
+        queue.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self else { return }
+            for entry in orphans
+            where self.processStartSeconds(entry.pid) == entry.startSeconds {
+                self.log("escalating orphan sweep for pid=\(entry.pid)")
+                kill(entry.pid, SIGKILL)
+            }
+        }
     }
 }

@@ -47,6 +47,29 @@ final class WireTests: XCTestCase {
         XCTAssertNil(WirePayload.parseResize(WirePayload.uuidData(UUID()) + Data([0])))
     }
 
+    func testOutputRingMatchesNaiveModelThroughWraps() {
+        // The circular implementation must be indistinguishable from the
+        // obvious keep-the-last-N-bytes model, through many wraps, odd chunk
+        // sizes, and an occasional oversized write.
+        var ring = OutputRing(capacity: 257)   // prime: exercises misaligned wraps
+        var model = Data()
+        var seed: UInt64 = 0x5EED
+        func next() -> Int {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Int(seed >> 33)
+        }
+        for i in 0..<500 {
+            let size = i % 37 == 0 ? 300 + next() % 100 : 1 + next() % 90
+            let byte = UInt8(truncatingIfNeeded: next())
+            let chunk = Data(repeating: byte, count: size) + Data([UInt8(i & 0xFF)])
+            ring.append(chunk)
+            model.append(chunk)
+            if model.count > 257 { model.removeFirst(model.count - 257) }
+            XCTAssertEqual(ring.contents, model, "diverged at append \(i)")
+            XCTAssertEqual(ring.count, model.count)
+        }
+    }
+
     func testOutputRingKeepsTheTail() {
         var ring = OutputRing(capacity: 10)
         ring.append(Data("abcdef".utf8))

@@ -90,6 +90,47 @@ final class DaemonE2ETests: XCTestCase {
         daemonProcess = nil
     }
 
+    func testCrashedDaemonsOrphansAreSweptByTheSuccessor() throws {
+        let id = UUID()
+        var conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .hello))
+        _ = try conn.expect(.helloReply)
+        // The exact (and only) process class that leaks without the sweep:
+        // ignores the kernel's hangup (trap "" HUP → SIG_IGN survives exec)
+        // AND never reads the dead tty (cat would exit on EOF; sleep won't).
+        // Everything else dies naturally with its pty when a daemon crashes.
+        let spawn = SpawnRequest(id: id,
+                                 argv: ["/bin/sh", "-c", #"trap "" HUP; echo up; exec sleep 1000"#])
+        try conn.send(WireFrame(type: .spawn, payload: JSONEncoder().encode(spawn)))
+        _ = try conn.collectOutput(for: id, until: "up")
+        // Find the child via the ledger the daemon just wrote.
+        let ledgerData = try Data(contentsOf: URL(fileURLWithPath: socketPath + ".ledger"))
+        let ledger = try JSONDecoder().decode([LedgerEntry].self, from: ledgerData)
+        let childPID = try XCTUnwrap(ledger.first?.pid)
+
+        // The daemon CRASHES (SIGKILL — no HUP, no cleanup). The child is
+        // now a leaked, unreachable process...
+        kill(try XCTUnwrap(daemonProcess).processIdentifier, SIGKILL)
+        conn.close()
+        usleep(300_000)
+        XCTAssertEqual(kill(childPID, 0), 0, "child should have survived the crash")
+
+        // ...until the next daemon boots on the same socket and sweeps it.
+        let successor = Process()
+        successor.executableURL = daemonBinary
+        successor.environment = daemonProcess?.environment
+        try successor.run()
+        daemonProcess = successor
+        var swept = false
+        for _ in 0..<60 {                                  // HUP, then the 3s SIGKILL escalation
+            if kill(childPID, 0) != 0 { swept = true; break }
+            usleep(100_000)
+        }
+        XCTAssertTrue(swept, "orphan pid \(childPID) was never swept")
+        successor.terminate()
+        daemonProcess = nil
+    }
+
     func testHostileSpawnPayloadsGetHonestExitsNotCrashes() throws {
         var conn = try Conn(path: socketPath)
         try conn.send(WireFrame(type: .hello))

@@ -60,6 +60,9 @@ this repo's test suite, one its git log.*
 
 - No chat UI, no web views, no API keys, no network calls, no telemetry.
   The launch statistics behind recommendations are one local JSON file.
+- No background cost worth naming — measured, not hoped: with live
+  terminals on screen the app idles around 0.2% CPU; the session daemon
+  holds steady at 0.0% CPU and ~5 MB. Hidden surfaces render nothing.
 - One terminal engine: Ghostty, embedded via GhosttyKit. kitty and iTerm are
   apps, not libraries — Skylight won't pretend to embed them.
 - No tabs. Sessions survive app relaunch, not reboot (launchd persistence
