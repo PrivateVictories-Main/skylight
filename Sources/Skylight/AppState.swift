@@ -37,7 +37,16 @@ struct CanvasArrangeRequest: Equatable {
 final class AppState: ObservableObject {
     @Published var instances: [TerminalInstance]
     @Published var canvases: [CanvasBoard]
-    @Published var selection: Selection?
+    // The three properties that decide what is ON SCREEN carry the surface-
+    // visibility sync as didSet observers — a @Published sink fires on
+    // willSet, when self still holds the OLD value, and hidden/shown would be
+    // computed against the state being left. (Observers do not fire during
+    // init; the first sync rides the first real transition, and surfaces are
+    // created visible, which is correct — creation only ever happens
+    // on-screen.)
+    @Published var selection: Selection? {
+        didSet { syncSurfaceVisibility() }
+    }
     /// Instances whose terminal rang the bell while not being viewed.
     @Published var attention: Set<UUID> = []
     /// Instances whose process ended (shell exited, agent quit, crash) while
@@ -46,7 +55,9 @@ final class AppState: ObservableObject {
     @Published private(set) var endedInstances: Set<UUID> = []
     /// Instance temporarily filling the window (focus mode). Leaving focus
     /// returns to whatever was selected — the canvas is untouched.
-    @Published var focusedInstance: UUID?
+    @Published var focusedInstance: UUID? {
+        didSet { syncSurfaceVisibility() }
+    }
     /// Tile to center after opening a canvas from its sidebar row.
     @Published var pendingReveal: UUID?
     /// Menu/keyboard zoom aimed at a canvas — the visible CanvasView owns the
@@ -56,7 +67,9 @@ final class AppState: ObservableObject {
     @Published var canvasArrangeRequest: CanvasArrangeRequest?
     /// Non-nil while a sidebar row is mid-drag; the detail area shows the
     /// canvas drop surface for exactly that long.
-    @Published var draggingItemID: UUID?
+    @Published var draggingItemID: UUID? {
+        didSet { syncSurfaceVisibility() }
+    }
     /// The New sheet — openable from ⌘T and the sidebar + button alike.
     @Published var newSheetShown = false
     /// Right-click spawn target: the sheet's next launch lands here as a tile.
@@ -298,6 +311,17 @@ final class AppState: ObservableObject {
         case let .item(selected): return selected == id
         case let .canvas(boardID): return Residency.board(of: id, in: canvases) == boardID
         case nil: return false
+        }
+    }
+
+    /// Push display visibility down to every open surface (see
+    /// LiveSessionStore.setSurfaceVisible — display only, the process keeps
+    /// running). Errs toward visible: during a sidebar drag the drop overlay
+    /// may live-preview ANY board, so everything renders for those moments.
+    private func syncSurfaceVisibility() {
+        let dragging = draggingItemID != nil
+        for id in sessions.openSessionIDs {
+            sessions.setSurfaceVisible(dragging || isVisible(id), for: id)
         }
     }
 
@@ -581,6 +605,9 @@ final class AppState: ObservableObject {
             pendingReveal = itemID
         }
         selection = .canvas(boardID)
+        // Membership changed under an unchanged selection (tile moved onto
+        // the already-displayed board): the didSet observers saw nothing.
+        syncSurfaceVisibility()
         persist()
     }
 
@@ -592,6 +619,7 @@ final class AppState: ObservableObject {
         }
         focusedInstance = nil
         selection = .item(itemID)
+        syncSurfaceVisibility()
         persist()
     }
 
@@ -683,9 +711,22 @@ final class LiveSessionStore {
     private var resolvedHarnesses: [String: String?] = [:]
     private var cachedShells: [Shell]?
     private var launchOutcomes: [UUID: LaunchOutcome] = [:]
+    /// Last visibility pushed per surface, so transitions cost one call and
+    /// steady states cost none (the coordinator's own flag is internal).
+    private var surfaceVisibility: [UUID: Bool] = [:]
 
     /// Every instance with a surface right now — what quitting would kill.
     var openSessionIDs: [UUID] { Array(terminals.keys) }
+
+    /// Display-only visibility: a hidden surface stops rendering (ghostty's
+    /// display link idles) while its process, bell, and title keep flowing.
+    /// This is the idle-CPU bar enforced rather than hoped for — tiles on a
+    /// canvas you are not looking at render nothing.
+    func setSurfaceVisible(_ visible: Bool, for id: UUID) {
+        guard let view = terminalNSViews[id], surfaceVisibility[id] != visible else { return }
+        surfaceVisibility[id] = visible
+        view.setSurfaceVisible(visible)
+    }
 
     /// What a surface ACTUALLY launched with, recorded when its config was
     /// built. The missing-harness banner reads this, not live install state:
@@ -826,7 +867,7 @@ final class LiveSessionStore {
         // Glass + breathing room: translucency (never below 0.9 — readability beats effect, spec Addendum A1) plus balanced inner padding so
         // no row — least of all an agent's bottom status line — ever clips
         // against the rounded chrome.
-        var config = """
+        let config = """
         background-opacity = 0.92
         window-padding-x = 10
         window-padding-y = 10
@@ -844,16 +885,21 @@ final class LiveSessionStore {
            !FileManager.default.isExecutableFile(atPath: shell) {
             outcome.missingShell = shell
         }
+        // The command travels as PER-SURFACE configuration, not a line in the
+        // generated config file: both reach the same ghostty field with the
+        // same word-splitting (so quoted() still matters), but a string that
+        // never crosses a line-based file cannot become a second directive —
+        // the injection class dies structurally, not just by sanitizing.
+        var command: String?
         if let harness = instance.spec.harness, let binary = cachedResolveHarness(harness) {
             // Agent terminal: ghostty runs the CLI directly as the surface command.
-            let command = ([binary] + autonomousArguments(for: instance.spec, harness: harness))
+            command = ([binary] + autonomousArguments(for: instance.spec, harness: harness))
                 .map(Self.quoted).joined(separator: " ")
-            config += "command = \(command)\n"
         } else if let shell = instance.spec.shellPath,
                   FileManager.default.isExecutableFile(atPath: shell) {
             // A shell that vanished since the spec was saved falls back to the
             // login shell (the default branch); the banner says so (Task 9).
-            config += "command = \(Self.quoted(shell))\n"
+            command = Self.quoted(shell)
         }
         launchOutcomes[instance.id] = outcome
         let state = TerminalViewState(configSource: .generated(config),
@@ -861,7 +907,8 @@ final class LiveSessionStore {
         state.configuration = TerminalSurfaceOptions(
             backend: .exec,
             workingDirectory: instance.spec.workingDirectory
-                ?? FileManager.default.homeDirectoryForCurrentUser.path
+                ?? FileManager.default.homeDirectoryForCurrentUser.path,
+            command: command
         )
         terminals[instance.id] = state
         // The terminal bell is how agent CLIs signal "done / needs input".
@@ -884,11 +931,19 @@ final class LiveSessionStore {
 
     /// Tear down live state for a deleted instance (frees the surface, ends
     /// the process).
+    ///
+    /// The onClose hook is detached FIRST: surface teardown kills the child,
+    /// and a close report racing out of the dying surface would arrive under
+    /// this same instance id — after a restart, that late echo would mark the
+    /// FRESH session as ended. Detaching makes the race unlosable instead of
+    /// merely unlikely.
     func discard(_ id: UUID) {
+        terminals[id]?.onClose = nil
         terminals.removeValue(forKey: id)
         terminalNSViews.removeValue(forKey: id)
         bellObservers.removeValue(forKey: id)
         launchOutcomes.removeValue(forKey: id)
+        surfaceVisibility.removeValue(forKey: id)
         cancelTitleCapture(id)
     }
 

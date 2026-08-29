@@ -74,6 +74,78 @@ final class LayoutTests: XCTestCase {
         XCTAssertEqual(commit.height, CanvasLayout.minTileSize.height)
     }
 
+    func testResizeCommitCornerDragsNeverMoveTheOppositeCorner() {
+        // Corner drags drive one horizontal AND one vertical edge; the
+        // opposite corner is the stationary anchor and holds through every
+        // combination — on a grid-aligned frame and on an off-grid one
+        // (reflow produces those).
+        for frame in [CGRect(x: 96, y: 96, width: 608, height: 400),
+                      CGRect(x: 132.5, y: 70.5, width: 340, height: 240)] {
+            for dx in stride(from: -48.0, through: 48.0, by: 8) {
+                for dy in stride(from: -48.0, through: 48.0, by: 8) {
+                    let commit = CanvasLayout.resizeCommit(frame,
+                        by: CanvasLayout.EdgeDeltas(left: dx, top: dy))
+                    XCTAssertEqual(commit.maxX, frame.maxX,
+                                   "topLeft drag (\(dx),\(dy)) moved maxX of \(frame)")
+                    XCTAssertEqual(commit.maxY, frame.maxY,
+                                   "topLeft drag (\(dx),\(dy)) moved maxY of \(frame)")
+                    XCTAssertGreaterThanOrEqual(commit.width, CanvasLayout.minTileSize.width)
+                    XCTAssertGreaterThanOrEqual(commit.height, CanvasLayout.minTileSize.height)
+                }
+            }
+        }
+    }
+
+    func testMagnetSurvivesDegenerateCandidates() {
+        let dragged = CGRect(x: 104, y: 40, width: 560, height: 400)
+        // A zero-sized rect and an exact overlap of the dragged frame itself:
+        // no crash, finite output, and the exact-overlap magnet (distance 0)
+        // wins and aligns.
+        let degenerate = [CGRect(x: 300, y: 200, width: 0, height: 0), dragged]
+        let snapped = CanvasLayout.magnetSnapped(dragged, against: degenerate)
+        XCTAssertTrue(snapped.x.isFinite && snapped.y.isFinite)
+        XCTAssertEqual(snapped, dragged.origin)   // aligned to its own frame
+    }
+
+    func testFreePositionRingCapFallsBackToDesired() {
+        // A plane blocked far beyond the 200-ring search radius: the scan
+        // exhausts and returns the snapped desired point — overlap beats
+        // losing the tile.
+        let everything = [CGRect(x: -20000, y: -20000, width: 40000, height: 40000)]
+        XCTAssertEqual(
+            CanvasLayout.freePosition(desired: CGPoint(x: 100, y: 100),
+                                      size: CanvasLayout.defaultTileSize,
+                                      avoiding: everything),
+            CGPoint(x: 96, y: 96))
+    }
+
+    func testReflowResultAlwaysLandsInsideTheViewport() throws {
+        // Property: whenever reflow acts (and the min-size clamp is not in
+        // play), the settled arrangement sits fully inside the margins.
+        let fixtures: [[CanvasTile]] = [
+            [CanvasTile(itemID: UUID(), origin: CGPoint(x: 900, y: 40),
+                        size: CGSize(width: 560, height: 400))],
+            [CanvasTile(itemID: UUID(), origin: .zero,
+                        size: CGSize(width: 560, height: 400)),
+             CanvasTile(itemID: UUID(), origin: CGPoint(x: 620, y: 460),
+                        size: CGSize(width: 560, height: 400))],
+        ]
+        for tiles in fixtures {
+            for viewport in [CGSize(width: 1100, height: 900),
+                             CGSize(width: 1400, height: 1000)] {
+                guard let result = CanvasLayout.reflowed(tiles: tiles, pan: .zero,
+                                                         viewport: viewport) else { continue }
+                let frames = result.tiles.map(\.frame)
+                let bounds = frames.dropFirst().reduce(frames[0]) { $0.union($1) }
+                let visible = bounds.offsetBy(dx: result.pan.x, dy: result.pan.y)
+                XCTAssertGreaterThanOrEqual(visible.minX, 24 - 0.001)
+                XCTAssertGreaterThanOrEqual(visible.minY, 24 - 0.001)
+                XCTAssertLessThanOrEqual(visible.maxX, viewport.width - 24 + 0.001)
+                XCTAssertLessThanOrEqual(visible.maxY, viewport.height - 24 + 0.001)
+            }
+        }
+    }
+
     func testResizeNoOpWhenClampedToZero() {
         // Min-width tile, off-grid origin, inward left drag: nothing may move.
         let frame = CGRect(x: 105, y: 96, width: 320, height: 400)

@@ -76,7 +76,12 @@ struct SkylightApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        // An automated launch (screenshot runs, tests) must never steal the
+        // user's focus — background-only automation as an app feature. A
+        // human double-click behaves exactly as before.
+        if ProcessInfo.processInfo.environment["SKYLIGHT_NO_ACTIVATE"] == nil {
+            NSApp.activate(ignoringOtherApps: true)
+        }
         // Debug hook: force an appearance without touching system settings.
         switch ProcessInfo.processInfo.environment["SKYLIGHT_APPEARANCE"] {
         case "dark": NSApp.appearance = NSAppearance(named: .darkAqua)
