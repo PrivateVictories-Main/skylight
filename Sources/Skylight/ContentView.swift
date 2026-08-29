@@ -124,9 +124,10 @@ struct SidebarView: View {
                 }
             }
             if state.canvases.isEmpty {
-                // The product's whole story, one line, gone the moment a
-                // canvas exists.
-                Text("Drag a terminal here to start a canvas")
+                // The product's whole story, gone the moment a canvas
+                // exists. Explicit break: List rows truncate rather than
+                // wrap, fixedSize or not.
+                Text("Drag a terminal here\nto start a canvas")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)

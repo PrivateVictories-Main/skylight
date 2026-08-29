@@ -35,6 +35,9 @@ final class Server: @unchecked Sendable {
         /// Bytes read since the last pause while detached; bounds the CPU a
         /// client-less flood can burn.
         var detachedBurst = 0
+        /// Logged once per overflow EPISODE, not per frame — a pathological
+        /// input flood must not grow the log without bound.
+        var inputOverflowing = false
         var ring = OutputRing()
         var exitCode: Int32?
         /// Output fully drained from the master after child exit.

@@ -198,6 +198,7 @@ extension Server {
         }
         session.inputSource?.cancel()
         session.inputSource = nil
+        session.inputOverflowing = false   // episode over; the next one logs
     }
 
     func armInput(_ session: Session) {

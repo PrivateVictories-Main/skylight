@@ -73,6 +73,9 @@ final class AppState: ObservableObject {
     }
     /// The New sheet — openable from ⌘T and the sidebar + button alike.
     @Published var newSheetShown = false
+    /// Debug-hook companion to SKYLIGHT_OPEN_SHEET=agent: the sheet opens
+    /// on its Agent CLI tier so screenshot automation can see it.
+    var debugSheetAgentMode = false
     /// Right-click spawn target: the sheet's next launch lands here as a tile.
     var pendingSpawn: (canvasID: UUID, point: CGPoint)?
     @Published private(set) var presets: [LaunchPreset]

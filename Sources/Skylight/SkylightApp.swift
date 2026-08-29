@@ -104,6 +104,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case "light": NSApp.appearance = NSAppearance(named: .aqua)
         default: break
         }
+        // Debug hook, like the appearance override: lets screenshot
+        // automation exercise the sheet without synthesizing clicks.
+        if let mode = ProcessInfo.processInfo.environment["SKYLIGHT_OPEN_SHEET"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                AppState.shared?.debugSheetAgentMode = mode == "agent"
+                AppState.shared?.newSheetShown = true
+            }
+        }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {

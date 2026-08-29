@@ -68,7 +68,10 @@ struct NewTerminalSheet: View {
         }
         .padding(22)
         .frame(width: 460)
-        .onAppear(perform: load)
+        .onAppear {
+            load()
+            if state.debugSheetAgentMode { agentMode = true }
+        }
         // First frame from cache (instant); truth arrives a frame later.
         .task { resample() }
         // Closing without launching must not leave a stale spawn target

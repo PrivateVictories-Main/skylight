@@ -86,7 +86,10 @@ extension Server {
                   session.masterFD >= 0 else { return }
             session.inputBacklog.append(bytes)
             if session.inputBacklog.count > Self.maxInputBacklog {
-                log("input backlog exceeded for \(id); dropping newest")
+                if !session.inputOverflowing {
+                    session.inputOverflowing = true
+                    log("input backlog exceeded for \(id); dropping newest until it drains")
+                }
                 session.inputBacklog.removeLast(
                     session.inputBacklog.count - Self.maxInputBacklog)
             }
