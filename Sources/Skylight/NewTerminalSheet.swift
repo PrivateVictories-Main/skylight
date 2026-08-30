@@ -296,21 +296,34 @@ struct NewTerminalSheet: View {
     /// fully-visible first row is a lie. Offset-aware: parked at the top
     /// there is no top fade; scrolled to the end, the bottom one melts away.
     private var harnessSection: some View {
-        ScrollView {
-            VStack(spacing: 4) {
-                ForEach(Catalog.harnesses) { harness in
-                    harnessRow(harness)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(spacing: 4) {
+                    ForEach(Catalog.harnesses) { harness in
+                        harnessRow(harness)
+                            .id(harness.id)
+                    }
+                }
+                .background(
+                    GeometryReader { geo in
+                        let frame = geo.frame(in: .named("harnessScroll"))
+                        Color.clear.preference(
+                            key: ScrollEdgesKey.self,
+                            value: ScrollEdges(top: frame.minY < -1,
+                                               bottom: frame.maxY > harnessViewportHeight + 1))
+                    }
+                )
+            }
+            // Debug lane only: jump to the end of the list, so screenshot
+            // automation can verify the rows below the scroll fold (and the
+            // fades trading places) without synthetic scrolling.
+            .onAppear {
+                guard ProcessInfo.processInfo.environment["SKYLIGHT_SHEET_SCROLL"] == "end",
+                      let last = Catalog.harnesses.last else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    proxy.scrollTo(last.id, anchor: .bottom)
                 }
             }
-            .background(
-                GeometryReader { geo in
-                    let frame = geo.frame(in: .named("harnessScroll"))
-                    Color.clear.preference(
-                        key: ScrollEdgesKey.self,
-                        value: ScrollEdges(top: frame.minY < -1,
-                                           bottom: frame.maxY > harnessViewportHeight + 1))
-                }
-            )
         }
         .coordinateSpace(name: "harnessScroll")
         .background(
@@ -337,7 +350,10 @@ struct NewTerminalSheet: View {
             }
             .animation(.easeOut(duration: 0.15), value: harnessEdges)
         )
-        .frame(maxHeight: 292)
+        // Debug lane only: the full list at once, so screenshot automation
+        // can verify rows below the scroll fold without synthetic scrolling.
+        .frame(maxHeight: ProcessInfo.processInfo
+            .environment["SKYLIGHT_SHEET_FULL"] != nil ? .infinity : 292)
     }
 
     /// Copy sits beside the row button, not inside its label: a Button nested
