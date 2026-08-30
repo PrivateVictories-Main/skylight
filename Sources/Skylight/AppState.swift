@@ -173,7 +173,13 @@ final class AppState: ObservableObject {
         }
         // The surface reports its process gone — the sidebar stops pretending.
         sessions.onSessionEnd = { [weak self] id in
-            self?.endedInstances.insert(id)
+            guard let self else { return }
+            self.endedInstances.insert(id)
+            // Third probe trigger: a sign-in terminal just finished, so
+            // whatever we believed about that harness is stale.
+            if let harness = self.signInInstances[id] {
+                self.invalidateSubscription(harness)
+            }
         }
         // An agent terminal names itself after the first thing you ask it.
         sessions.onAutoName = { [weak self] id, title in
@@ -443,6 +449,29 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    /// Launch the vendor's own login in a real terminal — the whole of the
+    /// "interconnect". Skylight runs the command and gets out of the way; it
+    /// holds no credential and implements no flow.
+    ///
+    /// When that terminal's process ends the answer we cached is stale by
+    /// definition, so the session-end hook re-asks.
+    func launchSignIn(_ spec: TerminalSpec, harness: Harness) {
+        let name = Names.numbered(base: "Sign in — \(harness.displayName)",
+                                  among: instances.map(\.name))
+        let instance = TerminalInstance(name: name, spec: spec)
+        instances.append(instance)
+        signInInstances[instance.id] = harness.id
+        selection = .item(instance.id)
+        focusedInstance = nil
+        // Deliberately NOT recorded in usage: signing in is a chore, not a
+        // habit, and it must never become somebody's "your usual".
+        persist()
+    }
+
+    /// Instances that exist to sign a harness in, so their ending can refresh
+    /// exactly that harness.
+    private var signInInstances: [UUID: String] = [:]
+
     /// The sheet's launches honor a right-click spawn target; every other
     /// entry point (⇧⌘T, command menu) never does.
     func launchFromSheet(_ spec: TerminalSpec, name: String? = nil) {
@@ -495,6 +524,7 @@ final class AppState: ObservableObject {
     }
 
     func deleteInstance(_ id: UUID) {
+        signInInstances.removeValue(forKey: id)
         instances.removeAll { $0.id == id }
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == id }

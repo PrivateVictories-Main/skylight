@@ -70,6 +70,19 @@ then walk top to bottom. Every line should feel instant.
       warning says the session already ended.
 - [ ] Quit: with the keeper running, ⌘Q asks nothing (sessions survive);
       the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
+- [ ] Subscriptions, third state: in ⌘T's Agent CLI list, Claude Code and
+      Codex show who is signed in ("ryans51105@gmail.com · max", "Signed in");
+      the eight CLIs without a verified probe say nothing at all (not
+      "unknown"). No spinner lingers.
+- [ ] Sign out of codex (`codex logout`), reopen ⌘T → its row says "Not
+      signed in", shows a Sign in button, and Create is disabled while it is
+      selected. Sign in runs `codex login` in a real terminal; when that
+      terminal finishes, the row flips back to signed-in on its own.
+- [ ] Probe cost: open and close ⌘T ten times — no lag, and Activity Monitor
+      shows no repeated CLI processes (answers are cached, nothing polls).
+- [ ] Cursor CLI never triggers a login on its own: open ⌘T with cursor-agent
+      installed and confirm nothing starts authenticating in the background
+      (its `status` is interactive, so Skylight must never run it).
 - [ ] Full autonomy toggles: per-harness switch in ⌘T names the exact flag;
       newly verified — gemini `--yolo`, copilot `--allow-all-tools`,
       cursor `--force`.

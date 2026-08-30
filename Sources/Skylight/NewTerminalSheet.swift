@@ -107,11 +107,29 @@ struct NewTerminalSheet: View {
     private func resample() {
         state.sessions.invalidateHarnessCache()
         load()
+        // One of the three declared probe triggers — this already fires on
+        // didBecomeActive, which is exactly when someone has come back from
+        // signing in somewhere else.
+        state.refreshSubscriptions()
     }
 
     private func launch(_ spec: TerminalSpec, name: String? = nil) {
         state.launchFromSheet(spec, name: name)
         dismiss()
+    }
+
+    /// The whole interconnect, in one function: run the vendor's OWN login
+    /// command in a real Skylight terminal. Skylight holds no credential and
+    /// implements no flow — it opens the terminal and gets out of the way.
+    private func signIn(_ harness: Harness) {
+        guard let spec = SubscriptionCopy.signInSpec(for: harness) else { return }
+        state.launchSignIn(spec, harness: harness)
+        dismiss()
+    }
+
+    private func rowState(_ harness: Harness) -> HarnessRowState {
+        HarnessRowState.of(installed: installed[harness.id] != nil,
+                           subscription: state.subscriptionState(harness.id))
     }
 
     // MARK: - Header
@@ -365,9 +383,11 @@ struct NewTerminalSheet: View {
     /// in another Button's label swallows clicks unpredictably on macOS.
     private func harnessRow(_ harness: Harness) -> some View {
         let path = installed[harness.id]
+        let row = rowState(harness)
+        let subscription = state.subscriptionState(harness.id)
         return HStack(spacing: 10) {
             Button {
-                if path != nil { harnessID = harness.id }
+                if row.canLaunch { harnessID = harness.id }
             } label: {
                 HStack(spacing: 10) {
                     harnessIcon(for: harness.id, size: 20)
@@ -378,10 +398,19 @@ struct NewTerminalSheet: View {
                             Text(harness.installCommand)
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(.tertiary)
+                        } else if let detail = SubscriptionCopy.rowDetail(
+                            for: harness, state: subscription) {
+                            // Installed: say who is signed in, or that nobody
+                            // is. Silent for the harnesses we cannot ask.
+                            Text(detail)
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.tertiary)
                         }
                     }
                     Spacer()
-                    if path != nil, harnessID == harness.id {
+                    if state.probing.contains(harness.id) {
+                        ProgressView().controlSize(.small)
+                    } else if row == .ready, harnessID == harness.id {
                         Image(systemName: "checkmark.circle.fill")
                             .font(.system(size: 13))
                             .foregroundStyle(Color.accentColor)
@@ -392,6 +421,15 @@ struct NewTerminalSheet: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            // The third state: installed, and we KNOW it is signed out.
+            // Selecting it would only launch a terminal that fails, so the
+            // row offers the way in instead.
+            if row == .signedOut, SubscriptionCopy.signInSpec(for: harness) != nil {
+                Button("Sign in") { signIn(harness) }
+                    .buttonStyle(.pressable(scale: 0.94))
+                    .font(.system(size: 11, weight: .semibold))
+                    .help("Runs this CLI's own login in a Skylight terminal")
+            }
             if path == nil {
                 // The label is the receipt: silence after a click reads as
                 // "did that work?".
@@ -409,7 +447,7 @@ struct NewTerminalSheet: View {
             }
         }
         .padding(.trailing, 10)
-        .opacity(path == nil ? 0.55 : 1)
+        .opacity(row == .ready ? 1 : 0.55)
         .hoverHighlight(cornerRadius: 10, active: harnessID == harness.id)
     }
 
@@ -531,7 +569,11 @@ struct NewTerminalSheet: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
-                    .disabled(agentMode && (harnessID == nil || harnessID.flatMap { installed[$0] } == nil))
+                    // A signed-out harness cannot Create: the terminal would
+                    // open and immediately fail with the CLI's own auth error.
+                    .disabled(agentMode && !(harnessID
+                        .flatMap { Catalog.harness($0) }
+                        .map { rowState($0).canLaunch } ?? false))
             }
         }
     }
@@ -560,8 +602,10 @@ struct NewTerminalSheet: View {
 
     /// A one-click row is only offered when what it needs is actually there.
     private func isReady(_ spec: TerminalSpec) -> Bool {
-        guard let harness = spec.harness else { return true }
-        return installed[harness] != nil
+        guard let id = spec.harness, let harness = Catalog.harness(id) else {
+            return spec.harness == nil
+        }
+        return rowState(harness).canLaunch
     }
 
     private func installCommand(for harnessID: String?) -> String? {
