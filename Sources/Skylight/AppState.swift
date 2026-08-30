@@ -50,6 +50,11 @@ final class AppState: ObservableObject {
     }
     /// Instances whose terminal rang the bell while not being viewed.
     @Published var attention: Set<UUID> = []
+    /// What each AGENT terminal is doing. Shells are absent from this map —
+    /// "Working / Needs you" is an agent question, and a shell answers a
+    /// different one (where it is).
+    @Published private(set) var agentStates: [UUID: AgentState] = [:]
+    private var agentMachines: [UUID: AgentStateMachine] = [:]
     /// Instances whose process ended (shell exited, agent quit, crash) while
     /// the surface stayed on screen. The sidebar says so instead of letting a
     /// dead session pose as a live one.
@@ -172,13 +177,22 @@ final class AppState: ObservableObject {
             self.noteWorkingDirectory(path, kind: instance.spec.kind)
         }
         sessions.onBell = { [weak self] id in
-            guard let self, !self.isVisible(id) else { return }
+            guard let self else { return }
+            self.noteAgent(id, .bellRang)
+            guard !self.isVisible(id) else { return }
             self.attention.insert(id)
+        }
+        sessions.onOutput = { [weak self] id in
+            self?.noteAgent(id, .outputArrived)
+        }
+        sessions.onCommandFinished = { [weak self] id, exitCode in
+            self?.noteAgent(id, .commandFinished(exitCode: exitCode))
         }
         // The surface reports its process gone — the sidebar stops pretending.
         sessions.onSessionEnd = { [weak self] id in
             guard let self else { return }
             self.endedInstances.insert(id)
+            self.noteAgent(id, .sessionEnded)
             // Third probe trigger: a sign-in terminal just finished, so
             // whatever we believed about that harness is stale.
             if let harness = self.signInInstances[id] {
@@ -224,10 +238,12 @@ final class AppState: ObservableObject {
                 switch selection {
                 case let .item(id)?:
                     self.attention.remove(id)
+                    self.noteAgent(id, .viewed)
                     self.pendingReveal = nil
                 case let .canvas(boardID)?:
                     for tile in self.canvases.first(where: { $0.id == boardID })?.tiles ?? [] {
                         self.attention.remove(tile.itemID)
+                        self.noteAgent(tile.itemID, .viewed)
                     }
                 case nil:
                     self.pendingReveal = nil
@@ -380,6 +396,19 @@ final class AppState: ObservableObject {
             try? data.write(to: Self.subscriptionsURL, options: .atomic)
         }
     }
+
+    /// Feed one event into an agent's state machine. Cheap, synchronous, and
+    /// only ever called from something that already happened — never a timer.
+    private func noteAgent(_ id: UUID, _ event: AgentEvent) {
+        guard let instance = instance(id), instance.spec.kind.isAgent else { return }
+        var machine = agentMachines[id] ?? AgentStateMachine()
+        let state = machine.on(event, at: Date().timeIntervalSinceReferenceDate)
+        agentMachines[id] = machine
+        if agentStates[id] != state { agentStates[id] = state }
+    }
+
+    /// What an agent terminal is doing, or nil for a shell.
+    func agentState(_ id: UUID) -> AgentState? { agentStates[id] }
 
     /// Grant or revoke full autonomy for one harness. Takes effect for every
     /// terminal launched from here on — a session already running keeps the
@@ -551,6 +580,8 @@ final class AppState: ObservableObject {
 
     func deleteInstance(_ id: UUID) {
         signInInstances.removeValue(forKey: id)
+        agentMachines.removeValue(forKey: id)
+        agentStates.removeValue(forKey: id)
         instances.removeAll { $0.id == id }
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == id }
@@ -877,6 +908,8 @@ final class LiveSessionStore {
     private var terminalNSViews: [UUID: TerminalView] = [:]
     private var bellObservers: [UUID: AnyCancellable] = [:]
     private var cwdObservers: [UUID: AnyCancellable] = [:]
+    private var activityObservers: [UUID: AnyCancellable] = [:]
+    private var commandObservers: [UUID: AnyCancellable] = [:]
     private var resolvedHarnesses: [String: String?] = [:]
     private var cachedShells: [Shell]?
     private var launchOutcomes: [UUID: LaunchOutcome] = [:]
@@ -998,6 +1031,13 @@ final class LiveSessionStore {
     /// integration). Shells only in practice — an agent binary does not emit
     /// it — which is exactly the split the caller wants.
     var onWorkingDirectory: ((UUID, String) -> Void)?
+
+    /// Fired when a terminal produces output. Coalesced by the publisher it
+    /// rides on, so this is an event per render tick at worst — never per byte.
+    var onOutput: ((UUID) -> Void)?
+
+    /// Fired when shell integration reports a finished command.
+    var onCommandFinished: ((UUID, Int?) -> Void)?
 
     /// Fired when a terminal rings the bell (a CLI is done / needs input).
     var onBell: ((UUID) -> Void)?
@@ -1322,6 +1362,17 @@ final class LiveSessionStore {
         // Where this session is, remembered so the NEXT terminal of the same
         // kind can start there. Observed like the bell — the value belongs to
         // the terminal, and a poll would be a timer.
+        // Agent activity, from the title the surface already publishes: it
+        // changes as an agent works, and it is the cheapest honest proxy for
+        // "something is happening" that does not involve reading the pty.
+        activityObservers[id] = state.$title
+            .dropFirst()
+            .sink { [weak self] _ in self?.onOutput?(id) }
+        commandObservers[id] = state.$lastCommandDurationNanos
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.onCommandFinished?(id, state.lastCommandExitCode)
+            }
         cwdObservers[id] = state.$workingDirectory
             .compactMap { $0 }
             .removeDuplicates()
@@ -1358,6 +1409,8 @@ final class LiveSessionStore {
         terminalNSViews.removeValue(forKey: id)
         bellObservers.removeValue(forKey: id)
         cwdObservers.removeValue(forKey: id)
+        activityObservers.removeValue(forKey: id)
+        commandObservers.removeValue(forKey: id)
         launchOutcomes.removeValue(forKey: id)
         surfaceVisibility.removeValue(forKey: id)
         // Ending the instance ends its kept session — delete means delete,

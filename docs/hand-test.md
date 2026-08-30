@@ -28,6 +28,13 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Double-click a tile header (or its expand button) → focus mode fills
       the window; ⌘. returns; the canvas is untouched. Escape stays with the
       terminal (try it in vim — it must not exit focus).
+- [ ] Agent state dot: start a Claude Code terminal and give it work — its
+      sidebar dot goes green and breathes while it works, settles when done.
+      Shell rows show no state dot at all (they show their directory instead).
+- [ ] The bell still wins: when an agent rings, the dot is the accent
+      attention pulse exactly as before, and it does NOT clear itself when
+      more output arrives — only looking at the row clears it.
+- [ ] Reduce Motion: nothing breathes.
 - [ ] Bell: run `sleep 2; printf '\a'` in a terminal, switch away before it
       fires → pulsing sidebar dot; opening the terminal clears it.
 - [ ] Delete a canvas → its terminals return to the Terminals section,

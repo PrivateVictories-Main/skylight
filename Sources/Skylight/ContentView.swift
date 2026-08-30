@@ -294,12 +294,24 @@ struct InstanceRow: View {
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 } else if let terminal = state.sessions.existingTerminal(for: instance.id) {
-                    TitleCaption(name: instance.name, terminal: terminal)
+                    if instance.spec.kind == .shell {
+                        // A shell's useful second line is where it IS.
+                        CwdCaption(terminal: terminal, maxLength: 30)
+                    } else {
+                        TitleCaption(name: instance.name, terminal: terminal)
+                    }
                 }
             }
             Spacer(minLength: 4)
+            // An agent's row says what it is DOING; a shell's says nothing,
+            // because "Working / Needs you" is not a question a shell answers.
+            // The bell's pulsing accent dot survives unchanged as the
+            // waitingForYou case — it was the right design, it just had no
+            // vocabulary around it.
             if state.attention.contains(instance.id) {
                 AttentionDot()
+            } else if let agent = state.agentState(instance.id), agent != .idle {
+                StateDot(state: agent)
             }
         }
         .padding(.vertical, 3)
@@ -432,6 +444,43 @@ struct CanvasRow: View {
         } message: {
             Text("Its terminals return to the sidebar — nothing is closed.")
         }
+    }
+}
+
+/// What an agent terminal is doing, as a dot. Deliberately quiet: only the
+/// bell earns a pulse, everything else is a still mark you can read at a
+/// glance or ignore entirely.
+struct StateDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let state: AgentState
+    @State private var breathing = false
+
+    private var color: Color {
+        switch state {
+        case .working: .green
+        case .done: .secondary
+        case .waitingForYou: .accentColor
+        case .idle, .ended: .secondary
+        }
+    }
+
+    var body: some View {
+        Circle()
+            .fill(color.opacity(state == .done ? 0.45 : 0.85))
+            .frame(width: 6, height: 6)
+            // Working breathes, faintly. A dead or finished session must not
+            // — motion implies something is happening.
+            .opacity(state.isLive && breathing && !reduceMotion ? 0.45 : 1)
+            .animation(state.isLive && !reduceMotion
+                ? .easeInOut(duration: 1.1).repeatForever(autoreverses: true)
+                : .default,
+                value: breathing)
+            .onAppear { breathing = state.isLive && !reduceMotion }
+            .onChange(of: state) { _, new in
+                breathing = new.isLive && !reduceMotion
+            }
+            .help(state.label)
+            .accessibilityLabel(state.label)
     }
 }
 
