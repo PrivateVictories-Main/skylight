@@ -50,4 +50,17 @@ public enum TerminalCommands {
         if focused { return true }
         return zoom == 1
     }
+
+    /// Prompt jumping needs everything above AND actual prompt marks.
+    ///
+    /// The marks come from shell integration, so bash has none at all and a
+    /// zsh has none before its first prompt. Enabling the items anyway made
+    /// them inert — the precise lie this type exists to prevent, shipped in
+    /// the same commit as the comment saying so.
+    public static func promptJumpAvailable(hasTerminal: Bool, focused: Bool,
+                                           zoom: CGFloat,
+                                           hasPromptMarks: Bool) -> Bool {
+        available(hasTerminal: hasTerminal, focused: focused, zoom: zoom)
+            && hasPromptMarks
+    }
 }

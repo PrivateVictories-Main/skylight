@@ -80,12 +80,16 @@ struct SkylightApp: App {
                 Divider()
                 // Prompt-at-a-time navigation, which only became possible
                 // once shell integration started marking prompts.
+                // Gated on prompt MARKS, not just on having a terminal:
+                // without shell integration there is nowhere to jump to, and
+                // an enabled item that does nothing is the lie this menu was
+                // built to avoid.
                 Button("Previous Prompt") { state.jumpPrompt(by: -1) }
                     .keyboardShortcut(.upArrow, modifiers: [.command])
-                    .disabled(!state.terminalCommandsAvailable)
+                    .disabled(!state.promptJumpAvailable)
                 Button("Next Prompt") { state.jumpPrompt(by: 1) }
                     .keyboardShortcut(.downArrow, modifiers: [.command])
-                    .disabled(!state.terminalCommandsAvailable)
+                    .disabled(!state.promptJumpAvailable)
             }
             // App menu: FDA is an app-level grant, not a document action.
             CommandGroup(after: .appSettings) {

@@ -181,6 +181,25 @@ final class TerminalCommandAvailabilityTests: XCTestCase {
                                                   focused: false, zoom: 1.5))
     }
 
+    /// I5: prompt jumping needs prompt MARKS, which only exist when shell
+    /// integration is running. bash has none, and a zsh has none before its
+    /// first prompt — so the items were enabled and inert, which is the exact
+    /// lie this predicate exists to prevent.
+    func testPromptJumpingNeedsPromptMarks() {
+        XCTAssertFalse(TerminalCommands.promptJumpAvailable(
+            hasTerminal: true, focused: true, zoom: 1, hasPromptMarks: false))
+        XCTAssertTrue(TerminalCommands.promptJumpAvailable(
+            hasTerminal: true, focused: true, zoom: 1, hasPromptMarks: true))
+    }
+
+    /// It still obeys everything the other commands obey.
+    func testPromptJumpingAlsoObeysTheZoomAndSelectionRules() {
+        XCTAssertFalse(TerminalCommands.promptJumpAvailable(
+            hasTerminal: false, focused: false, zoom: 1, hasPromptMarks: true))
+        XCTAssertFalse(TerminalCommands.promptJumpAvailable(
+            hasTerminal: true, focused: false, zoom: 0.5, hasPromptMarks: true))
+    }
+
     func testAvailableAtExactlyOneHundredPercent() {
         XCTAssertTrue(TerminalCommands.available(hasTerminal: true,
                                                  focused: false, zoom: 1))

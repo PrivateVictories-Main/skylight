@@ -179,7 +179,13 @@ final class AppState: ObservableObject {
         sessions.onBell = { [weak self] id in
             guard let self else { return }
             self.noteAgent(id, .bellRang)
-            guard !self.isVisible(id) else { return }
+            guard !self.isVisible(id) else {
+                // It rang while you were looking straight at it. The terminal
+                // itself is showing the prompt; a dot demanding attention you
+                // are already giving is noise.
+                self.noteAgent(id, .viewed)
+                return
+            }
             self.attention.insert(id)
         }
         sessions.onOutput = { [weak self] id in
@@ -433,6 +439,24 @@ final class AppState: ObservableObject {
             } ?? 1)
     }
 
+    /// Whether prompt jumping can actually go anywhere.
+    ///
+    /// `jumpToPrompt` returns a Bool that was being discarded; rather than
+    /// fire and hope, the target's own report of a completed command is used
+    /// as the evidence that shell integration is running and has laid down
+    /// marks. bash never gets there, which is correct — it has no marks.
+    var promptJumpAvailable: Bool {
+        guard let id = commandTargetInstance,
+              let terminal = sessions.existingTerminal(for: id) else { return false }
+        return TerminalCommands.promptJumpAvailable(
+            hasTerminal: true,
+            focused: focusedInstance != nil,
+            zoom: selectedCanvasID.flatMap { boardID in
+                canvases.first { $0.id == boardID }?.zoom
+            } ?? 1,
+            hasPromptMarks: terminal.lastCommandDurationNanos != nil)
+    }
+
     /// Send a ghostty binding action to the terminal in charge.
     func performTerminalAction(_ action: String) {
         guard let id = commandTargetInstance,
@@ -445,7 +469,11 @@ final class AppState: ObservableObject {
     func jumpPrompt(by offset: Int16) {
         guard let id = commandTargetInstance,
               let terminal = sessions.existingTerminal(for: id) else { return }
-        _ = terminal.jumpToPrompt(by: offset)
+        // The return value is the engine telling us whether there was
+        // anywhere to go. Discarding it is how a dead command looks alive.
+        if !terminal.jumpToPrompt(by: offset) {
+            NSSound.beep()
+        }
     }
 
     /// Grant or revoke full autonomy for one harness. Takes effect for every
@@ -481,7 +509,16 @@ final class AppState: ObservableObject {
     private func syncSurfaceVisibility() {
         let dragging = draggingItemID != nil
         for id in sessions.openSessionIDs {
-            sessions.setSurfaceVisible(dragging || isVisible(id), for: id)
+            let visible = isVisible(id)
+            sessions.setSurfaceVisible(dragging || visible, for: id)
+            // Looking at it IS looking at it. `.viewed` only ever fired on a
+            // selection CHANGE, so an agent that rang while you were already
+            // on its row kept saying "needs you" at somebody who was staring
+            // straight at it.
+            if visible {
+                attention.remove(id)
+                noteAgent(id, .viewed)
+            }
         }
     }
 
