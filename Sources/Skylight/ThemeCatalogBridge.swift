@@ -15,10 +15,15 @@ import SkylightCore
 /// disk, so a user who has never opened another terminal still gets a real
 /// choice on day one, with zero parsing involved.
 enum ThemeCatalogBridge {
-    /// Every bundled theme, in catalogue order.
-    static var all: [SkylightTheme] {
+    /// Every bundled theme, in catalogue order — converted ONCE.
+    ///
+    /// This is 485 themes, each with a sixteen-entry palette of strings to
+    /// parse. It was a computed property behind a search field, so every
+    /// keystroke re-converted the entire catalogue.
+    private static let cache: [SkylightTheme] =
         GhosttyThemeCatalog.allThemes.compactMap(convert)
-    }
+
+    static var all: [SkylightTheme] { cache }
 
     /// Resolve a `theme = NAME` reference from an imported ghostty config.
     /// Case-insensitive, because people type "catppuccin mocha".
@@ -30,9 +35,12 @@ enum ThemeCatalogBridge {
         return convert(match)
     }
 
+    /// Searches the converted cache rather than re-converting the matches:
+    /// same answers, no work per keystroke.
     static func search(_ query: String) -> [SkylightTheme] {
-        guard !query.trimmingCharacters(in: .whitespaces).isEmpty else { return all }
-        return GhosttyThemeCatalog.search(query).compactMap(convert)
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return cache }
+        return cache.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
     }
 
     private static func convert(_ definition: GhosttyThemeDefinition) -> SkylightTheme? {

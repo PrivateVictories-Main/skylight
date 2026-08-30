@@ -159,11 +159,18 @@ struct ThemeSettingsView: View {
     @State private var canRevert = ThemeStore.shared.canRevert
     /// Resolved once when the tab appears — see ThemeDiscovery.usable().
     @State private var migrationSources: [MigrationSource] = []
+    /// Held rather than re-read: this was a directory scan plus a JSON decode
+    /// per file, run inside a computed property behind a search field.
+    @State private var imported: [SkylightTheme] = []
 
-    private var bundled: [SkylightTheme] {
-        let all = ThemeStore.shared.importedThemes + ThemeCatalogBridge.search(query)
-        guard !query.isEmpty else { return all }
-        return all.filter { $0.name.localizedCaseInsensitiveContains(query) }
+    /// Imported themes first — they are the ones someone deliberately brought
+    /// over, and a bundled theme of the same name would otherwise bury them.
+    private var listed: [SkylightTheme] {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let mine = trimmed.isEmpty
+            ? imported
+            : imported.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
+        return mine + ThemeCatalogBridge.search(trimmed)
     }
 
     var body: some View {
@@ -182,7 +189,10 @@ struct ThemeSettingsView: View {
             footer
         }
         .padding(18)
-        .task { migrationSources = ThemeDiscovery.usable() }
+        .task {
+            migrationSources = ThemeDiscovery.usable()
+            imported = ThemeStore.shared.importedThemes
+        }
         .sheet(isPresented: Binding(get: { !candidates.isEmpty },
                                     set: { if !$0 { candidates = [] } })) {
             ThemeChoiceSheet(themes: candidates) { chosen in
@@ -224,7 +234,7 @@ struct ThemeSettingsView: View {
     private var catalogue: some View {
         ScrollView {
             LazyVStack(spacing: 2) {
-                ForEach(bundled.prefix(200), id: \.name) { theme in
+                ForEach(listed.prefix(200), id: \.name) { theme in
                     Button { apply(theme) } label: {
                         HStack(spacing: 10) {
                             Swatches(theme: theme)
@@ -335,6 +345,7 @@ struct ThemeSettingsView: View {
         AppState.shared?.sessions.refreshSurfaceTheme()
         AppState.shared?.sessions.refreshSurfaceConfig()
         canRevert = ThemeStore.shared.canRevert
+        imported = ThemeStore.shared.importedThemes
     }
 
     /// Three failures, three different things to do about them.
