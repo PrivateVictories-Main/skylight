@@ -19,14 +19,18 @@ public struct Harness: Identifiable, Equatable, Sendable {
     /// flag either fails the launch or grants something other than what the
     /// toggle promised, so an unverified harness simply shows no toggle.
     public let autonomyFlag: String?
+    /// How to ask this CLI whether it is signed in, and how to sign in. nil =
+    /// we have not verified anything, and will not guess. See AuthProbe.
+    public let authProbe: AuthProbe?
 
     public init(id: String, displayName: String, installCommand: String, brand: Brand?,
-                autonomyFlag: String? = nil) {
+                autonomyFlag: String? = nil, authProbe: AuthProbe? = nil) {
         self.id = id
         self.displayName = displayName
         self.installCommand = installCommand
         self.brand = brand
         self.autonomyFlag = autonomyFlag
+        self.authProbe = authProbe
     }
 }
 
@@ -34,28 +38,72 @@ public enum Catalog {
     /// The agent CLIs the New sheet offers. Install state is detected live;
     /// an uninstalled harness renders dimmed with its install command.
     public static let harnesses: [Harness] = [
+        // Probes below are VERIFIED against the live CLIs on 2026-08-30. An
+        // unverified harness gets no probe at all; see the cursor-agent note.
         Harness(id: "claude", displayName: "Claude Code",
                 installCommand: "npm i -g @anthropic-ai/claude-code", brand: .claudeCode,
-                autonomyFlag: "--dangerously-skip-permissions"),
+                autonomyFlag: "--dangerously-skip-permissions",
+                // `claude auth status` prints JSON and exits 0:
+                // {"loggedIn": true, "authMethod": "claude.ai",
+                //  "email": "…", "subscriptionType": "max", …}
+                // Read by KEY, not by pattern — the spacing of a serialization
+                // is not a contract, the field names are.
+                authProbe: AuthProbe(
+                    statusCommand: ["auth", "status"],
+                    format: .json(loggedInKey: "loggedIn",
+                                  accountKey: "email",
+                                  planKey: "subscriptionType"),
+                    credentialMarkers: ["~/.claude.json"],
+                    loginCommand: ["auth", "login"])),
         Harness(id: "codex", displayName: "Codex",
                 installCommand: "npm i -g @openai/codex", brand: .openai,
-                autonomyFlag: "--dangerously-bypass-approvals-and-sandbox"),
+                autonomyFlag: "--dangerously-bypass-approvals-and-sandbox",
+                // `codex login status` prints one line: "Logged in using ChatGPT".
+                authProbe: AuthProbe(
+                    statusCommand: ["login", "status"],
+                    format: .text(signedIn: ["Logged in using"],
+                                  signedOut: ["Not logged in", "not logged in"]),
+                    credentialMarkers: ["~/.codex/auth.json"],
+                    loginCommand: ["login"])),
         Harness(id: "gemini", displayName: "Gemini CLI",
                 installCommand: "npm i -g @google/gemini-cli", brand: .gemini,
-                autonomyFlag: "--yolo"),
+                autonomyFlag: "--yolo",
+                // Not installed here, so nothing could be verified: markers
+                // only, from its documented credential path.
+                authProbe: AuthProbe(
+                    credentialMarkers: ["~/.gemini/oauth_creds.json"],
+                    loginCommand: [])),
         Harness(id: "copilot", displayName: "Copilot CLI",
                 installCommand: "npm i -g @github/copilot", brand: .copilot,
                 autonomyFlag: "--allow-all-tools"),
         Harness(id: "cursor-agent", displayName: "Cursor CLI",
                 installCommand: "curl https://cursor.com/install -fsS | bash", brand: .cursor,
-                autonomyFlag: "--force"),
+                autonomyFlag: "--force",
+                // NO status command, and this is the important one.
+                //
+                // `cursor-agent status` LOOKS like the read-only probe every
+                // other CLI has. Run on 2026-08-30 it printed "Starting login
+                // process… Authenticating with Cursor…" and hung until it was
+                // killed. A guessed probe would not merely fail here — it
+                // would hijack the app into an interactive login nobody asked
+                // for, on a background queue, with a timeout as the only way
+                // out. This is what "nil means we will not guess" is for.
+                authProbe: AuthProbe(
+                    credentialMarkers: ["~/.cursor"],
+                    loginCommand: ["login"])),
         Harness(id: "qwen", displayName: "Qwen Code",
                 installCommand: "npm i -g @qwen-code/qwen-code", brand: .qwen),
         Harness(id: "amp", displayName: "Amp",
                 installCommand: "npm i -g @sourcegraph/amp", brand: .amp),
         Harness(id: "opencode", displayName: "OpenCode",
                 installCommand: "npm i -g opencode-ai", brand: .opencode,
-                autonomyFlag: "--auto"),
+                autonomyFlag: "--auto",
+                // `opencode auth list` was not verified (the run was killed
+                // alongside the cursor-agent hang), so no status command —
+                // markers and a login only.
+                authProbe: AuthProbe(
+                    credentialMarkers: ["~/.local/share/opencode/auth.json"],
+                    loginCommand: ["auth", "login"])),
         // The 2026 wave — real adoption, official CLIs, no official vector
         // marks yet (brand nil = glyph, per the never-fake-a-mark rule).
         // Autonomy flags stay nil until verified from live --help: droid's
