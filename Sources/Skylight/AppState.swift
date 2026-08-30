@@ -1059,11 +1059,11 @@ final class LiveSessionStore {
                         widthPixels: UInt16(clamping: viewport.widthPixels),
                         heightPixels: UInt16(clamping: viewport.heightPixels)))
                 })
-            if let inherited = daemon.inheritedSessions[id] {
+            if daemon.inheritedSessions[id] != nil {
                 // A previous app run's session: attach and replay. A dead one
                 // still replays — its final output and honest ending arrive
                 // exactly like a live exit would.
-                daemon.attach(id, session: session, live: inherited.alive)
+                daemon.attach(id, session: session)
             } else {
                 daemon.spawn(SpawnRequest(
                     id: id,

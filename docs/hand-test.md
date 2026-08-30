@@ -91,7 +91,12 @@ then walk top to bottom. Every line should feel instant.
       scrollback intact. Then Force Quit the app instead → same result.
 - [ ] Survival feel: typing latency through the daemon lane must be
       indistinguishable from before; open vim, quit the app, relaunch —
-      judge the repaint (a one-row resize jiggle prompts it).
+      judge the repaint (the replay lands on the settled grid; a frame
+      older than the 1 MiB ring may need a keystroke/^L to redraw).
+- [ ] Reattach is byte-perfect: with a shell prompt showing, quit and
+      relaunch (and separately: close the window, click the Dock icon) —
+      the grid comes back EXACTLY as it was: no stray %, no shifted
+      prompt, no redraw flicker.
 - [ ] Delete honesty with the keeper: delete a running terminal → its
       process actually ends (`pgrep` it); deleting the last one ends
       `skylightd` itself within seconds.

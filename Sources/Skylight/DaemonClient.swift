@@ -18,9 +18,18 @@ final class DaemonClient: @unchecked Sendable {
     /// socket queue per frame — the one shared table, lock-guarded.
     private let lock = NSLock()
     private var routes: [UUID: InMemoryTerminalSession] = [:]
-    /// Reattaching surfaces whose next resize should jiggle (rows−1, rows) so
-    /// a replayed full-screen TUI repaints — dtach's winch trick.
-    private var jigglePending: Set<UUID> = []
+    /// Sessions whose attach — and therefore the daemon's ring replay —
+    /// waits for the surface's SETTLED size. A rebuilding window reports a
+    /// run of transitional grids (44×14 → 96×38 → …); replaying into any of
+    /// them wraps every long line, and the reflow once the real size lands
+    /// WAS the reattach-debris artifact (stray %, right-shifted prompts).
+    /// Each reported size restarts a short quiet timer — the same contract
+    /// as the daemon's own birth debounce — and only a grid that holds
+    /// still receives the replay; a fallback covers surfaces that never lay
+    /// out. (This supersedes the old winch-jiggle: a replay landing on the
+    /// grid it was drawn for needs no child repaint.)
+    private var deferredAttach: Set<UUID> = []
+    private var attachSettleGeneration: [UUID: Int] = [:]
     /// The last link of end-to-end flow control: the read queue admits
     /// output to the parser through a token bucket, and when the bucket is
     /// dry it BLOCKS — the socket fills, the daemon's high-water pauses the
@@ -207,16 +216,48 @@ final class DaemonClient: @unchecked Sendable {
         enqueue(WireFrame(type: .spawn, payload: payload))
     }
 
-    /// Reattach to a session the daemon already holds. Replay arrives as
-    /// ordinary output; a live one gets the repaint jiggle on its first
-    /// resize.
-    func attach(_ id: UUID, session: InMemoryTerminalSession, live: Bool) {
+    /// Reattach to a session the daemon already holds. The attach frame —
+    /// and with it the daemon's ring replay — is DEFERRED until the surface
+    /// reports its first real size, so the replay always lands on the grid
+    /// it was drawn for.
+    func attach(_ id: UUID, session: InMemoryTerminalSession) {
         register(session, for: id)
-        if live {
-            lock.lock()
-            jigglePending.insert(id)
-            lock.unlock()
+        lock.lock()
+        deferredAttach.insert(id)
+        lock.unlock()
+        // A surface that never lays out (created hidden) still gets its
+        // replay — the same fallback contract as the daemon's birth timer.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
+            self?.completeAttach(id)
         }
+    }
+
+    /// Restart the quiet timer for a deferred attach: 200ms without a new
+    /// size report means the grid has settled and the replay can land.
+    private func scheduleAttachSettle(_ id: UUID) {
+        lock.lock()
+        guard deferredAttach.contains(id) else { lock.unlock(); return }
+        let generation = (attachSettleGeneration[id] ?? 0) + 1
+        attachSettleGeneration[id] = generation
+        lock.unlock()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let current = self.attachSettleGeneration[id]
+            self.lock.unlock()
+            if current == generation { self.completeAttach(id) }
+        }
+    }
+
+    /// Send the clear + attach once the surface's grid has held still — or
+    /// on the fallback timer. Idempotent: whichever fires second finds
+    /// nothing to do.
+    private func completeAttach(_ id: UUID) {
+        lock.lock()
+        let session = deferredAttach.remove(id) != nil ? routes[id] : nil
+        attachSettleGeneration.removeValue(forKey: id)
+        lock.unlock()
+        guard let session else { return }
         // A clean slate before the replay: without it, replayed absolute
         // cursor moves land on whatever the fresh grid holds and the first
         // frame reads as debris. Queued on the session before the attach
@@ -235,21 +276,18 @@ final class DaemonClient: @unchecked Sendable {
         // drawing prompts for a width the renderer doesn't have. A zero-size
         // terminal is never a real request; it dies here.
         guard payload.columns > 0, payload.rows > 0 else { return }
-        lock.lock()
-        let jiggle = jigglePending.remove(payload.id) != nil
-        lock.unlock()
-        if jiggle, payload.rows > 1 {
-            var smaller = payload
-            smaller.rows -= 1
-            enqueue(WireFrame(type: .resize, payload: WirePayload.encodeResize(smaller)))
-        }
         enqueue(WireFrame(type: .resize, payload: WirePayload.encodeResize(payload)))
+        // Every size report restarts the deferred attach's quiet timer —
+        // the replay goes out only once the grid holds still, and the
+        // resize frames are already ahead of the attach in the pipe, so
+        // the daemon applies the final grid before it replays.
+        scheduleAttachSettle(payload.id)
     }
 
     func kill(_ id: UUID) {
         lock.lock()
         routes.removeValue(forKey: id)
-        jigglePending.remove(id)
+        deferredAttach.remove(id)
         lock.unlock()
         // Killed means gone from the daemon too: a later terminal(for:) under
         // this id must SPAWN, never re-attach to the corpse this removed.
@@ -345,7 +383,7 @@ final class DaemonClient: @unchecked Sendable {
         lock.lock()
         let ids = Array(routes.keys)
         routes.removeAll()
-        jigglePending.removeAll()
+        deferredAttach.removeAll()
         lock.unlock()
         if let onConnectionLost {
             Task { @MainActor in onConnectionLost(ids) }

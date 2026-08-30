@@ -67,6 +67,7 @@ extension Server {
             guard let id = WirePayload.uuid(from: frame.payload),
                   let session = sessions[id] else { return }
             client.attached.insert(id)
+            session.lastAttach = DispatchTime.now()
             // A pulse-paused detached session streams again the moment
             // someone is watching.
             resumeReading(session)
@@ -139,9 +140,31 @@ extension Server {
             }
             guard let session = sessions[resize.id], !session.exited,
                   session.masterFD >= 0 else { return }
-            PTY.resize(masterFD: session.masterFD,
-                       columns: resize.columns, rows: resize.rows,
-                       widthPixels: resize.widthPixels, heightPixels: resize.heightPixels)
+            // A reattaching renderer reports TRANSITIONAL sizes while its
+            // window builds — forwarding each one SIGWINCHes the child into
+            // wrong-width redraws (the reattach-debris artifact: stray %,
+            // right-shifted prompts). For a short window after attach, sizes
+            // coalesce and only the settled one applies — and a settled size
+            // the pty already has is skipped outright, so a relaunch whose
+            // layout lands where it left off touches the child not at all:
+            // the replayed grid stands byte-perfect. Interactive resizes
+            // (attach long past) stay immediate.
+            let sinceAttach = DispatchTime.now().uptimeNanoseconds
+                &- session.lastAttach.uptimeNanoseconds
+            if sinceAttach < 1_500_000_000 {
+                session.pendingResize = resize
+                session.resizeGeneration += 1
+                let generation = session.resizeGeneration
+                queue.asyncAfter(deadline: .now() + 0.15) { [weak self, weak session] in
+                    guard let self, let session,
+                          session.resizeGeneration == generation,
+                          let settled = session.pendingResize else { return }
+                    session.pendingResize = nil
+                    self.applyResize(settled, to: session)
+                }
+                return
+            }
+            applyResize(resize, to: session)
         case .kill:
             guard let id = WirePayload.uuid(from: frame.payload) else { return }
             if pendingSpawns.removeValue(forKey: id) != nil {

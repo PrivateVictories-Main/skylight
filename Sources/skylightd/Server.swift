@@ -38,6 +38,20 @@ final class Server: @unchecked Sendable {
         /// Logged once per overflow EPISODE, not per frame — a pathological
         /// input flood must not grow the log without bound.
         var inputOverflowing = false
+        /// The pty's current grid, as last applied (spawn or resize) — the
+        /// reference that lets a settled post-attach size that changes
+        /// nothing be skipped entirely.
+        var columns: UInt16 = 0
+        var rows: UInt16 = 0
+        var widthPixels: UInt16 = 0
+        var heightPixels: UInt16 = 0
+        /// When the most recent client attached. A reattaching renderer
+        /// reports TRANSITIONAL sizes while its window builds; for a short
+        /// window after attach those are coalesced instead of hitting the
+        /// child as a storm of wrong-width SIGWINCHes.
+        var lastAttach = DispatchTime(uptimeNanoseconds: 0)
+        var resizeGeneration = 0
+        var pendingResize: ResizePayload?
         var ring = OutputRing()
         var exitCode: Int32?
         /// Output fully drained from the master after child exit.

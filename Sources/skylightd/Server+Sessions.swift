@@ -67,6 +67,12 @@ extension Server {
                                   pid: child.pid, masterFD: child.masterFD)
             session.slaveFD = child.slaveFD
             session.startSeconds = processStartSeconds(child.pid) ?? 0
+            // The birth grid is the applied grid — the reference the
+            // settled-resize skip compares against.
+            session.columns = max(2, columns)
+            session.rows = max(2, rows)
+            session.widthPixels = widthPixels
+            session.heightPixels = heightPixels
             sessions[request.id] = session
             persistLedger()
             let source = DispatchSource.makeReadSource(fileDescriptor: child.masterFD,
@@ -89,6 +95,23 @@ extension Server {
                 send(WireFrame(type: .exited, payload: payload), to: client)
             }
         }
+    }
+
+    /// Apply a grid change to the pty — unless it IS the current grid (all
+    /// four dimensions), in which case nothing happens at all: no
+    /// TIOCSWINSZ, no SIGWINCH, no child redraw.
+    func applyResize(_ resize: ResizePayload, to session: Session) {
+        guard !session.exited, session.masterFD >= 0 else { return }
+        guard resize.columns != session.columns || resize.rows != session.rows
+                || resize.widthPixels != session.widthPixels
+                || resize.heightPixels != session.heightPixels else { return }
+        session.columns = resize.columns
+        session.rows = resize.rows
+        session.widthPixels = resize.widthPixels
+        session.heightPixels = resize.heightPixels
+        PTY.resize(masterFD: session.masterFD,
+                   columns: resize.columns, rows: resize.rows,
+                   widthPixels: resize.widthPixels, heightPixels: resize.heightPixels)
     }
 
     func readFromPTY(_ session: Session) {
