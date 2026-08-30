@@ -119,6 +119,19 @@ then walk top to bottom. Every line should feel instant.
       flip it ON with terminals open — window AND terminal surfaces go
       solid live; the Settings pane says the system setting is in charge;
       flip OFF → the stored glass choices return.
+- [ ] ⌘, has two native tabs (General / Theme); General behaves exactly as
+      before, and neither tab feels crowded.
+- [ ] Bring your look over: the Theme tab lists only terminals actually on
+      this machine (here: Ghostty, iTerm2, Warp, VS Code). Click Ghostty →
+      Catppuccin Mocha arrives (it resolves `theme = NAME` against the
+      bundled catalogue), and the note says `command`/`keybind` were not
+      imported. Nothing launches tmux.
+- [ ] Warp folder import offers a CHOICE (many themes in one folder) instead
+      of silently picking one; Cancel leaves everything untouched.
+- [ ] Import wins, then reverts: set opacity + text size by hand, import a
+      theme (they change), click "Revert to before import" → the hand-set
+      values come back exactly, and the Revert button disappears.
+- [ ] A hand edit AFTER an import does not remove the Revert button.
 - [ ] Theme applies LIVE: with 3 terminals open (one full-window, two tiles),
       pick a bundled theme — all three recolour at once, no relaunch, and the
       choice survives a relaunch. Opening a NEW terminal shows the theme from

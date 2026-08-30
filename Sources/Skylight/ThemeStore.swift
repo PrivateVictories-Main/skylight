@@ -24,7 +24,10 @@ final class ThemeStore {
     private(set) var light: SkylightTheme?
     private(set) var dark: SkylightTheme?
 
-    private init() { reload() }
+    private init() {
+        reload()
+        loadSnapshot()
+    }
 
     /// Re-resolve both slots from stored names. Cheap and synchronous: a name
     /// lookup against an in-memory catalogue.
@@ -52,7 +55,171 @@ final class ThemeStore {
 
     private static func resolve(_ name: String?) -> SkylightTheme? {
         guard let name, !name.isEmpty else { return nil }
+        if let imported = loadImported(named: name) { return imported }
         return ThemeCatalogBridge.resolve(named: name)
+    }
+
+    // MARK: - Imported themes on disk
+
+    private static let supportDir: URL = {
+        let dir = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Skylight/themes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    /// A filename that cannot escape the themes directory. Theme names come
+    /// from files other people wrote; "../../../etc" is a name too.
+    private static func slug(_ name: String) -> String {
+        let safe = name.unicodeScalars.map {
+            CharacterSet.alphanumerics.contains($0) ? Character($0) : "-"
+        }
+        return String(safe).lowercased()
+    }
+
+    private static func loadImported(named name: String) -> SkylightTheme? {
+        let url = supportDir.appendingPathComponent("\(slug(name)).json")
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? JSONDecoder().decode(SkylightTheme.self, from: data)
+    }
+
+    /// Instance-side alias so views do not reach for the type directly.
+    var importedThemes: [SkylightTheme] { Self.imported }
+
+    /// A hand edit after an import stands on its own but must not cost the
+    /// ability to undo the import (see ThemeSnapshotStore).
+    func snapshotNoteHandEdit() { snapshots.noteHandEdit() }
+
+    /// Every theme imported so far, newest name order irrelevant — the picker
+    /// sorts. Unreadable files are skipped rather than failing the whole list.
+    static var imported: [SkylightTheme] {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: supportDir, includingPropertiesForKeys: nil)) ?? []
+        return urls
+            .filter { $0.pathExtension == "json" }
+            .compactMap { url in
+                (try? Data(contentsOf: url)).flatMap {
+                    try? JSONDecoder().decode(SkylightTheme.self, from: $0)
+                }
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// Persist an imported theme so it survives relaunch. Atomic, and a
+    /// failure to write is not a reason to refuse the import — the theme still
+    /// applies for this run.
+    @discardableResult
+    static func save(_ theme: SkylightTheme) -> Bool {
+        guard let data = try? JSONEncoder().encode(theme) else { return false }
+        let url = supportDir.appendingPathComponent("\(slug(theme.name)).json")
+        return (try? data.write(to: url, options: .atomic)) != nil
+    }
+
+    // MARK: - The revert snapshot
+
+    private static var snapshotURL: URL {
+        supportDir.appendingPathComponent("pre-import-snapshot.json")
+    }
+
+    private(set) var snapshots = ThemeSnapshotStore()
+
+    /// Capture the world as it stands, then let the caller apply. Ryan's
+    /// ratified rule is that an import WINS over everything set by hand —
+    /// which is only defensible because this makes getting back one click.
+    func captureSnapshot() {
+        snapshots.capture(Self.currentValues())
+        persistSnapshot()
+    }
+
+    /// Put every captured value back and forget the snapshot. Returns false
+    /// when there was nothing to revert.
+    @discardableResult
+    func revert() -> Bool {
+        guard let values = snapshots.revert() else { return false }
+        let defaults = UserDefaults.standard
+        defaults.set(values.appearance, forKey: Appearance.appearanceKey)
+        defaults.set(values.windowBackground, forKey: Appearance.backgroundKey)
+        if let opacity = values.terminalOpacity {
+            defaults.set(opacity, forKey: Appearance.terminalOpacityKey)
+        }
+        defaults.set(values.terminalFontSize ?? 0, forKey: Appearance.fontSizeKey)
+        defaults.set(values.fontFamily, forKey: Appearance.fontFamilyKey)
+        select(light: values.lightTheme, dark: values.darkTheme)
+        persistSnapshot()
+        return true
+    }
+
+    var canRevert: Bool { snapshots.canRevert }
+
+    private static func currentValues() -> ThemeSnapshot {
+        let defaults = UserDefaults.standard
+        return ThemeSnapshot(
+            appearance: defaults.string(forKey: Appearance.appearanceKey),
+            windowBackground: defaults.string(forKey: Appearance.backgroundKey),
+            terminalOpacity: defaults.object(forKey: Appearance.terminalOpacityKey) as? Double,
+            terminalFontSize: defaults.integer(forKey: Appearance.fontSizeKey),
+            fontFamily: defaults.string(forKey: Appearance.fontFamilyKey),
+            lightTheme: defaults.string(forKey: lightKey),
+            darkTheme: defaults.string(forKey: darkKey))
+    }
+
+    private func persistSnapshot() {
+        if let stored = snapshots.stored, let data = try? JSONEncoder().encode(stored) {
+            try? data.write(to: Self.snapshotURL, options: .atomic)
+        } else {
+            try? FileManager.default.removeItem(at: Self.snapshotURL)
+        }
+    }
+
+    private func loadSnapshot() {
+        guard let data = try? Data(contentsOf: Self.snapshotURL),
+              let stored = try? JSONDecoder().decode(ThemeSnapshot.self, from: data)
+        else { return }
+        snapshots = ThemeSnapshotStore(snapshot: stored)
+    }
+
+    // MARK: - Applying an import
+
+    /// The one path an imported theme takes: snapshot, persist, select, and
+    /// let everything that watches appearance catch up. An import wins over
+    /// hand-set values by design — the snapshot above is the way back.
+    func apply(_ theme: SkylightTheme) {
+        captureSnapshot()
+        Self.save(theme)
+        let defaults = UserDefaults.standard
+        // "Applies EVERYTHING": the look the theme states reaches the app's
+        // own settings, not only the terminal's colours.
+        let applied = ThemeApplication.appearance(for: theme,
+                                                  reduceTransparency: false)
+        defaults.set(applied.isDark ? "dark" : "light", forKey: Appearance.appearanceKey)
+        if theme.backgroundOpacity != nil {
+            defaults.set(applied.opacity, forKey: Appearance.terminalOpacityKey)
+        }
+        if let size = applied.fontSize, Appearance.fontSizes.contains(Int(size)) {
+            defaults.set(Int(size), forKey: Appearance.fontSizeKey)
+        }
+        // A font we do not have installed is not applied — the theme would
+        // silently render in something else and look broken for no visible
+        // reason. Honest fallback, named to the user by the import sheet.
+        if let family = applied.fontFamily, Appearance.fontIsInstalled(family) {
+            defaults.set(family, forKey: Appearance.fontFamilyKey)
+        }
+        if theme.isDarkDerived {
+            select(light: UserDefaults.standard.string(forKey: Self.lightKey),
+                   dark: theme.name)
+        } else {
+            select(light: theme.name,
+                   dark: UserDefaults.standard.string(forKey: Self.darkKey))
+        }
+    }
+
+    /// Fonts a theme names but the machine does not have. Surfaced by the
+    /// import sheet alongside the theme's own `skipped` list.
+    static func unavailableFont(in theme: SkylightTheme) -> String? {
+        guard let family = theme.fontFamily,
+              !Appearance.fontIsInstalled(family) else { return nil }
+        return family
     }
 
     /// What every surface is told to wear. Reduce Transparency is threaded in

@@ -46,6 +46,24 @@ enum Appearance {
         return fontSizes.contains(stored) ? stored : 0
     }
 
+    static let fontFamilyKey = "terminalFontFamily"
+
+    /// The stored terminal font family, or nil for the engine's own. Validated
+    /// on read as well as on import: a font can be uninstalled after it was
+    /// chosen, and asking ghostty for a face that is not there renders in
+    /// something else with nothing to explain why.
+    static var terminalFontFamily: String? {
+        guard let stored = UserDefaults.standard.string(forKey: fontFamilyKey),
+              !stored.isEmpty, fontIsInstalled(stored) else { return nil }
+        return stored
+    }
+
+    /// Is this face actually on the machine? The check a theme's font claim
+    /// has to pass before it is allowed to apply.
+    static func fontIsInstalled(_ family: String) -> Bool {
+        !NSFontManager.shared.availableMembers(ofFontFamily: family).isNilOrEmpty
+    }
+
     /// Apply a stored appearance choice to the app. "system" clears the
     /// override so the OS setting rules again — including live changes.
     @MainActor
@@ -58,9 +76,28 @@ enum Appearance {
     }
 }
 
-/// Settings (⌘,): the whole pane on one screen, no tabs. Every control
-/// applies instantly — there is nothing to confirm and nothing to restart.
+private extension Optional where Wrapped: Collection {
+    var isNilOrEmpty: Bool { self?.isEmpty ?? true }
+}
+
+/// Settings (⌘,): native macOS tabs. It was one calm screen until themes
+/// arrived with a searchable catalogue and an importer; two calm screens beat
+/// one crowded one, and tabs are what a Mac app uses to say so.
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettingsView()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            ThemeSettingsView()
+                .tabItem { Label("Theme", systemImage: "paintpalette") }
+        }
+        .frame(width: 460)
+    }
+}
+
+/// The original pane, unchanged in behavior: light/dark, glass/flat, terminal
+/// translucency, text size. Every control still applies instantly.
+struct GeneralSettingsView: View {
     @AppStorage(Appearance.appearanceKey) private var appearance = "system"
     @AppStorage(Appearance.backgroundKey) private var background = "glass"
     @AppStorage(Appearance.terminalOpacityKey)
@@ -117,13 +154,18 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 380)
-        .fixedSize()
-        .onChange(of: appearance) { _, raw in Appearance.apply(raw) }
+        .onChange(of: appearance) { _, raw in
+            Appearance.apply(raw)
+            // Light and dark are two different theme slots, so a manual
+            // appearance flip has to re-ask which one is now in force.
+            AppState.shared?.sessions.refreshSurfaceTheme()
+        }
         .onChange(of: terminalOpacity) { _, _ in
+            ThemeStore.shared.snapshotNoteHandEdit()
             AppState.shared?.sessions.refreshSurfaceConfig()
         }
         .onChange(of: fontSize) { _, _ in
+            ThemeStore.shared.snapshotNoteHandEdit()
             AppState.shared?.sessions.refreshSurfaceConfig()
         }
         .onReceive(NSWorkspace.shared.notificationCenter.publisher(

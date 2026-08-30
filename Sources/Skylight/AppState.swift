@@ -1000,6 +1000,12 @@ final class LiveSessionStore {
         if Appearance.terminalFontSize > 0 {
             configuration = configuration.fontSize(Float(Appearance.terminalFontSize))
         }
+        // Validated on read, not just on import: a face can be uninstalled
+        // after it was chosen, and asking ghostty for one that is not there
+        // renders in something else with nothing on screen to explain why.
+        if let family = Appearance.terminalFontFamily {
+            configuration = configuration.fontFamily(family)
+        }
         return configuration
     }
 
