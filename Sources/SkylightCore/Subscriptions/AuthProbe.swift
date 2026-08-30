@@ -67,7 +67,16 @@ public extension AuthProbe {
     /// "unknown", and it can never on its own produce `.signedIn`. Claiming a
     /// working subscription because a file exists is exactly the guess this
     /// module refuses everywhere else.
-    static func state(stdout: String?, exitCode: Int32?,
+    /// stdout and stderr BOTH, because a CLI's idea of where a status line
+    /// belongs is its own. Verified on 2026-08-30: `codex login status` prints
+    /// "Logged in using ChatGPT" on **stderr** and leaves stdout empty, so a
+    /// reader that took stdout alone resolved codex to .unknown forever and
+    /// its row silently never worked. No fixture would have caught that —
+    /// only running the real thing did.
+    ///
+    /// stdout is preferred where both speak: a CLI that answers on stdout and
+    /// warns on stderr must not be read off the warning.
+    static func state(stdout: String?, stderr: String? = nil, exitCode: Int32?,
                       markersPresent: Bool, probe: AuthProbe) -> SubscriptionState {
         /// No usable answer. A marker keeps it honest at "unknown"; without
         /// one, signed out is the only reading left.
@@ -80,34 +89,47 @@ public extension AuthProbe {
         // A CLI that failed has not told us anything, whatever it printed on
         // the way down.
         guard exitCode == 0 else { return .unknown }
-        guard let stdout, !stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        else { return .unknown }
+
+        func meaningful(_ text: String?) -> String? {
+            guard let text,
+                  !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { return nil }
+            return text
+        }
+        // stdout first, then stderr — ordered, not merged. Concatenating them
+        // would let a stderr warning corrupt a JSON document on stdout.
+        let streams = [meaningful(stdout), meaningful(stderr)].compactMap { $0 }
+        guard !streams.isEmpty else { return .unknown }
 
         switch probe.format {
         case let .text(signedIn, signedOut):
-            // Signed-out literals are checked FIRST: "Not logged in" contains
-            // no signed-in literal today, but a future pair where one is a
-            // substring of the other must not silently resolve the wrong way.
-            if signedOut.contains(where: stdout.contains) { return .signedOut }
-            if signedIn.contains(where: stdout.contains) {
-                return .signedIn(account: nil, plan: nil)
+            for stream in streams {
+                // Signed-out literals are checked FIRST: "Not logged in"
+                // contains no signed-in literal today, but a future pair where
+                // one is a substring of the other must not silently resolve
+                // the wrong way.
+                if signedOut.contains(where: stream.contains) { return .signedOut }
+                if signedIn.contains(where: stream.contains) {
+                    return .signedIn(account: nil, plan: nil)
+                }
             }
             return undecided()
 
         case let .json(loggedInKey, accountKey, planKey):
-            guard let data = stdout.data(using: .utf8),
-                  let object = try? JSONSerialization.jsonObject(with: data),
-                  let root = object as? [String: Any]
-            else {
-                // It claimed to print JSON and did not. That is a broken
-                // answer, not a "signed out" one.
-                return .unknown
+            for stream in streams {
+                guard let data = stream.data(using: .utf8),
+                      let root = (try? JSONSerialization.jsonObject(with: data))
+                        as? [String: Any],
+                      let loggedIn = root[loggedInKey] as? Bool
+                else { continue }
+                guard loggedIn else { return .signedOut }
+                // Account and plan appear ONLY because the CLI printed them.
+                return .signedIn(account: accountKey.flatMap { root[$0] as? String },
+                                 plan: planKey.flatMap { root[$0] as? String })
             }
-            guard let loggedIn = root[loggedInKey] as? Bool else { return .unknown }
-            guard loggedIn else { return .signedOut }
-            // Account and plan appear ONLY because the CLI printed them.
-            return .signedIn(account: accountKey.flatMap { root[$0] as? String },
-                             plan: planKey.flatMap { root[$0] as? String })
+            // It claimed to print JSON and did not, on either stream. A broken
+            // answer, not a "signed out" one.
+            return .unknown
         }
     }
 }

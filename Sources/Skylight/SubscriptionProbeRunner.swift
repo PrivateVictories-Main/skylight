@@ -3,11 +3,17 @@ import SkylightCore
 
 /// Runs a vendor's own read-only status command and reports what it said.
 ///
-/// Everything about this type is shaped by one real observation: on
-/// 2026-08-30 `cursor-agent status` — which looks exactly like a read-only
-/// probe — printed "Starting login process… Authenticating with Cursor…" and
-/// hung until it was killed. Any CLI can do that, including one whose probe is
-/// verified today and changes next release. So the runner assumes the worst:
+/// Everything about this type is shaped by two things learned from running
+/// the real CLIs on 2026-08-30, neither of which any fixture would have shown:
+///
+/// - `cursor-agent status` looks exactly like a read-only probe and instead
+///   printed "Starting login process… Authenticating with Cursor…", hanging
+///   until killed when it had a terminal attached.
+/// - `codex login status` prints its entire answer on **stderr** and nothing
+///   at all on stdout.
+///
+/// Any CLI can do either, including one whose probe is verified today and
+/// changes next release. So the runner assumes the worst:
 ///
 /// - **A hard timeout**, always, with the process killed when it expires.
 /// - **No tty.** stdin is `/dev/null`, so a CLI that decides to prompt gets an
@@ -17,9 +23,9 @@ import SkylightCore
 ///   and the read never finishes.
 /// - **Never on the main thread**, never on a timer, never at render.
 ///
-/// It reads stdout only. It never reads a credential file — the marker check
-/// below is `fileExists`, and there is deliberately no code path here that
-/// could open one.
+/// It reads stdout AND stderr, and never a credential file — the marker check
+/// below is `fileExists`, and there is deliberately no code path in this file
+/// that could open one.
 enum SubscriptionProbeRunner {
     /// Generous enough for a cold node start, short enough that a hung CLI is
     /// a two-second annoyance rather than a wedged Settings pane.
@@ -50,8 +56,9 @@ enum SubscriptionProbeRunner {
                            checkedAt: Date())
         }
 
-        let (stdout, exitCode) = run(binaryPath, arguments)
-        return Outcome(state: AuthProbe.state(stdout: stdout, exitCode: exitCode,
+        let (stdout, stderr, exitCode) = run(binaryPath, arguments)
+        return Outcome(state: AuthProbe.state(stdout: stdout, stderr: stderr,
+                                              exitCode: exitCode,
                                               markersPresent: markersPresent,
                                               probe: probe),
                        checkedAt: Date())
@@ -63,10 +70,13 @@ enum SubscriptionProbeRunner {
             + String(path.dropFirst(1))
     }
 
-    /// Returns (stdout, exitCode). A timeout returns a nil exit code, which
-    /// `AuthProbe.state` reads as "no answer" rather than as bad news.
+    /// Returns (stdout, stderr, exitCode). A timeout returns a nil exit code,
+    /// which `AuthProbe.state` reads as "no answer" rather than as bad news.
+    ///
+    /// stderr is captured because CLIs put status there: `codex login status`
+    /// prints its whole answer on stderr and nothing on stdout.
     private static func run(_ binary: String,
-                            _ arguments: [String]) -> (String?, Int32?) {
+                            _ arguments: [String]) -> (String?, String?, Int32?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
@@ -74,22 +84,32 @@ enum SubscriptionProbeRunner {
         // these CLIs spawn — terminating the parent alone leaves a child
         // holding the pipe open and the read never returns.
         process.qualityOfService = .utility
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
         // No tty: a CLI that decides to prompt gets EOF instead of a wait.
+        // This alone defuses most interactive surprises — cursor-agent's
+        // status, which hung for minutes attached to a terminal, exits
+        // immediately here. It still starts a login, which is why it has no
+        // probe at all; this only means the damage is bounded.
         process.standardInput = FileHandle.nullDevice
 
-        guard (try? process.run()) != nil else { return (nil, nil) }
+        guard (try? process.run()) != nil else { return (nil, nil, nil) }
         let group = process.processIdentifier
 
-        // Read on a background queue: a child that outruns the 64 KB pipe
-        // buffer would otherwise block forever while we wait for exit, and
-        // waiting for exit before reading is the classic deadlock here.
-        let box = OutputBox()
+        // Both streams drained on background queues: a child that outruns the
+        // 64 KB pipe buffer would otherwise block forever while we wait for
+        // exit, and waiting for exit before reading is the classic deadlock.
+        // Draining only ONE pipe has the same failure — a CLI that is chatty
+        // on stderr would wedge on a full buffer nobody is emptying.
+        let outBox = OutputBox()
+        let errBox = OutputBox()
         DispatchQueue.global(qos: .utility).async {
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            box.set(data)
+            outBox.set(outPipe.fileHandleForReading.readDataToEndOfFile())
+        }
+        DispatchQueue.global(qos: .utility).async {
+            errBox.set(errPipe.fileHandleForReading.readDataToEndOfFile())
         }
 
         let deadline = Date().addingTimeInterval(timeout)
@@ -98,17 +118,21 @@ enum SubscriptionProbeRunner {
         }
 
         if process.isRunning {
-            // The cursor-agent case. Group first (negative pid), then the
-            // process itself as a fallback.
+            // Group first (negative pid), then the process itself as a
+            // fallback — these CLIs are node wrappers with children.
             Darwin.kill(-group, SIGKILL)
             process.terminate()
-            _ = box.wait(seconds: 1)
-            return (nil, nil)
+            _ = outBox.wait(seconds: 1)
+            _ = errBox.wait(seconds: 1)
+            return (nil, nil, nil)
         }
 
         process.waitUntilExit()
-        let data = box.wait(seconds: 2) ?? Data()
-        return (String(data: data, encoding: .utf8), process.terminationStatus)
+        let out = outBox.wait(seconds: 2) ?? Data()
+        let err = errBox.wait(seconds: 2) ?? Data()
+        return (String(data: out, encoding: .utf8),
+                String(data: err, encoding: .utf8),
+                process.terminationStatus)
     }
 
     /// Lock-guarded handoff from the reader queue, same pattern as

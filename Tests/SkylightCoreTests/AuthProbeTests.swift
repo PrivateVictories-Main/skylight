@@ -210,6 +210,50 @@ final class AuthProbeTests: XCTestCase {
             .signedIn(account: nil, plan: nil))
     }
 
+    /// Caught by running the real CLI, not by any fixture: `codex login
+    /// status` prints "Logged in using ChatGPT" on **stderr** and leaves
+    /// stdout completely empty. A probe reading stdout alone resolves codex to
+    /// .unknown forever, and the row silently never works.
+    func testCodexAnswersOnStderrBecauseThatIsWhereItActuallyPrints() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "", stderr: "Logged in using ChatGPT",
+                            exitCode: 0, markersPresent: true, probe: codexProbe),
+            .signedIn(account: nil, plan: nil))
+    }
+
+    /// stdout still wins when both speak — a CLI that prints its real answer
+    /// on stdout and a warning on stderr must not be read off the warning.
+    func testStdoutIsPreferredOverStderrWhenBothSaySomething() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "Not logged in", stderr: "Logged in using ChatGPT",
+                            exitCode: 0, markersPresent: true, probe: codexProbe),
+            .signedOut)
+    }
+
+    /// JSON on stdout must not be corrupted by whatever a CLI logs to stderr.
+    func testJSONIsParsedFromStdoutEvenWithNoiseOnStderr() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: claudeSignedIn,
+                            stderr: "warning: update available",
+                            exitCode: 0, markersPresent: true, probe: claudeProbe),
+            .signedIn(account: "ryans51105@gmail.com", plan: "max"))
+    }
+
+    /// …and a CLI that puts its JSON on stderr is still readable.
+    func testJSONIsFoundOnStderrWhenStdoutIsEmpty() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "", stderr: #"{"loggedIn": true}"#,
+                            exitCode: 0, markersPresent: true, probe: claudeProbe),
+            .signedIn(account: nil, plan: nil))
+    }
+
+    func testBothStreamsEmptyIsStillUnknown() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "", stderr: "", exitCode: 0,
+                            markersPresent: true, probe: codexProbe),
+            .unknown)
+    }
+
     func testLoginCommandsAreOfferedForEveryProbeWeHave() {
         // A probe that can say "signed out" and cannot offer a way in is a
         // dead end with a label on it.
