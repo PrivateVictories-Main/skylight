@@ -1,5 +1,5 @@
+import Darwin
 import Foundation
-import SkylightCore
 
 /// Runs a vendor's own read-only status command and reports what it said.
 ///
@@ -18,25 +18,25 @@ import SkylightCore
 /// - **A hard timeout**, always, with the process killed when it expires.
 /// - **No tty.** stdin is `/dev/null`, so a CLI that decides to prompt gets an
 ///   immediate EOF instead of waiting forever for a human.
-/// - **Killed by process GROUP.** These CLIs are node wrappers that spawn
-///   children; terminating only the parent leaves the child holding the pipe
-///   and the read never finishes.
+/// - **Killed by process GROUP on timeout**, guarded against a non-positive
+///   pid — `kill(-0, …)` would signal Skylight's own group. These CLIs are
+///   node wrappers whose children outlive a plain terminate().
 /// - **Never on the main thread**, never on a timer, never at render.
 ///
 /// It reads stdout AND stderr and nothing else. It does not open, stat, or
 /// even name a credential file anywhere.
-enum SubscriptionProbeRunner {
+public enum ProbeRunner {
     /// Generous enough for a cold node start, short enough that a hung CLI is
     /// a two-second annoyance rather than a wedged Settings pane.
-    private static let timeout: TimeInterval = 8
+    public static let defaultTimeout: TimeInterval = 8
 
-    struct Outcome: Sendable {
-        var state: SubscriptionState
-        var checkedAt: Date
+    public struct Outcome: Equatable, Sendable {
+        public var state: SubscriptionState
+        public var checkedAt: Date
     }
 
     /// Probe one harness. Blocking — callers run it off the main actor.
-    nonisolated static func probe(harness: Harness, binaryPath: String) -> Outcome {
+    public static func probe(harness: Harness, binaryPath: String) -> Outcome {
         guard let probe = harness.authProbe else {
             return Outcome(state: .unknown, checkedAt: Date())
         }
@@ -49,7 +49,8 @@ enum SubscriptionProbeRunner {
             return Outcome(state: .unknown, checkedAt: Date())
         }
 
-        let (stdout, stderr, exitCode) = run(binaryPath, arguments)
+        let (stdout, stderr, exitCode) = run(binaryPath, arguments,
+                                             timeout: defaultTimeout)
         return Outcome(state: AuthProbe.state(stdout: stdout, stderr: stderr,
                                               exitCode: exitCode, probe: probe),
                        checkedAt: Date())
@@ -60,14 +61,17 @@ enum SubscriptionProbeRunner {
     ///
     /// stderr is captured because CLIs put status there: `codex login status`
     /// prints its whole answer on stderr and nothing on stdout.
-    private static func run(_ binary: String,
-                            _ arguments: [String]) -> (String?, String?, Int32?) {
+    /// Exposed so the subprocess behaviour itself can be tested. Both bugs
+    /// this feature shipped with — an interactive "status" command and an
+    /// answer arriving on stderr — lived in here, the one part that had no
+    /// tests at all.
+    public static func run(_ binary: String, _ arguments: [String],
+                           timeout: TimeInterval) -> (stdout: String?,
+                                                      stderr: String?,
+                                                      exitCode: Int32?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
-        // Its own process group, so the kill below reaches the node children
-        // these CLIs spawn — terminating the parent alone leaves a child
-        // holding the pipe open and the read never returns.
         process.qualityOfService = .utility
         let outPipe = Pipe()
         let errPipe = Pipe()
@@ -81,7 +85,7 @@ enum SubscriptionProbeRunner {
         process.standardInput = FileHandle.nullDevice
 
         guard (try? process.run()) != nil else { return (nil, nil, nil) }
-        let group = process.processIdentifier
+        let pid = process.processIdentifier
 
         // Both streams drained on background queues: a child that outruns the
         // 64 KB pipe buffer would otherwise block forever while we wait for
@@ -97,22 +101,37 @@ enum SubscriptionProbeRunner {
             errBox.set(errPipe.fileHandleForReading.readDataToEndOfFile())
         }
 
-        let deadline = Date().addingTimeInterval(timeout)
-        while process.isRunning, Date() < deadline {
-            usleep(20_000)
-        }
+        // Wait on the exit itself rather than polling `isRunning`. The old
+        // 20ms usleep loop burned a whole thread for the life of the probe,
+        // and callers reach this from a task — where blocking a cooperative
+        // pool thread starves unrelated work for up to the full timeout.
+        let exited = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in exited.signal() }
+        let timedOut = exited.wait(timeout: .now() + timeout) == .timedOut
 
-        if process.isRunning {
-            // Group first (negative pid), then the process itself as a
-            // fallback — these CLIs are node wrappers with children.
-            Darwin.kill(-group, SIGKILL)
+        if timedOut {
+            // SIGKILL the child's process GROUP, then the process itself.
+            //
+            // The group kill is load-bearing, and measured: with it removed,
+            // this exact path leaves a `sleep` alive after the probe returns
+            // (ProbeRunnerTests proves it both ways). Foundation puts the
+            // child in its own group, which is why the negative pid resolves —
+            // these CLIs are node wrappers whose children would otherwise
+            // outlive the probe and keep the pipe open.
+            //
+            // Guarded because `kill(-0, …)` signals OUR OWN process group:
+            // Skylight and every terminal it is hosting. A pid of 0 should be
+            // impossible after a successful run(), and this is far too
+            // expensive a mistake to leave resting on "should".
+            if pid > 1 {
+                Darwin.kill(-pid, SIGKILL)
+            }
             process.terminate()
             _ = outBox.wait(seconds: 1)
             _ = errBox.wait(seconds: 1)
             return (nil, nil, nil)
         }
 
-        process.waitUntilExit()
         let out = outBox.wait(seconds: 2) ?? Data()
         let err = errBox.wait(seconds: 2) ?? Data()
         return (String(data: out, encoding: .utf8),

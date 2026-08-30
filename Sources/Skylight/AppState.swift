@@ -339,10 +339,12 @@ final class AppState: ObservableObject {
 
             probing.insert(harness.id)
             let id = harness.id
-            Task.detached(priority: .utility) {
-                let outcome = SubscriptionProbeRunner.probe(harness: harness,
-                                                            binaryPath: binary)
-                await MainActor.run { [weak self] in
+            // A real background queue, not a detached Task: the probe blocks
+            // on a subprocess, and blocking one of the cooperative pool's few
+            // threads for up to the timeout starves unrelated async work.
+            DispatchQueue.global(qos: .utility).async {
+                let outcome = ProbeRunner.probe(harness: harness, binaryPath: binary)
+                DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
                     self.probing.remove(id)
                     self.subscriptions.record(id, outcome.state, at: outcome.checkedAt)
