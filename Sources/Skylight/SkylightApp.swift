@@ -89,6 +89,8 @@ struct SkylightApp: App {
         // constraint above is untouched.
         Settings {
             SettingsView()
+                // The Subscriptions tab reads live probe state.
+                .environmentObject(state)
         }
     }
 }

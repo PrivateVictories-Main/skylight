@@ -90,6 +90,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             ThemeSettingsView()
                 .tabItem { Label("Theme", systemImage: "paintpalette") }
+            SubscriptionSettingsView()
+                .tabItem { Label("Subscriptions", systemImage: "person.badge.key") }
         }
         .frame(width: 460)
     }

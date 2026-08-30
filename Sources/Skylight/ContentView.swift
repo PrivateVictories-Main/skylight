@@ -728,6 +728,13 @@ struct SurfaceBanners: View {
     var body: some View {
         if state.endedInstances.contains(instance.id) {
             SessionEndedBanner(instance: instance)
+        } else if let harness = Catalog.harness(for: instance.spec.kind),
+                  // Only when the surface actually GOT its harness — a
+                  // fallback shell's problem is the missing CLI, not its auth.
+                  state.sessions.launchOutcome(for: instance.id)?.missingHarness == nil,
+                  let message = SubscriptionCopy.bannerMessage(
+                    for: harness, state: state.subscriptionState(harness.id)) {
+            SignedOutBanner(instance: instance, harness: harness, message: message)
         } else {
             MissingHarnessBanner(instance: instance)
         }
@@ -751,6 +758,36 @@ struct SessionEndedBanner: View {
                 .buttonStyle(.pressable(scale: 0.95))
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(Color.accentColor)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 5)
+        .background(Capsule().fill(.bar))
+        .overlay(Capsule().strokeBorder(Color.primary.opacity(0.1)))
+        .padding(.top, 8)
+    }
+}
+
+/// A running agent terminal whose CLI is signed out. Same capsule as the
+/// other two banners — a third tenant of the pattern — with the one
+/// affordance that helps: the vendor's own login, in a terminal.
+struct SignedOutBanner: View {
+    @EnvironmentObject private var state: AppState
+    let instance: TerminalInstance
+    let harness: Harness
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Text(message)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let spec = SubscriptionCopy.signInSpec(for: harness) {
+                Button("Sign in") { state.launchSignIn(spec, harness: harness) }
+                    .buttonStyle(.pressable(scale: 0.95))
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 5)

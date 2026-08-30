@@ -78,6 +78,14 @@ then walk top to bottom. Every line should feel instant.
       signed in", shows a Sign in button, and Create is disabled while it is
       selected. Sign in runs `codex login` in a real terminal; when that
       terminal finishes, the row flips back to signed-in on its own.
+- [ ] ⌘, now has three tabs (General / Theme / Subscriptions). Subscriptions
+      lists only INSTALLED CLIs, says who is signed in, and explains the blank
+      ones ("No verified way to check") rather than leaving a gap. "Check
+      again" re-runs and the green ticks come back.
+- [ ] Signed-out banner: with codex signed out, open a Codex terminal — a
+      capsule says it isn't signed in and names `codex login`; Sign in opens
+      that terminal. A codex terminal that fell back to a shell because the
+      CLI is MISSING shows the install banner instead, not this one.
 - [ ] Probe cost: open and close ⌘T ten times — no lag, and Activity Monitor
       shows no repeated CLI processes (answers are cached, nothing polls).
 - [ ] Cursor CLI never triggers a login on its own: open ⌘T with cursor-agent
