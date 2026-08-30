@@ -288,8 +288,7 @@ final class AuthProbeTests: XCTestCase {
     func testLoginCommandsAreOfferedAndAreNotEmpty() {
         for harness in Catalog.harnesses {
             guard let probe = harness.authProbe else { continue }
-            let login = try? XCTUnwrap(probe.loginCommand, harness.id)
-            XCTAssertFalse(login?.isEmpty ?? true,
+            XCTAssertFalse(probe.loginCommand?.isEmpty ?? true,
                            "\(harness.id) declares a probe with no way to sign in")
         }
     }

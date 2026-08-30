@@ -699,6 +699,12 @@ final class AppState: ObservableObject {
     /// "new terminal here". Nearest by centre distance, and only from a
     /// terminal that has actually reported one — an agent's directory is a
     /// launch decision rather than a place you navigated to, so shells only.
+    /// How far a tile may be and still count as "here". Beyond this the
+    /// offer is about somewhere else entirely — right-clicking empty canvas
+    /// in an agent-only corner should not propose a shell's directory from
+    /// the far side of the board.
+    static let nearbyTileRadius: CGFloat = 900
+
     func nearestWorkingDirectory(on boardID: UUID, to point: CGPoint) -> String? {
         guard let board = canvases.first(where: { $0.id == boardID }) else { return nil }
         return board.tiles
@@ -711,6 +717,7 @@ final class AppState: ObservableObject {
                 let centre = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
                 return (hypot(centre.x - point.x, centre.y - point.y), cwd)
             }
+            .filter { $0.0 <= Self.nearbyTileRadius }
             .min { $0.0 < $1.0 }?.1
     }
 
@@ -1138,8 +1145,13 @@ final class LiveSessionStore {
     /// it — which is exactly the split the caller wants.
     var onWorkingDirectory: ((UUID, String) -> Void)?
 
-    /// Fired when a terminal produces output. Coalesced by the publisher it
-    /// rides on, so this is an event per render tick at worst — never per byte.
+    /// Fired when a terminal looks BUSY.
+    ///
+    /// Named for what it means, not for what it watches: it rides the
+    /// surface's published title, which changes as an agent works. That is a
+    /// proxy, chosen because the honest alternative — reading the pty — is
+    /// scraping, which this app does not do. The cost is real and worth
+    /// stating: an agent that never sets a title reads as idle while working.
     var onOutput: ((UUID) -> Void)?
 
     /// Fired when shell integration reports a finished command.

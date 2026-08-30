@@ -148,6 +148,24 @@ final class AgentStateTests: XCTestCase {
         }
     }
 
+    /// The dot's meaning is decided here, not in a view: "done is dimmer
+    /// than working" is a rule, and rules get tested.
+    func testToneSeparatesAttentionFromActivityFromRest() {
+        XCTAssertEqual(AgentState.waitingForYou.tone, .accent)
+        XCTAssertEqual(AgentState.working.tone, .active)
+        for state: AgentState in [.idle, .done, .ended] {
+            XCTAssertEqual(state.tone, .muted, state.label)
+        }
+    }
+
+    func testAFinishedStateIsDimmerThanARunningOne() {
+        XCTAssertLessThan(AgentState.done.dotOpacity, AgentState.working.dotOpacity)
+        XCTAssertLessThan(AgentState.ended.dotOpacity, AgentState.waitingForYou.dotOpacity)
+        for state: AgentState in [.idle, .working, .waitingForYou, .done, .ended] {
+            XCTAssertTrue((0...1).contains(state.dotOpacity), state.label)
+        }
+    }
+
     func testOnlyLiveStatesAnimate() {
         XCTAssertTrue(AgentState.working.isLive)
         XCTAssertFalse(AgentState.ended.isLive)

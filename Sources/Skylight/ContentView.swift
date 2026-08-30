@@ -458,18 +458,19 @@ struct StateDot: View {
     let state: AgentState
     @State private var breathing = false
 
+    /// Only the mapping from tone to a platform colour lives here; which
+    /// tone a state deserves is decided in SkylightCore, where it is tested.
     private var color: Color {
-        switch state {
-        case .working: .green
-        case .done: .secondary
-        case .waitingForYou: .accentColor
-        case .idle, .ended: .secondary
+        switch state.tone {
+        case .accent: .accentColor
+        case .active: .green
+        case .muted: .secondary
         }
     }
 
     var body: some View {
         Circle()
-            .fill(color.opacity(state == .done ? 0.45 : 0.85))
+            .fill(color.opacity(state.dotOpacity))
             .frame(width: 6, height: 6)
             // Working breathes, faintly. A dead or finished session must not
             // — motion implies something is happening.

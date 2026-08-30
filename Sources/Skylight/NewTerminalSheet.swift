@@ -498,7 +498,12 @@ struct NewTerminalSheet: View {
             Image(systemName: "folder")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
-            Text(workingDirectory.map { ($0 as NSString).abbreviatingWithTildeInPath } ?? "Home")
+            // Not "Home" any more: an unset directory now means "continue
+            // where the last shell was" for a shell, and "the last project"
+            // for an agent. Saying Home while the code does something else is
+            // the copy lying about the button beside it.
+            Text(workingDirectory.map { ($0 as NSString).abbreviatingWithTildeInPath }
+                ?? (agentMode ? "Last project" : "Where you left off"))
                 .font(.system(size: 12))
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -519,8 +524,8 @@ struct NewTerminalSheet: View {
                         .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.pressable(scale: 0.85))
-                .help("Reset to Home")
-                .accessibilityLabel("Reset to Home")
+                .help("Use the default for this kind of terminal")
+                .accessibilityLabel("Use the default directory")
             }
         }
         .padding(.horizontal, 10)

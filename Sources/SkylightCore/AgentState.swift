@@ -32,6 +32,31 @@ public enum AgentState: Equatable, Hashable, Sendable {
 
     /// Worth animating. A dead session must not breathe.
     public var isLive: Bool { self == .working }
+
+    /// How the dot should read. Pure and tested rather than a switch buried
+    /// in a view, so "done is dimmer than working" is a rule with a name.
+    public enum Tone: Equatable, Sendable {
+        case accent      // demands attention
+        case active      // working
+        case muted       // idle, done, ended
+    }
+
+    public var tone: Tone {
+        switch self {
+        case .waitingForYou: .accent
+        case .working: .active
+        case .idle, .done, .ended: .muted
+        }
+    }
+
+    /// Dimmer for a state that is over than for one still going.
+    public var dotOpacity: Double {
+        switch self {
+        case .done, .ended: 0.45
+        case .idle: 0.6
+        case .working, .waitingForYou: 0.85
+        }
+    }
 }
 
 public enum AgentEvent: Equatable, Sendable {
