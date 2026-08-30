@@ -77,6 +77,29 @@ then walk top to bottom. Every line should feel instant.
       warning says the session already ended.
 - [ ] Quit: with the keeper running, ⌘Q asks nothing (sessions survive);
       the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
+- [ ] Docking, the gesture: drag a tile toward the left edge — a dashed
+      ghost appears showing exactly what it will claim, and pushing deeper
+      changes the share (full → half → third → quarter). Release: it snaps
+      into a left rail. Repeat for right, top and bottom.
+- [ ] Docked terminals are ALWAYS typable: zoom the canvas to 50% — the free
+      tiles become an overview, the docked one stays full size and you can
+      still type in it.
+- [ ] Rails don't pan: scroll the canvas around — the docked terminal stays
+      pinned to its edge while the plane moves behind it.
+- [ ] Resize a rail by dragging its inner divider; the free canvas reflows.
+      A rail can't be dragged past ~60% of the window.
+- [ ] Undock two ways: drag the docked header away from its edge, or click
+      its undock button. Either way it returns to the canvas at the size and
+      place it had before.
+- [ ] Keyboard: ⌃⌥← / → / ↑ / ↓ dock the focused terminal to that edge;
+      pressing the same one again undocks it. Items grey out with no canvas.
+- [ ] Corners with two rails: dock left AND top — the left rail owns the full
+      height and the top rail starts after it (never overlapping).
+- [ ] R2, the important one: with a docked board, quit and relaunch. The
+      rails are ALREADY in place on the first frame — no visible re-layout,
+      no animation settling in — and the restored terminal's scrollback shows
+      no reattach debris (stray %, shifted prompts).
+- [ ] Docking survives a relaunch at all: rails, order, thickness.
 - [ ] Terminal menu: ⌘K clears the focused terminal; ⌘↑/⌘↓ jump a whole
       prompt at a time (needs shell integration, so try it after a few
       commands); ⇧⌘P opens ghostty's command palette. All four go grey when

@@ -68,8 +68,18 @@ struct CanvasView: View {
         state.canvases.first { $0.id == boardID }
     }
 
+    /// Where a tile drag would dock, if released now. nil while the pointer
+    /// is anywhere but an edge.
+    @State private var dockTarget: DockTarget?
+
     var body: some View {
         GeometryReader { geo in
+            // Computed ONCE per render, never inside a loop or a draw closure.
+            // The dot grid taught this lesson the expensive way: a lookup that
+            // looks cheap becomes a per-frame cost when it sits in the path
+            // that pan and zoom re-enter constantly.
+            let docks = DockLayout.normalized(board?.docks ?? [:])
+            let layout = DockLayout.frames(docks: docks, viewport: geo.size)
             ZStack(alignment: .topLeading) {
                 PanSurface(
                     onPan: { delta in
@@ -98,15 +108,22 @@ struct CanvasView: View {
                 )
                 DotGrid(pan: pan, zoom: zoom, dotColor: themes.dotGrid)
                     .allowsHitTesting(false)
-                ForEach(board?.tiles ?? []) { tile in
+                ForEach(board?.freeTiles ?? []) { tile in
                     if let instance = state.instance(tile.itemID) {
                         TileView(tile: tile, instance: instance, boardID: boardID,
                                  pan: pan, zoom: zoom,
                                  commandHeld: commandHeld,
                                  interacting: $tileInteracting,
-                                 onDive: { navigate(to: tile) })
+                                 onDive: { navigate(to: tile) },
+                                 onDockTargetChanged: { dockTarget = $0 },
+                                 viewport: geo.size)
                     }
                 }
+                // The rails, OUTSIDE every canvas transform — extracted into
+                // their own view because the body was large enough to defeat
+                // the type checker outright.
+                RailLayer(boardID: boardID, docks: docks, layout: layout,
+                          viewport: geo.size, dockTarget: dockTarget)
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
@@ -730,6 +747,10 @@ struct TileView: View {
     @Binding var interacting: Bool
     /// Clicking a minified tile flies the canvas to it at 100%.
     var onDive: () -> Void = {}
+    /// Reports where this drag would dock, so the canvas can draw the ghost.
+    var onDockTargetChanged: (DockTarget?) -> Void = { _ in }
+    /// Viewport size, for edge hit-testing during a drag.
+    var viewport: CGSize = .zero
 
     /// One spring for the whole settle. The transient offset decays inside it
     /// and the model's origin springs under it — same response, same damping,
@@ -754,6 +775,7 @@ struct TileView: View {
     /// change must keep dividing by the scale its translations were made at,
     /// or the tile detaches from the cursor and commits somewhere unshown.
     @State private var gestureZoom: CGFloat = 1
+    @State private var lastDockTarget: DockTarget?
 
     /// AppKit hit-tests by untransformed frames, so a scaled-down terminal
     /// cannot reliably receive a click anyway. Below/above 100% the tile is a
@@ -967,6 +989,31 @@ struct TileView: View {
         if !interacting { interacting = true }
         dragOffset = CGSize(width: value.translation.width / gestureZoom,
                             height: value.translation.height / gestureZoom)
+        // Where the POINTER is, not where the tile is: docking is aimed, and
+        // a tile's own corner reaching an edge is not the same as intending
+        // to put it there.
+        let target = DockLayout.hitTest(
+            point: viewportPoint(of: value),
+            viewport: viewport,
+            docks: state.canvases.first { $0.id == boardID }?.docks ?? [:])
+        if target != lastDockTarget {
+            lastDockTarget = target
+            onDockTargetChanged(target)
+        }
+    }
+
+    /// The pointer in VIEWPORT coordinates.
+    ///
+    /// The gesture reports in global space (every grip in this file uses it,
+    /// so translations are not pre-divided by the zoom). Edge hit-testing is
+    /// viewport-relative, so the tile's own screen position is what bridges
+    /// them: the tile starts at `liveFrame × zoom + pan`, and the gesture's
+    /// `startLocation → location` delta moves from there.
+    private func viewportPoint(of value: DragGesture.Value) -> CGPoint {
+        let originX = tile.origin.x * safeZoom + pan.x
+        let originY = tile.origin.y * safeZoom + pan.y
+        return CGPoint(x: originX + value.translation.width,
+                       y: originY + value.translation.height)
     }
 
     /// The one place a move lands, at every zoom: screen translation into
@@ -975,6 +1022,16 @@ struct TileView: View {
     /// bare and the tile snaps back the width of the drag before the model's
     /// spring carries it forward, which is the glitch you see on release.
     private func moveEnded(_ value: DragGesture.Value) {
+        // Released at an edge: dock it instead of dropping it on the plane.
+        if let target = lastDockTarget {
+            lastDockTarget = nil
+            onDockTargetChanged(nil)
+            withAnimation(Self.settleSpring) { dragOffset = .zero }
+            grabbing = false
+            interacting = false
+            state.dock(instance.id, on: boardID, to: target)
+            return
+        }
         var updated = tile
         let proposed = CGRect(
             x: tile.origin.x + value.translation.width / gestureZoom,
@@ -1476,4 +1533,265 @@ final class ReflowCoalescer: ObservableObject {
     }
 
     func send() { events.send(()) }
+}
+
+// MARK: - Docked rails
+
+/// A terminal pinned to an edge of the viewport.
+///
+/// It wears the same chrome as a canvas tile so the two read as one family,
+/// but it has no resize ring and no move grip: its size comes from its rail's
+/// thickness and its share, and it moves by being dragged out.
+///
+/// **Always at 100%.** The board's zoom never touches it, which means a
+/// docked terminal stays typable while the canvas behind it is an overview —
+/// the honest-zoom contract turned into a feature rather than a limitation.
+struct DockedTileView: View {
+    @EnvironmentObject private var state: AppState
+    let instance: TerminalInstance
+    let boardID: UUID
+    let edge: DockEdge
+    let frame: CGRect
+
+    @State private var dragOffset: CGSize = .zero
+    @State private var undocking = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+                                   cornerRadius: 12,
+                                   maskedCorners: [.layerMinXMinYCorner,
+                                                   .layerMaxXMinYCorner])
+        }
+        .background(.ultraThinMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(alignment: .top) { SurfaceBanners(instance: instance) }
+        .overlay(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .strokeBorder(state.themesHairline(0.18), lineWidth: 1)
+        )
+        .frame(width: max(0, frame.width - 8), height: max(0, frame.height - 8))
+        .offset(x: frame.minX + 4 + dragOffset.width,
+                y: frame.minY + 4 + dragOffset.height)
+        .opacity(undocking ? 0.7 : 1)
+        .zIndex(2)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            if let brand = Catalog.harness(for: instance.spec.kind)?.brand {
+                BrandIcon(brand: brand, size: 13, filled: false)
+            } else {
+                Image(systemName: "terminal")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            Text(instance.name)
+                .font(.system(size: 11.5, weight: .medium))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            Spacer(minLength: 4)
+            Button {
+                state.undock(instance.id, on: boardID)
+            } label: {
+                Image(systemName: "pip.exit")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.secondary)
+                    .padding(4)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.pressable(scale: 0.8))
+            .help("Undock — back onto the canvas")
+            .accessibilityLabel("Undock \(instance.name)")
+        }
+        .padding(.horizontal, 9)
+        .frame(height: 26)
+        .background(.bar)
+        .contentShape(Rectangle())
+        // Drag the header AWAY from the edge to undock — the mirror of the
+        // gesture that docked it, so the two are learned together.
+        .gesture(
+            DragGesture(minimumDistance: 6, coordinateSpace: .global)
+                .onChanged { value in
+                    dragOffset = value.translation
+                    undocking = pulledAway(by: value.translation)
+                }
+                .onEnded { value in
+                    let leaving = pulledAway(by: value.translation)
+                    dragOffset = .zero
+                    undocking = false
+                    if leaving { state.undock(instance.id, on: boardID) }
+                }
+        )
+        .onTapGesture(count: 2) { state.focusedInstance = instance.id }
+    }
+
+    /// Far enough, and in the right direction, to mean "off the rail".
+    private func pulledAway(by translation: CGSize) -> Bool {
+        let threshold: CGFloat = 60
+        switch edge {
+        case .left: return translation.width > threshold
+        case .right: return -translation.width > threshold
+        case .top: return translation.height > threshold
+        case .bottom: return -translation.height > threshold
+        }
+    }
+}
+
+/// The grab strip that resizes a rail. Same discipline as the tile resize
+/// ring: an invisible zone with an honest cursor, owning no layout.
+struct RailDivider: View {
+    let edge: DockEdge
+    let layout: (docked: [UUID: CGRect], free: CGRect)
+    let viewport: CGSize
+    let onResize: (CGFloat) -> Void
+
+    @State private var hovering = false
+    @State private var dragging = false
+
+    private var rect: CGRect {
+        let free = layout.free
+        let t: CGFloat = 8
+        switch edge {
+        case .left: return CGRect(x: free.minX - t / 2, y: free.minY, width: t, height: free.height)
+        case .right: return CGRect(x: free.maxX - t / 2, y: free.minY, width: t, height: free.height)
+        case .top: return CGRect(x: free.minX, y: free.minY - t / 2, width: free.width, height: t)
+        case .bottom: return CGRect(x: free.minX, y: free.maxY - t / 2, width: free.width, height: t)
+        }
+    }
+
+    var body: some View {
+        Rectangle()
+            .fill(Color.accentColor.opacity(hovering || dragging ? 0.35 : 0.001))
+            .frame(width: max(0, rect.width), height: max(0, rect.height))
+            .offset(x: rect.minX, y: rect.minY)
+            .onHover { inside in
+                hovering = inside
+                syncCursor()
+            }
+            .gesture(
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                    .onChanged { value in
+                        if !dragging { dragging = true; syncCursor() }
+                        onResize(thickness(at: value.location))
+                    }
+                    .onEnded { _ in dragging = false; syncCursor() }
+            )
+            .zIndex(3)
+    }
+
+    /// A rail's thickness is the distance from ITS edge to the pointer, so
+    /// dragging toward the middle grows it whichever side it is on.
+    private func thickness(at point: CGPoint) -> CGFloat {
+        switch edge {
+        case .left: return point.x
+        case .right: return viewport.width - point.x
+        case .top: return point.y
+        case .bottom: return viewport.height - point.y
+        }
+    }
+
+    private func syncCursor() {
+        // Set, never push — the same reason the tile's resize zones do.
+        if hovering || dragging {
+            (edge.isVertical ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).set()
+        } else {
+            NSCursor.arrow.set()
+        }
+    }
+}
+
+/// The affordance that makes docking obvious: a translucent slab showing
+/// exactly what a release would claim.
+struct DockGhost: View {
+    let target: DockTarget
+    let docks: [DockEdge: DockRail]
+    let viewport: CGSize
+
+    /// The rectangle the drop would occupy. Derived from the SAME frames the
+    /// real layout uses, so the ghost cannot promise a shape the drop does
+    /// not deliver.
+    private var frame: CGRect {
+        let item = UUID()
+        let previewed = DockLayout.docked(docks, item: item, to: target)
+        return DockLayout.frames(docks: previewed, viewport: viewport)
+            .docked[item] ?? .zero
+    }
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.accentColor.opacity(0.14))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.accentColor.opacity(0.8),
+                                  style: StrokeStyle(lineWidth: 2, dash: [7, 5]))
+            )
+            .frame(width: max(0, frame.width - 6), height: max(0, frame.height - 6))
+            .offset(x: frame.minX + 3, y: frame.minY + 3)
+            .allowsHitTesting(false)
+            .transition(.opacity)
+            .zIndex(4)
+    }
+}
+
+/// Everything pinned to the viewport: the docked terminals, their dividers,
+/// and the drop ghost.
+///
+/// Its own view because CanvasView's body grew past what the Swift type
+/// checker will solve — and because these layers share one thing that the
+/// transformed content does not: none of them pan, scale, or move with the
+/// board.
+struct RailLayer: View {
+    @EnvironmentObject private var state: AppState
+    let boardID: UUID
+    /// R2. Rail geometry is derived from the persisted board and the live
+    /// viewport, both of which are known before the first frame — so a cold
+    /// restore paints the rails already in place.
+    ///
+    /// There is deliberately NO entry animation. An animated rail would emit
+    /// a stream of intermediate sizes as it settled, and every one of those
+    /// is a resize forwarded to a pty. `b63925e` coalesces post-attach
+    /// resizes for 1.5s so a relaunch whose layout lands where it left off
+    /// touches the child not at all and the replayed scrollback stands
+    /// byte-perfect; a spring still emitting sizes past that window would
+    /// defeat it and bring the reattach debris back. Those constants are not
+    /// ours to re-tune, so the animation is the thing that does not happen.
+    let docks: [DockEdge: DockRail]
+    let layout: (docked: [UUID: CGRect], free: CGRect)
+    let viewport: CGSize
+    let dockTarget: DockTarget?
+
+    /// Stable order, so SwiftUI's ForEach identity is not at the mercy of
+    /// dictionary iteration.
+    private var slots: [(id: UUID, itemID: UUID, edge: DockEdge)] {
+        DockEdge.allCases.flatMap { edge in
+            (docks[edge]?.slots ?? []).map { (id: $0.id, itemID: $0.itemID, edge: edge) }
+        }
+    }
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            ForEach(slots, id: \.id) { entry in
+                if let frame = layout.docked[entry.itemID],
+                   let instance = state.instance(entry.itemID) {
+                    DockedTileView(instance: instance, boardID: boardID,
+                                   edge: entry.edge, frame: frame)
+                }
+            }
+            ForEach(DockEdge.allCases, id: \.self) { edge in
+                if docks[edge] != nil {
+                    RailDivider(edge: edge, layout: layout, viewport: viewport) {
+                        state.setRailThickness($0, edge: edge, on: boardID)
+                    }
+                }
+            }
+            if let dockTarget {
+                DockGhost(target: dockTarget, docks: docks, viewport: viewport)
+            }
+        }
+        // Only the GHOST animates. The rails themselves appear at their final
+        // geometry — see the note on this type.
+        .animation(.easeOut(duration: 0.12), value: dockTarget)
+    }
 }

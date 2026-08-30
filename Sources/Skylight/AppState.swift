@@ -679,6 +679,9 @@ final class AppState: ObservableObject {
 
     func deleteInstance(_ id: UUID) {
         signInInstances.removeValue(forKey: id)
+        for index in canvases.indices {
+            canvases[index].docks = DockLayout.undocked(canvases[index].docks, item: id)
+        }
         agentMachines.removeValue(forKey: id)
         agentStates.removeValue(forKey: id)
         instances.removeAll { $0.id == id }
@@ -923,11 +926,112 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    // MARK: - Docking
+
+    /// Pin an instance to an edge of a board's viewport.
+    ///
+    /// Its tile entry is kept, not deleted: undocking restores the size and
+    /// position it had rather than dropping it at a default somewhere.
+    func dock(_ itemID: UUID, on canvasID: UUID, to target: DockTarget) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }),
+              instance(itemID) != nil else { return }
+        // Docking here means it lives HERE — take it off any other board, and
+        // off any other rail, exactly as addTile does.
+        for other in canvases.indices where canvases[other].id != canvasID {
+            canvases[other].tiles.removeAll { $0.itemID == itemID }
+            canvases[other].docks = DockLayout.undocked(canvases[other].docks,
+                                                        item: itemID)
+        }
+        if !canvases[index].tiles.contains(where: { $0.itemID == itemID }) {
+            // Arrived from the sidebar: give it a tile entry to come back to.
+            canvases[index].tiles.append(
+                CanvasTile(itemID: itemID,
+                           origin: CanvasLayout.staggeredOrigin(
+                            existing: canvases[index].tiles.count),
+                           size: CanvasLayout.defaultTileSize))
+        }
+        canvases[index].docks = DockLayout.docked(canvases[index].docks,
+                                                  item: itemID, to: target)
+        selection = .canvas(canvasID)
+        syncSurfaceVisibility()
+        persist()
+    }
+
+    /// Unpin an instance; its tile is waiting where it left it.
+    func undock(_ itemID: UUID, on canvasID: UUID) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        canvases[index].docks = DockLayout.undocked(canvases[index].docks, item: itemID)
+        syncSurfaceVisibility()
+        persist()
+    }
+
+    /// Drag a rail's inner divider.
+    func setRailThickness(_ thickness: CGFloat, edge: DockEdge, on canvasID: UUID) {
+        guard let index = canvases.firstIndex(where: { $0.id == canvasID }),
+              var rail = canvases[index].docks[edge] else { return }
+        rail.thickness = max(DockLayout.minimumThickness, thickness)
+        canvases[index].docks[edge] = rail
+        persistSoon()
+    }
+
+    /// Hairline tint for docked chrome, routed through the observed store so
+    /// a theme change repaints rails too (see ThemeTint's note).
+    func themesHairline(_ opacity: Double) -> Color {
+        ThemeStore.shared.hairline(opacity: opacity)
+    }
+
+    /// Is this instance pinned to an edge of the board it lives on?
+    func dockedEdge(of itemID: UUID) -> DockEdge? {
+        guard let boardID = Residency.board(of: itemID, in: canvases),
+              let board = canvases.first(where: { $0.id == boardID }) else { return nil }
+        return DockEdge.allCases.first { edge in
+            board.docks[edge]?.slots.contains { $0.itemID == itemID } ?? false
+        }
+    }
+
+    /// What the keyboard dock commands act on: the focused tile, else the
+    /// terminal that currently owns the keyboard on the visible board.
+    var dockTargetInstance: UUID? {
+        guard let boardID = selectedCanvasID else { return nil }
+        if let focusedInstance,
+           Residency.board(of: focusedInstance, in: canvases) == boardID {
+            return focusedInstance
+        }
+        if let focused = sessions.focusedSessionID,
+           Residency.board(of: focused, in: canvases) == boardID {
+            return focused
+        }
+        return canvases.first { $0.id == boardID }?.tiles.first?.itemID
+    }
+
+    var canDockSelected: Bool { dockTargetInstance != nil }
+
+    func toggleDockSelected(_ edge: DockEdge) {
+        guard let id = dockTargetInstance else { return }
+        toggleDock(id, edge: edge)
+    }
+
+    /// Keyboard route: dock or undock whatever is on screen, so the feature
+    /// is reachable without a mouse.
+    func toggleDock(_ itemID: UUID, edge: DockEdge) {
+        guard let boardID = Residency.board(of: itemID, in: canvases) else { return }
+        if dockedEdge(of: itemID) == edge {
+            undock(itemID, on: boardID)
+        } else {
+            dock(itemID, on: boardID,
+                 to: DockTarget(edge: edge, insertionIndex: 0, shape: .half))
+        }
+    }
+
     /// Take an instance off its board: it is a full-window terminal again.
     func removeFromCanvas(_ itemID: UUID) {
         guard instance(itemID) != nil else { return }
         for index in canvases.indices {
             canvases[index].tiles.removeAll { $0.itemID == itemID }
+            // Leaving the board leaves its rails too, or the instance would
+            // be docked to a canvas it no longer lives on.
+            canvases[index].docks = DockLayout.undocked(canvases[index].docks,
+                                                        item: itemID)
         }
         focusedInstance = nil
         selection = .item(itemID)

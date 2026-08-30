@@ -55,6 +55,23 @@ struct SkylightApp: App {
                 // to compose — a one-tile board is already arranged, so the
                 // item goes grey rather than firing a command that returns
                 // immediately.
+                Divider()
+                // Docking, reachable without a mouse. ⌃⌥ + an arrow is the
+                // direction you are sending it, which is the only mnemonic
+                // this needs; pressing the same one again brings it back.
+                Button("Dock Left") { state.toggleDockSelected(.left) }
+                    .keyboardShortcut(.leftArrow, modifiers: [.control, .option])
+                    .disabled(!state.canDockSelected)
+                Button("Dock Right") { state.toggleDockSelected(.right) }
+                    .keyboardShortcut(.rightArrow, modifiers: [.control, .option])
+                    .disabled(!state.canDockSelected)
+                Button("Dock Top") { state.toggleDockSelected(.top) }
+                    .keyboardShortcut(.upArrow, modifiers: [.control, .option])
+                    .disabled(!state.canDockSelected)
+                Button("Dock Bottom") { state.toggleDockSelected(.bottom) }
+                    .keyboardShortcut(.downArrow, modifiers: [.control, .option])
+                    .disabled(!state.canDockSelected)
+                Divider()
                 Button("Arrange Canvas") { state.requestArrange() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
                     .disabled(!state.canArrange)
