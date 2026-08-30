@@ -54,12 +54,21 @@ public enum ThemeApplication {
     /// ruling everywhere it did not.
     public static func configCommands(for theme: SkylightTheme,
                                       reduceTransparency: Bool) -> [ConfigCommand] {
-        var commands: [ConfigCommand] = [
-            ConfigCommand("background", theme.background.hex),
-            ConfigCommand("foreground", theme.foreground.hex),
-        ]
+        var commands: [ConfigCommand] = []
+        /// EVERY value crosses this gate, not only the free-text ones.
+        /// Colours and numbers cannot carry a line break today, but a guard
+        /// that covers all of them cannot be forgotten by whoever adds the
+        /// next field — and the sidecar in Application Support is decoded
+        /// straight into this model without a parser ever seeing it, so this
+        /// boundary is the only complete defence there is.
+        func emit(_ key: String, _ value: String) {
+            guard let safe = ThemeKeyPolicy.safeValue(value) else { return }
+            commands.append(ConfigCommand(key, safe))
+        }
+        emit("background", theme.background.hex)
+        emit("foreground", theme.foreground.hex)
         func colour(_ key: String, _ value: Color8?) {
-            if let value { commands.append(ConfigCommand(key, value.hex)) }
+            if let value { emit(key, value.hex) }
         }
         colour("cursor-color", theme.cursor)
         colour("cursor-text", theme.cursorText)
@@ -67,41 +76,29 @@ public enum ThemeApplication {
         colour("selection-foreground", theme.selectionForeground)
         colour("bold-color", theme.bold)
         for index in theme.palette.keys.sorted() {
-            commands.append(ConfigCommand("palette",
-                                          "\(index)=\(theme.palette[index]!.hex)"))
+            emit("palette", "\(index)=\(theme.palette[index]!.hex)")
         }
         if let contrast = theme.minimumContrast {
-            commands.append(ConfigCommand("minimum-contrast", trimmed(contrast)))
+            emit("minimum-contrast", trimmed(contrast))
         }
 
-        commands.append(ConfigCommand("background-opacity",
-                                      trimmed(opacity(for: theme,
-                                                      reduceTransparency: reduceTransparency))))
+        emit("background-opacity",
+             trimmed(opacity(for: theme, reduceTransparency: reduceTransparency)))
         // Blur is a translucency effect: with Reduce Transparency on it has
         // nothing to blur, and asking for it anyway would be the accessibility
         // setting being overridden by the back door.
         if let blur = theme.backgroundBlur, !reduceTransparency {
-            commands.append(ConfigCommand("background-blur", "\(blur)"))
+            emit("background-blur", "\(blur)")
         }
 
-        if let family = theme.fontFamily {
-            commands.append(ConfigCommand("font-family", family))
-        }
-        if let size = theme.fontSize {
-            commands.append(ConfigCommand("font-size", trimmed(size)))
-        }
-        if let style = theme.cursorStyle {
-            commands.append(ConfigCommand("cursor-style", style))
-        }
+        if let family = theme.fontFamily { emit("font-family", family) }
+        if let size = theme.fontSize { emit("font-size", trimmed(size)) }
+        if let style = theme.cursorStyle { emit("cursor-style", style) }
         if let blink = theme.cursorBlink {
-            commands.append(ConfigCommand("cursor-style-blink", blink ? "true" : "false"))
+            emit("cursor-style-blink", blink ? "true" : "false")
         }
-        if let x = theme.paddingX {
-            commands.append(ConfigCommand("window-padding-x", "\(x)"))
-        }
-        if let y = theme.paddingY {
-            commands.append(ConfigCommand("window-padding-y", "\(y)"))
-        }
+        if let x = theme.paddingX { emit("window-padding-x", "\(x)") }
+        if let y = theme.paddingY { emit("window-padding-y", "\(y)") }
         return commands
     }
 

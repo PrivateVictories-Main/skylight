@@ -126,6 +126,18 @@ final class GhosttyConfigParserTests: XCTestCase {
         XCTAssertEqual(parsed.theme.backgroundOpacity, 0.5)
     }
 
+    /// The secondary vector: this parser splits on \n only, so a bare
+    /// carriage return rides INSIDE a value — and lands in a rendered config
+    /// where the engine may well treat it as a line break.
+    func testACarriageReturnInsideAValueIsRefusedAndNamed() throws {
+        let parsed = try XCTUnwrap(GhosttyConfigParser.parse(
+            "background = #1e1e2e\nfont-family = Menlo\rcommand = /bin/sh",
+            name: "c"))
+        XCTAssertNil(parsed.theme.fontFamily)
+        XCTAssertTrue(parsed.theme.skipped.contains { $0.contains("font-family") },
+                      "got \(parsed.theme.skipped)")
+    }
+
     func testAConfigWithNoLookKeysIsNotATheme() {
         // A file that says nothing about appearance must not produce a black
         // theme out of thin air.

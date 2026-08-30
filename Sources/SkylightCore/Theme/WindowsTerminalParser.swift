@@ -36,8 +36,18 @@ public enum WindowsTerminalParser {
             joined.append("opacity \(raw) joined from the default profile")
         }
         let font = defaults?["font"] as? [String: Any]
-        let fontFamily = font?["face"] as? String
         let fontSize = font?["size"] as? Double
+        // THE reachable value-injection vector: face is a JSON string, and
+        // JSON carries line breaks inside strings without complaint. A face
+        // holding one would render as `font-family = Consolas` followed by
+        // whatever directive came after the break.
+        var fontFamily: String?
+        if let face = font?["face"] as? String {
+            fontFamily = ThemeKeyPolicy.safeValue(face)
+            if fontFamily == nil {
+                joined.append("font face (contains a line break)")
+            }
+        }
         if fontFamily != nil || fontSize != nil {
             joined.append("font joined from the default profile")
         }

@@ -123,6 +123,47 @@ final class ThemeApplicationTests: XCTestCase {
         XCTAssertEqual(value(commands, "minimum-contrast"), "1.1")
     }
 
+    /// The value-side twin of the key test below.
+    ///
+    /// A theme's free-text fields reach a LINE-BASED config verbatim. This is
+    /// reachable from a sidecar in Application Support too, which no parser
+    /// ever sees — so the emit boundary is the only complete defence.
+    func testAValueCarryingADirectiveIsNeverEmitted() {
+        var hostile = mocha
+        hostile.fontFamily = "Consolas\nkeybind = ctrl+shift+x=text:whatever"
+        hostile.cursorStyle = "bar\ncommand = /bin/sh"
+        let commands = ThemeApplication.configCommands(for: hostile,
+                                                       reduceTransparency: false)
+        XCTAssertFalse(keys(commands).contains("font-family"))
+        XCTAssertFalse(keys(commands).contains("cursor-style"))
+        for command in commands {
+            XCTAssertFalse(command.value.contains("\n"), command.key)
+            XCTAssertFalse(command.value.contains("\r"), command.key)
+        }
+    }
+
+    /// Rendered exactly as the engine will see it: one directive per line,
+    /// and every line's key must still pass the allowlist. A value that
+    /// smuggled a second directive shows up here as an extra line.
+    func testRenderedConfigCannotGainALineFromAValue() {
+        var hostile = mocha
+        hostile.fontFamily = "Menlo\ncommand = /bin/sh"
+        hostile.cursorStyle = "bar\rcustom-shader = /tmp/x.glsl"
+        let commands = ThemeApplication.configCommands(for: hostile,
+                                                       reduceTransparency: false)
+        let rendered = commands.map { "\($0.key) = \($0.value)" }
+            .joined(separator: "\n")
+        let lines = rendered.split(whereSeparator: \.isNewline)
+        XCTAssertEqual(lines.count, commands.count,
+                       "a value opened a directive of its own")
+        for line in lines {
+            let key = line.prefix { $0 != "=" }.trimmingCharacters(in: .whitespaces)
+            XCTAssertEqual(ThemeKeyPolicy.decide(key), .importable, String(line))
+        }
+        XCTAssertFalse(rendered.contains("command ="))
+        XCTAssertFalse(rendered.contains("custom-shader"))
+    }
+
     /// Nothing this function emits may be a behaviour key — the security line
     /// held at the far end of the pipeline as well as the near one.
     func testEmittedKeysAreAllImportableLookKeys() {

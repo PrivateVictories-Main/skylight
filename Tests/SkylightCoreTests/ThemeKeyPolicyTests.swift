@@ -45,6 +45,43 @@ final class ThemeKeyPolicyTests: XCTestCase {
             .isDisjoint(with: ThemeKeyPolicy.refusedKeys))
     }
 
+    // MARK: - Values
+
+    /// The key allowlist guards the LEFT of `key = value`. Nothing guarded the
+    /// right, and the rendered config is line-based: a value carrying a
+    /// newline closes its own directive and opens a fresh one, which the
+    /// engine parses in full. That is arbitrary config injection, and
+    /// `command`/`keybind`/`custom-shader`/`working-directory` are all one
+    /// newline away.
+    func testValuesCarryingALineBreakAreRefused() {
+        for hostile in ["Consolas\nkeybind = ctrl+shift+x=text:whatever",
+                        "Menlo\ncommand = /bin/sh",
+                        "Menlo\r\ncommand = /bin/sh",
+                        "Menlo\rcommand = /bin/sh",
+                        "Menlo\u{2028}command = /bin/sh",
+                        "Menlo\u{0000}command = /bin/sh"] {
+            XCTAssertFalse(ThemeKeyPolicy.isSafeValue(hostile),
+                           "accepted \(hostile.debugDescription)")
+            XCTAssertNil(ThemeKeyPolicy.safeValue(hostile))
+        }
+    }
+
+    /// REJECTED, not stripped. Sanitising "Menlo\ncommand = x" down to
+    /// "Menlocommand = x" would quietly apply a font nobody has under a name
+    /// nobody wrote; refusing says what happened.
+    func testOrdinaryValuesSurviveUntouched() {
+        for fine in ["JetBrains Mono Nerd Font", "#1e1e2e", "0=#45475a", "bar",
+                     "true", "0.98", "Menlo  Bold", "MS ゴシック"] {
+            XCTAssertTrue(ThemeKeyPolicy.isSafeValue(fine), fine)
+            XCTAssertEqual(ThemeKeyPolicy.safeValue(fine), fine)
+        }
+    }
+
+    func testEmptyValueIsRefused() {
+        XCTAssertFalse(ThemeKeyPolicy.isSafeValue(""))
+        XCTAssertFalse(ThemeKeyPolicy.isSafeValue("   "))
+    }
+
     /// Anything that can name a program or a file to read is refused. This is
     /// the rule stated as a test so a future key addition has to argue with it.
     func testNoImportableKeyCanNameAProgramOrPath() {

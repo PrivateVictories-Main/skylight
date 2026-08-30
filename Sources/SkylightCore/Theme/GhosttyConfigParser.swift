@@ -95,14 +95,26 @@ public enum GhosttyConfigParser {
             case "background-blur", "background-blur-radius":
                 theme.backgroundBlur = Int(value)
             case "font-family":
-                if !fontFamilySet, !value.isEmpty {
-                    theme.fontFamily = value
+                // Free text reaching a line-based config: a bare \r survives
+                // this parser's \n split and would ride into the rendered
+                // file as a directive of its own. Refused and named, never
+                // trimmed into something nobody wrote.
+                guard let safe = ThemeKeyPolicy.safeValue(value) else {
+                    skipped.insert("font-family (contains a line break)")
+                    continue
+                }
+                if !fontFamilySet {
+                    theme.fontFamily = safe
                     fontFamilySet = true
                 }
             case "font-size":
                 theme.fontSize = Double(value)
             case "cursor-style":
-                theme.cursorStyle = value
+                guard let safe = ThemeKeyPolicy.safeValue(value) else {
+                    skipped.insert("cursor-style (contains a line break)")
+                    continue
+                }
+                theme.cursorStyle = safe
             case "cursor-style-blink":
                 theme.cursorBlink = value == "true"
             case "window-padding-x":

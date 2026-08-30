@@ -53,6 +53,43 @@ public enum ThemeKeyPolicy {
         "working-directory", "wait-after-command",
     ]
 
+    // MARK: - Values
+
+    /// The allowlist above guards the LEFT of `key = value`. This guards the
+    /// right, and it is not optional decoration: the rendered config is
+    /// LINE-BASED, so a value carrying a newline closes its own directive and
+    /// opens a fresh one that the engine parses in full. `command`, `keybind`,
+    /// `custom-shader`, `working-directory` — every refused key is one `\n`
+    /// away from arriving anyway, through a key that was allowed.
+    ///
+    /// The vector is reachable today rather than theoretical: Windows
+    /// Terminal's `profiles.defaults.font.face` is a JSON string, and JSON is
+    /// perfectly happy to carry a line break inside one.
+    ///
+    /// Refused characters are newline (all Unicode line breaks, not just
+    /// `\n`), carriage return — this repo's ghostty parser splits on `\n`
+    /// alone, so a bare `\r` rides inside a value — and control characters,
+    /// which is the same rule `LiveSessionStore.quoted()` already applies on
+    /// the exec lane.
+    public static func isSafeValue(_ value: String) -> Bool {
+        guard !value.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        return !value.unicodeScalars.contains { scalar in
+            CharacterSet.newlines.contains(scalar)
+                || CharacterSet.controlCharacters.contains(scalar)
+                || scalar == "\r"
+        }
+    }
+
+    /// The value, or nil when it may not cross into a config.
+    ///
+    /// REJECTED, never stripped. Sanitising `"Menlo\ncommand = x"` down to
+    /// `"Menlocommand = x"` would apply a font nobody has, under a name nobody
+    /// wrote, and report success — the module's honest-refusal rule says the
+    /// opposite: take what is real, name what was not taken.
+    public static func safeValue(_ value: String) -> String? {
+        isSafeValue(value) ? value : nil
+    }
+
     public static func decide(_ rawKey: String) -> Decision {
         let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         if refusedKeys.contains(key) { return .refused }

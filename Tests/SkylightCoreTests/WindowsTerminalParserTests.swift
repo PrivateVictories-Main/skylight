@@ -80,6 +80,23 @@ final class WindowsTerminalParserTests: XCTestCase {
         XCTAssertEqual(theme.backgroundOpacity ?? -1, 0.5, accuracy: 0.001)
     }
 
+    /// The reachable-today vector: font.face is a JSON string, and JSON is
+    /// perfectly happy to carry a newline inside one. Refused at parse time
+    /// AND named, per the honest-refusal rule — a silently dropped font looks
+    /// identical to a font we never read.
+    func testFontFaceCarryingADirectiveIsRefusedAndNamed() throws {
+        let json = """
+        { "profiles": { "defaults": {
+            "font": { "face": "Consolas\\nkeybind = ctrl+shift+x=text:whatever" } } },
+          "schemes": [ { "name": "X", "background": "#000000", "foreground": "#ffffff" } ] }
+        """
+        let theme = try XCTUnwrap(
+            WindowsTerminalParser.parse(Data(json.utf8), name: "s").first)
+        XCTAssertNil(theme.fontFamily)
+        XCTAssertTrue(theme.skipped.contains { $0.contains("font") },
+                      "a refused font must be named, got \(theme.skipped)")
+    }
+
     func testSchemeWithoutBackgroundOrForegroundIsDropped() {
         let json = """
         { "schemes": [ { "name": "Broken", "red": "#ff0000" },
