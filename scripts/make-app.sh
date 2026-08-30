@@ -40,6 +40,16 @@ PLIST
 mkdir -p "$APP/Contents/Resources"
 cp Sources/Skylight/Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp "$BIN" "$APP/Contents/MacOS/Skylight"
+# SwiftPM resource bundles, beside the executable — which is where
+# Bundle.module looks. Without them GhosttyRuntimeResources.directoryURL is
+# nil, so the shell-integration environment is never built and a packaged app
+# silently loses cwd reporting, prompt marks and command reports. Everything
+# still LAUNCHES, which is what made this invisible: it was verified by
+# inspecting a real spawned shell's environment, not by the app staying up.
+for bundle in .build/"$CONFIG"/*.bundle; do
+  [ -e "$bundle" ] || continue
+  cp -R "$bundle" "$APP/Contents/MacOS/"
+done
 # The session keeper rides beside the app binary; the app spawns it on the
 # first terminal and it outlives every app run that has live sessions.
 cp ".build/$CONFIG/skylightd" "$APP/Contents/MacOS/skylightd"
