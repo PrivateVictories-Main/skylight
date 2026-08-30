@@ -49,6 +49,35 @@ public struct SkylightTheme: Codable, Equatable, Hashable, Sendable {
     public var paddingY: Int?
     public var minimumContrast: Double?
 
+    /// Which of the three non-optional fields the SOURCE actually STATED.
+    ///
+    /// Every other field in this model says "the file was silent" by being
+    /// nil. These three cannot: a theme must always HAVE a name and two anchor
+    /// colours to be usable, so a parser has to put something in them even
+    /// when the file said nothing. This is how it admits that.
+    ///
+    /// It exists because of one real case: a ghostty config whose whole colour
+    /// story is `theme = Catppuccin Mocha`. Without this, merging the parsed
+    /// config over the resolved catalogue theme assigned the parser's seeded
+    /// black and white unconditionally — and the applied result was Mocha's
+    /// palette on a pure black background, named "config".
+    public struct StatedFields: Codable, Equatable, Hashable, Sendable {
+        public var name: Bool
+        public var background: Bool
+        public var foreground: Bool
+
+        /// Defaults to "stated": only a parser that KNOWS the file was silent
+        /// may claim otherwise, so every other construction is unaffected.
+        public init(name: Bool = true, background: Bool = true,
+                    foreground: Bool = true) {
+            self.name = name
+            self.background = background
+            self.foreground = foreground
+        }
+    }
+
+    public var stated = StatedFields()
+
     /// Keys the file DID contain and this import deliberately did not take —
     /// refused behaviour keys, unparseable constructs, formats we can only
     /// read part of. Surfaced to the user: a partial import is honest, a
@@ -123,10 +152,18 @@ public struct SkylightTheme: Codable, Equatable, Hashable, Sendable {
     /// does not silently erase the other fifteen.
     public func merging(_ overlay: SkylightTheme) -> SkylightTheme {
         var result = self
-        result.name = overlay.name.isEmpty ? name : overlay.name
+        // The three that cannot say "absent" by being nil: keep this side's
+        // value unless the overlay actually STATED one. A config that only
+        // names a theme must not repaint it black.
+        result.name = overlay.stated.name && !overlay.name.isEmpty
+            ? overlay.name : name
         result.source = overlay.source
-        result.background = overlay.background
-        result.foreground = overlay.foreground
+        result.background = overlay.stated.background ? overlay.background : background
+        result.foreground = overlay.stated.foreground ? overlay.foreground : foreground
+        result.stated = StatedFields(
+            name: stated.name || overlay.stated.name,
+            background: stated.background || overlay.stated.background,
+            foreground: stated.foreground || overlay.stated.foreground)
         result.cursor = overlay.cursor ?? cursor
         result.cursorText = overlay.cursorText ?? cursorText
         result.selectionBackground = overlay.selectionBackground ?? selectionBackground

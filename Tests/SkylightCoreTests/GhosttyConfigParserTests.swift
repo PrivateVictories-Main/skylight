@@ -84,6 +84,40 @@ final class GhosttyConfigParserTests: XCTestCase {
         XCTAssertEqual(parsed.theme.selectionBackground, Color8("#585b70"))
     }
 
+    /// Ryan's config states no colours at all — only a theme NAME and some
+    /// look keys. The parser must say so rather than handing on the seeded
+    /// black/white as though the file had chosen them.
+    func testAConfigThatStatesNoColoursSaysSo() throws {
+        let parsed = try XCTUnwrap(GhosttyConfigParser.parse(ryansConfig, name: "config"))
+        XCTAssertFalse(parsed.theme.stated.background)
+        XCTAssertFalse(parsed.theme.stated.foreground)
+        // A ghostty config has no `name` key — the filename is a fallback, not
+        // a statement, so it must not win over the theme it references.
+        XCTAssertFalse(parsed.theme.stated.name)
+    }
+
+    func testAConfigThatDoesStateColoursSaysThatToo() throws {
+        let parsed = try XCTUnwrap(GhosttyConfigParser.parse(
+            "background = #1e1e2e\nforeground = #cdd6f4", name: "c"))
+        XCTAssertTrue(parsed.theme.stated.background)
+        XCTAssertTrue(parsed.theme.stated.foreground)
+    }
+
+    func testOneStatedAnchorIsReportedAsInferredForTheOther() throws {
+        let parsed = try XCTUnwrap(
+            GhosttyConfigParser.parse("background = #1e1e2e", name: "c"))
+        XCTAssertTrue(parsed.theme.stated.background)
+        XCTAssertFalse(parsed.theme.stated.foreground)
+    }
+
+    /// A file with look keys but no colour and no theme reference is not a
+    /// theme — handing back invented black/white would be the invention this
+    /// module refuses everywhere else.
+    func testLookKeysWithoutColoursOrAReferenceIsNotATheme() {
+        XCTAssertNil(GhosttyConfigParser.parse("font-size = 14", name: "c"))
+        XCTAssertNil(GhosttyConfigParser.parse("window-padding-x = 24", name: "c"))
+    }
+
     func testDualThemeSplitsLightAndDark() throws {
         let parsed = try XCTUnwrap(
             GhosttyConfigParser.parse("theme = light:Alabaster,dark:Afterglow", name: "c"))

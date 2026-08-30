@@ -100,6 +100,65 @@ final class SkylightThemeTests: XCTestCase {
                                    foreground: ""))
     }
 
+    /// C3, the shape of Ryan's OWN config: `theme = Catppuccin Mocha` plus
+    /// font/opacity/padding lines and NO background or foreground.
+    ///
+    /// The overlay's anchors are placeholders — the file never stated them —
+    /// so merging must keep the catalogue's. Before this, the seeded
+    /// #000000/#ffffff were assigned unconditionally and the applied theme was
+    /// Mocha's palette on pure black, named "config".
+    func testMergingKeepsCatalogueAnchorsWhenTheOverlayIsSilent() {
+        var catalogue = theme("#1e1e2e", name: "Catppuccin Mocha")
+        catalogue.foreground = Color8("#cdd6f4")!
+        catalogue.palette = [0: Color8("#45475a")!]
+
+        var config = theme("#000000", name: "config")   // placeholder anchors
+        config.foreground = Color8("#ffffff")!
+        config.stated = SkylightTheme.StatedFields(name: false, background: false,
+                                                   foreground: false)
+        config.fontSize = 14
+        config.backgroundOpacity = 0.98
+
+        let merged = catalogue.merging(config)
+        XCTAssertEqual(merged.background, Color8("#1e1e2e"))
+        XCTAssertEqual(merged.foreground, Color8("#cdd6f4"))
+        XCTAssertEqual(merged.palette[0], Color8("#45475a"))
+        XCTAssertEqual(merged.name, "Catppuccin Mocha")
+        // The config's own explicit look keys still win — ghostty's rule.
+        XCTAssertEqual(merged.fontSize, 14)
+        XCTAssertEqual(merged.backgroundOpacity, 0.98)
+    }
+
+    func testMergingTakesOverlayAnchorsWhenTheOverlayDidStateThem() {
+        let catalogue = theme("#1e1e2e", name: "Catppuccin Mocha")
+        var config = theme("#ff0000", name: "config")
+        config.stated = SkylightTheme.StatedFields(name: false, background: true,
+                                                   foreground: false)
+        let merged = catalogue.merging(config)
+        XCTAssertEqual(merged.background, Color8("#ff0000"))   // stated: wins
+        XCTAssertEqual(merged.foreground, catalogue.foreground) // unstated: kept
+        XCTAssertEqual(merged.name, "Catppuccin Mocha")
+    }
+
+    func testMergedThemeRemembersWhatEitherSideStated() {
+        var catalogue = theme("#1e1e2e", name: "Mocha")
+        catalogue.stated = SkylightTheme.StatedFields(name: true, background: true,
+                                                      foreground: true)
+        var config = theme("#000000", name: "config")
+        config.stated = SkylightTheme.StatedFields(name: false, background: false,
+                                                   foreground: false)
+        XCTAssertEqual(catalogue.merging(config).stated,
+                       SkylightTheme.StatedFields(name: true, background: true,
+                                                  foreground: true))
+    }
+
+    func testEverythingStatesItsFieldsByDefault() {
+        // Only a parser that KNOWS the file was silent may say otherwise.
+        XCTAssertEqual(theme("#000000").stated,
+                       SkylightTheme.StatedFields(name: true, background: true,
+                                                  foreground: true))
+    }
+
     func testNilOverlayFieldsNeverErasePresentOnes() {
         var base = theme("#000000")
         base.backgroundOpacity = 0.9
