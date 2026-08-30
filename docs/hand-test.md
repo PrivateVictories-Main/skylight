@@ -121,8 +121,10 @@ then walk top to bottom. Every line should feel instant.
       flip OFF → the stored glass choices return.
 - [ ] ⌘, has two native tabs (General / Theme); General behaves exactly as
       before, and neither tab feels crowded.
-- [ ] Bring your look over: the Theme tab lists only terminals actually on
-      this machine (here: Ghostty, iTerm2, Warp, VS Code). Click Ghostty →
+- [ ] Bring your look over: the Theme tab lists only terminals whose config
+      actually YIELDS a theme (here: Ghostty and Warp — VS Code is installed
+      but its settings.json holds no colours, so it must NOT appear). Click
+      Ghostty →
       Catppuccin Mocha arrives (it resolves `theme = NAME` against the
       bundled catalogue), and the note says `command`/`keybind` were not
       imported. Nothing launches tmux.

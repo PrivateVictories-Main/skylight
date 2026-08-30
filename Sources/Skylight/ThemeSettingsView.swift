@@ -48,9 +48,24 @@ enum ThemeDiscovery {
         ]
     }
 
-    /// Only the ones actually installed. Never offer a button that cannot do
-    /// anything — the same rule the harness rows follow.
-    static var installed: [MigrationSource] { sources.filter { $0.found != nil } }
+    /// Only the ones that will actually YIELD a theme.
+    ///
+    /// Existence is not enough, and this is not hypothetical: Ryan's VS Code
+    /// settings.json is 391 bytes of `terminal.external.osxExec` and copilot
+    /// flags with no colour key anywhere in it — VS Code keeps its look in
+    /// `workbench.colorTheme`, a named extension theme, not in colours. A
+    /// button that can only ever answer "no themes in file" is exactly the
+    /// dead control the harness rows refuse to be.
+    ///
+    /// So the check is a real parse. The files are small and this runs once
+    /// when the tab appears, never per render.
+    static func usable() -> [MigrationSource] {
+        sources.filter { source in
+            guard let path = source.found else { return false }
+            if case .success = load(path) { return true }
+            return false
+        }
+    }
 
     /// Read every theme a path yields. A directory (Warp's themes folder) is
     /// walked one level for readable files; anything else is read directly.
@@ -103,6 +118,8 @@ struct ThemeSettingsView: View {
     @State private var candidates: [SkylightTheme] = []
     @State private var importMessage: String?
     @State private var canRevert = ThemeStore.shared.canRevert
+    /// Resolved once when the tab appears — see ThemeDiscovery.usable().
+    @State private var migrationSources: [MigrationSource] = []
 
     private var bundled: [SkylightTheme] {
         let all = ThemeStore.shared.importedThemes + ThemeCatalogBridge.search(query)
@@ -126,6 +143,7 @@ struct ThemeSettingsView: View {
             footer
         }
         .padding(18)
+        .task { migrationSources = ThemeDiscovery.usable() }
         .sheet(isPresented: Binding(get: { !candidates.isEmpty },
                                     set: { if !$0 { candidates = [] } })) {
             ThemeChoiceSheet(themes: candidates) { chosen in
@@ -144,9 +162,8 @@ struct ThemeSettingsView: View {
                 .textCase(.uppercase)
                 .kerning(0.6)
                 .foregroundStyle(.secondary)
-            let installed = ThemeDiscovery.installed
-            if installed.isEmpty {
-                Text("No other terminal's config found — use Import File… below, or drop one on the window.")
+            if migrationSources.isEmpty {
+                Text("No other terminal's theme found — use Import File… below.")
                     .font(.system(size: 11))
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -154,7 +171,7 @@ struct ThemeSettingsView: View {
                 // Only terminals actually installed get a button: a control
                 // that cannot do anything is the same lie as a dimmed harness
                 // row pretending to be ready.
-                FlowRow(items: installed) { source in
+                FlowRow(items: migrationSources) { source in
                     Button(source.displayName) { load(source) }
                         .buttonStyle(.pressable(scale: 0.97))
                         .font(.system(size: 12))
