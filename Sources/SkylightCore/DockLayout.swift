@@ -172,6 +172,11 @@ public enum DockLayout {
 public struct DockTarget: Equatable, Sendable {
     public let edge: DockEdge
     /// Where in the rail's slot order it would land.
+    ///
+    /// Honoured on ARRIVAL only. Dragging an already-docked terminal up or
+    /// down its own rail to reorder it does not exist yet — the docked
+    /// header's drag measures distance from the edge, to undock — so this
+    /// index is used once and then fixed. Tracked as plan task M4.8.
     public let insertionIndex: Int
     public let shape: DockShape
 

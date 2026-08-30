@@ -215,7 +215,9 @@ struct CanvasView: View {
         // gap between the glass and the traffic lights.
         .toolbarBackground(.hidden, for: .windowToolbar)
         .overlay {
-            if board?.tiles.isEmpty ?? true {
+            // A board whose only terminals are DOCKED still has an empty
+            // plane, and this placeholder is about the plane.
+            if board?.freeTiles.isEmpty ?? true, board?.docks.isEmpty ?? true {
                 ContentUnavailableView(
                     "Empty Canvas",
                     systemImage: "square.on.square.dashed",
@@ -451,6 +453,9 @@ struct CanvasView: View {
     /// Center the tile a sidebar row asked for — at whatever zoom the canvas
     /// is currently at, so revealing never silently changes magnification.
     private func revealIfPending(in viewport: CGSize) {
+        // .tiles deliberately: revealing pans the plane to a tile, and a
+        // DOCKED instance has no position on the plane to pan to — it is
+        // already on screen at its edge, so there is nothing to reveal.
         guard let itemID = state.pendingReveal,
               let tile = board?.tiles.first(where: { $0.itemID == itemID }) else { return }
         state.pendingReveal = nil
@@ -1831,11 +1836,15 @@ struct RailLayer: View {
                 }
             }
             if let dockTarget {
+                // The animation lives HERE, on the ghost alone. On the ZStack
+                // it also covered the docked tiles, so a newly mounted
+                // DockedTileView animated its frame in — 120ms of intermediate
+                // sizes, every one forwarded to a live pty as a resize. That
+                // is precisely what R2 exists to prevent, reintroduced by a
+                // modifier sitting one level too high.
                 DockGhost(target: dockTarget, docks: docks, viewport: viewport)
+                    .animation(.easeOut(duration: 0.12), value: dockTarget)
             }
         }
-        // Only the GHOST animates. The rails themselves appear at their final
-        // geometry — see the note on this type.
-        .animation(.easeOut(duration: 0.12), value: dockTarget)
     }
 }

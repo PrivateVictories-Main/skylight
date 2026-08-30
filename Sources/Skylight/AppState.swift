@@ -710,7 +710,9 @@ final class AppState: ObservableObject {
 
     func nearestWorkingDirectory(on boardID: UUID, to point: CGPoint) -> String? {
         guard let board = canvases.first(where: { $0.id == boardID }) else { return nil }
-        return board.tiles
+        // freeTiles: a docked terminal has no position on the plane, so
+        // "the nearest tile to this point" cannot meaningfully include it.
+        return board.freeTiles
             .compactMap { tile -> (CGFloat, String)? in
                 guard let instance = instance(tile.itemID),
                       instance.spec.kind == .shell,
@@ -1034,6 +1036,9 @@ final class AppState: ObservableObject {
         if dockedEdge(of: itemID) == edge {
             undock(itemID, on: boardID)
         } else {
+            // `.half` is the share ASKED FOR, not the share received: on an
+            // empty rail it takes the whole thing, and on an occupied one the
+            // floor and ceiling in DockLayout.docked decide what it gets.
             dock(itemID, on: boardID,
                  to: DockTarget(edge: edge, insertionIndex: 0, shape: .half))
         }
