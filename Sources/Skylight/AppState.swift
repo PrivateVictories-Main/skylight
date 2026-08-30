@@ -418,7 +418,7 @@ final class AppState: ObservableObject {
 
     static func defaultName(for spec: TerminalSpec) -> String {
         if let harness = spec.harness {
-            return Catalog.harnesses.first { $0.id == harness }?.displayName ?? harness
+            return Catalog.harness(harness)?.displayName ?? harness
         }
         if let shell = spec.shellPath { return (shell as NSString).lastPathComponent }
         return "Terminal"
@@ -967,7 +967,7 @@ final class LiveSessionStore {
     /// prompt; appending would risk landing after one. It is skipped entirely
     /// when the spec already passes it by hand, so nobody gets it twice.
     private func autonomousArguments(for spec: TerminalSpec, harness: String) -> [String] {
-        guard let flag = Catalog.harnesses.first(where: { $0.id == harness })?.autonomyFlag,
+        guard let flag = Catalog.harness(harness)?.autonomyFlag,
               lookupTrusted?(harness) == true,
               !spec.arguments.contains(flag) else { return spec.arguments }
         return [flag] + spec.arguments

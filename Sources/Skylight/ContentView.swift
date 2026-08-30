@@ -321,7 +321,7 @@ struct InstanceRow: View {
 
     private var harnessBrand: Brand? {
         instance.spec.harness.flatMap { id in
-            Catalog.harnesses.first { $0.id == id }?.brand
+            Catalog.harness(id)?.brand
         }
     }
 
@@ -771,7 +771,7 @@ struct MissingHarnessBanner: View {
     private var message: String? {
         guard let outcome = state.sessions.launchOutcome(for: instance.id) else { return nil }
         if let id = outcome.missingHarness {
-            let harness = Catalog.harnesses.first { $0.id == id }
+            let harness = Catalog.harness(id)
             let name = harness?.displayName ?? id
             let install = harness.map { " Install: \($0.installCommand)" } ?? ""
             return "\(name) isn't installed — running your shell.\(install)"

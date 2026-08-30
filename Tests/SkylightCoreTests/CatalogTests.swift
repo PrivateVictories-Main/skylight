@@ -91,4 +91,26 @@ final class CatalogTests: XCTestCase {
         XCTAssertTrue(Catalog.harnesses.compactMap(\.autonomyFlag)
             .allSatisfy { !$0.contains(" ") && $0.hasPrefix("--") })
     }
+
+    func testHarnessLookupByID() {
+        XCTAssertEqual(Catalog.harness("claude")?.displayName, "Claude Code")
+        XCTAssertEqual(Catalog.harness("cursor-agent")?.brand, .cursor)
+        // Every catalogued id must find itself — a lookup that misses is a
+        // dimmed row or a missing brand mark somewhere in the UI.
+        for harness in Catalog.harnesses {
+            XCTAssertEqual(Catalog.harness(harness.id)?.id, harness.id, harness.id)
+        }
+    }
+
+    func testHarnessLookupUnknownIsNil() {
+        XCTAssertNil(Catalog.harness("nope"))
+        XCTAssertNil(Catalog.harness(""))
+        // Case matters: ids are binary names, and "Claude" is not on PATH.
+        XCTAssertNil(Catalog.harness("Claude"))
+    }
+
+    func testHarnessLookupAcceptsAnInstanceKind() {
+        XCTAssertEqual(Catalog.harness(for: .agent(harness: "codex"))?.displayName, "Codex")
+        XCTAssertNil(Catalog.harness(for: .shell))
+    }
 }

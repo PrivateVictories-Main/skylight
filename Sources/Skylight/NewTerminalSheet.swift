@@ -420,7 +420,7 @@ struct NewTerminalSheet: View {
     @ViewBuilder
     private var autonomyRow: some View {
         if let id = harnessID,
-           let harness = Catalog.harnesses.first(where: { $0.id == id }),
+           let harness = Catalog.harness(id),
            let flag = harness.autonomyFlag {
             Toggle(isOn: trustedBinding) {
                 VStack(alignment: .leading, spacing: 1) {
@@ -548,7 +548,7 @@ struct NewTerminalSheet: View {
 
     @ViewBuilder
     private func harnessIcon(for harnessID: String?, size: CGFloat) -> some View {
-        if let brand = harnessID.flatMap({ id in Catalog.harnesses.first { $0.id == id }?.brand }) {
+        if let brand = harnessID.flatMap({ Catalog.harness($0)?.brand }) {
             BrandIcon(brand: brand, size: size)
         } else {
             Image(systemName: "terminal")
@@ -565,7 +565,7 @@ struct NewTerminalSheet: View {
     }
 
     private func installCommand(for harnessID: String?) -> String? {
-        harnessID.flatMap { id in Catalog.harnesses.first { $0.id == id }?.installCommand }
+        harnessID.flatMap { Catalog.harness($0)?.installCommand }
     }
 
     private func subtitle(for spec: TerminalSpec) -> String {

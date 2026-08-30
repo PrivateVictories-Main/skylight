@@ -70,6 +70,20 @@ public enum Catalog {
                 installCommand: "npm i -g @charmland/crush", brand: nil),
     ]
 
+    /// The catalogued harness for a binary id, or nil for one we do not know.
+    /// ONE lookup: this exact `first { $0.id == id }` was written out at six
+    /// call sites across three files, which is six places for a future
+    /// catalogue change to be half-applied.
+    public static func harness(_ id: String) -> Harness? {
+        harnesses.first { $0.id == id }
+    }
+
+    /// The same lookup addressed by instance kind — a shell has no harness,
+    /// and saying so here keeps the `if let harness` dance out of the views.
+    public static func harness(for kind: InstanceKind) -> Harness? {
+        kind.harnessID.flatMap(harness)
+    }
+
     /// /etc/shells → shell paths, comments and blank lines stripped.
     public static func parseShellsFile(_ contents: String) -> [String] {
         contents.split(separator: "\n")

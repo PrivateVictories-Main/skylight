@@ -955,7 +955,7 @@ struct TileView: View {
 
     private var harnessBrand: Brand? {
         instance.spec.harness.flatMap { id in
-            Catalog.harnesses.first { $0.id == id }?.brand
+            Catalog.harness(id)?.brand
         }
     }
 
