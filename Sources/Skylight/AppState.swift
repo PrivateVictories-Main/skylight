@@ -323,6 +323,15 @@ final class AppState: ObservableObject {
         subscriptions.state(for: harnessID) ?? .unknown
     }
 
+    /// Drop entries past their TTL. Called when the sheet or the Settings pane
+    /// asks for a refresh, so a harness probed once and never again cannot
+    /// leave a row sitting in the sidecar indefinitely.
+    private func pruneSubscriptions() {
+        let before = subscriptions
+        subscriptions.prune()
+        if subscriptions != before { persistSubscriptions() }
+    }
+
     /// Ask every installed harness that has a probe and no fresh answer.
     ///
     /// The three triggers, and ONLY these: the New sheet re-sampling (it
@@ -330,6 +339,7 @@ final class AppState: ObservableObject {
     /// button, and a login terminal exiting. No timer, no polling, nothing at
     /// render — the idle-CPU promise is a feature, not an aspiration.
     func refreshSubscriptions(force: Bool = false) {
+        pruneSubscriptions()
         for harness in Catalog.harnesses {
             guard harness.authProbe != nil,
                   let binary = sessions.cachedResolveHarness(harness.id),

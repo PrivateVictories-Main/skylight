@@ -68,15 +68,64 @@ final class ProbeCacheTests: XCTestCase {
         XCTAssertNil(cache.state(for: "codex", now: epoch.addingTimeInterval(-3600)))
     }
 
-    func testCodableRoundTripSurvivesRelaunch() throws {
+    /// What survives a relaunch: the state and the plan, deliberately not the
+    /// account. Rewritten from a version that asserted the email came back —
+    /// it did, and that was the bug.
+    func testCodableRoundTripSurvivesRelaunchWithoutTheAccount() throws {
         var cache = ProbeCache()
         cache.record("claude", .signedIn(account: "a@b.c", plan: "max"), at: epoch)
         cache.record("codex", .signedOut, at: epoch)
         let back = try JSONDecoder().decode(ProbeCache.self,
                                             from: JSONEncoder().encode(cache))
         XCTAssertEqual(back.state(for: "claude", now: epoch),
-                       .signedIn(account: "a@b.c", plan: "max"))
+                       .signedIn(account: nil, plan: "max"))
         XCTAssertEqual(back.state(for: "codex", now: epoch), .signedOut)
+    }
+
+    /// I5: the sidecar is a file on disk that nothing prunes and nothing in
+    /// the UI discloses. An email address is personal data, and keeping one
+    /// there indefinitely to save a 737ms re-probe is not a trade worth
+    /// making — so the account is held in memory for the session and never
+    /// written.
+    func testTheAccountIsNeverWrittenToDisk() throws {
+        var cache = ProbeCache()
+        cache.record("claude", .signedIn(account: "ryans51105@gmail.com", plan: "max"),
+                     at: epoch)
+        let json = try String(data: JSONEncoder().encode(cache), encoding: .utf8)!
+        XCTAssertFalse(json.contains("ryans51105"), json)
+        XCTAssertFalse(json.contains("@"), json)
+        // The plan is not personal and is worth keeping — the row still reads
+        // "max" after a relaunch instead of going blank.
+        XCTAssertTrue(json.contains("max"))
+    }
+
+    func testAReloadedCacheKnowsSignedInWithoutTheAccount() throws {
+        var cache = ProbeCache()
+        cache.record("claude", .signedIn(account: "a@b.c", plan: "max"), at: epoch)
+        let back = try JSONDecoder().decode(ProbeCache.self,
+                                            from: JSONEncoder().encode(cache))
+        XCTAssertEqual(back.state(for: "claude", now: epoch),
+                       .signedIn(account: nil, plan: "max"))
+        // In memory, before any round trip, the account is still available.
+        XCTAssertEqual(cache.state(for: "claude", now: epoch)?.account, "a@b.c")
+    }
+
+    /// Expired entries were kept forever: a harness probed once and never
+    /// again left its row on disk indefinitely. A read that misses now clears.
+    func testAReadMissPrunesTheExpiredEntry() {
+        var cache = ProbeCache()
+        cache.record("codex", .signedOut, at: epoch)
+        let later = epoch.addingTimeInterval(ProbeCache.ttl + 1)
+        XCTAssertNil(cache.state(for: "codex", now: later))
+        cache.prune(now: later)
+        XCTAssertTrue(cache.isEmpty)
+    }
+
+    func testPruneKeepsLiveEntries() {
+        var cache = ProbeCache()
+        cache.record("codex", .signedOut, at: epoch)
+        cache.prune(now: epoch.addingTimeInterval(60))
+        XCTAssertFalse(cache.isEmpty)
     }
 
     /// The sidecar is written to disk, so it must never carry anything from a
