@@ -52,7 +52,10 @@ struct SubscriptionSettingsView: View {
                 .textCase(.uppercase)
                 .kerning(0.6)
                 .foregroundStyle(.secondary)
-            Text("Skylight runs each CLI's own login in a terminal. It never sees or stores your credentials.")
+            // Claims exactly what the code does and no more. Skylight asks
+            // each CLI its own status command and reads what it prints; it
+            // does not open, stat, or name a credential file anywhere.
+            Text("Skylight asks each CLI about itself and runs its own login in a terminal. It never reads, stores, or even looks for your credential files.")
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
