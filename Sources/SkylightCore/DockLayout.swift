@@ -283,11 +283,17 @@ public extension DockLayout {
             (.top, point.y),
             (.bottom, viewport.height - point.y),
         ]
-        guard let (edge, depth) = distances.filter({ $0.1 >= 0 })
-            .min(by: { $0.1 < $1.1 }), depth <= edgeThreshold else { return nil }
+        // NOT filtered to non-negative. A pointer dragged past the window
+        // edge is aiming at that edge harder, not less — dropping negatives
+        // made the nearest edge disappear the moment you pushed into it, so
+        // the ghost vanished exactly when the gesture became most deliberate.
+        guard let (edge, depth) = distances.min(by: { $0.1 < $1.1 }),
+              depth <= edgeThreshold else { return nil }
 
         // Deeper in means a BIGGER share: the gesture reads as "push harder,
-        // take more", and the coarse shape is the one you meet first.
+        // take more". `depth` counts DOWN as the pointer approaches the edge
+        // (and goes negative past it), so the smallest depths are the coarse
+        // shapes — which is the opposite of what the old comment implied.
         let progress = max(0, min(1, depth / edgeThreshold))
         let shape: DockShape
         switch progress {

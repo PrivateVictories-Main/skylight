@@ -40,6 +40,10 @@ private enum CanvasZoom {
 /// absolute coordinates and the whole plane translates and scales under one
 /// viewport transform: `screen = content × zoom + pan`.
 struct CanvasView: View {
+    /// Named space for anything that needs VIEWPORT coordinates rather than
+    /// window ones.
+    static let viewportSpace = "skylight.canvas.viewport"
+
     @EnvironmentObject private var state: AppState
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
     /// The tints are read THROUGH this object (`themes.canvasBackdrop`,
@@ -127,6 +131,11 @@ struct CanvasView: View {
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
             .clipped()
+            // The one honest source of viewport coordinates. Edge hit-testing
+            // and rail dividers both need points relative to THIS view, and
+            // .global is the window — off by the sidebar's width horizontally
+            // and the title bar vertically.
+            .coordinateSpace(name: CanvasView.viewportSpace)
             .dropDestination(for: String.self) { ids, location in
                 for raw in ids {
                     guard let id = UUID(uuidString: raw),
@@ -886,12 +895,14 @@ struct TileView: View {
                 .contentShape(Rectangle())
                 .help("Drag to move “\(instance.name)” — click to open it at 100%")
                 .gesture(
-                    // Global space on purpose: this view sits UNDER the tile's
-                    // scaleEffect, and a local translation would already be
-                    // divided by the zoom — dividing again would move the tile
-                    // at several times the cursor. Screen points in, one
-                    // conversion to content, and only in the shared move funcs.
-                    DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    // The VIEWPORT space, not local: this view sits UNDER the
+                    // tile's scaleEffect, and a local translation would
+                    // already be divided by the zoom — dividing again would
+                    // move the tile at several times the cursor. Viewport
+                    // rather than global because `moveChanged` hit-tests
+                    // `location` against the viewport's edges.
+                    DragGesture(minimumDistance: 0,
+                                coordinateSpace: .named(CanvasView.viewportSpace))
                         .onChanged { value in
                             if !grabbing {
                                 let content = CGSize(
@@ -984,7 +995,10 @@ struct TileView: View {
         // Same screen-space contract as every other grip — see overviewTarget,
         // and the same 1pt arming distance as the ⌘ layer: two grips onto the
         // same tile that start at different distances feel like two tools.
-        .gesture(DragGesture(minimumDistance: 1, coordinateSpace: .global)
+        // Viewport space: `translation` is identical in any space, and
+        // `location` is now the pointer where the edges actually are.
+        .gesture(DragGesture(minimumDistance: 1,
+                             coordinateSpace: .named(CanvasView.viewportSpace))
             .onChanged(moveChanged).onEnded(moveEnded))
         .onTapGesture(count: 2) { state.focusedInstance = instance.id }
     }
@@ -999,31 +1013,20 @@ struct TileView: View {
         if !interacting { interacting = true }
         dragOffset = CGSize(width: value.translation.width / gestureZoom,
                             height: value.translation.height / gestureZoom)
-        // Where the POINTER is, not where the tile is: docking is aimed, and
-        // a tile's own corner reaching an edge is not the same as intending
-        // to put it there.
+        // Where the POINTER is, not where the tile is. A tile's corner
+        // reaching an edge is not the same as intending to put it there:
+        // hit-testing the corner made the right and bottom rails literally
+        // unreachable (a 560pt tile in a 1400pt viewport needs its corner at
+        // x≥1364, i.e. the pointer ~280pt outside the window) and fired left
+        // and top half a tile early.
         let target = DockLayout.hitTest(
-            point: viewportPoint(of: value),
+            point: value.location,
             viewport: viewport,
             docks: state.canvases.first { $0.id == boardID }?.docks ?? [:])
         if target != lastDockTarget {
             lastDockTarget = target
             onDockTargetChanged(target)
         }
-    }
-
-    /// The pointer in VIEWPORT coordinates.
-    ///
-    /// The gesture reports in global space (every grip in this file uses it,
-    /// so translations are not pre-divided by the zoom). Edge hit-testing is
-    /// viewport-relative, so the tile's own screen position is what bridges
-    /// them: the tile starts at `liveFrame × zoom + pan`, and the gesture's
-    /// `startLocation → location` delta moves from there.
-    private func viewportPoint(of value: DragGesture.Value) -> CGPoint {
-        let originX = tile.origin.x * safeZoom + pan.x
-        let originY = tile.origin.y * safeZoom + pan.y
-        return CGPoint(x: originX + value.translation.width,
-                       y: originY + value.translation.height)
     }
 
     /// The one place a move lands, at every zoom: screen translation into
@@ -1215,9 +1218,11 @@ private struct MoveGrip: View {
                 syncCursor()
             }
             .gesture(
-                // Screen points, like every other grip: the caller owns the one
-                // conversion into content space.
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                // Viewport points, like every other grip: the caller owns the
+                // one conversion into content space, and its `location` has
+                // to be where the edges are.
+                DragGesture(minimumDistance: 1,
+                            coordinateSpace: .named(CanvasView.viewportSpace))
                     .onChanged { value in
                         if !dragging {
                             dragging = true
@@ -1681,7 +1686,13 @@ struct RailDivider: View {
                 syncCursor()
             }
             .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                // VIEWPORT space, not global. `thickness(at:)` measures from
+                // the viewport's own edges, so a window-relative location
+                // made the left rail jump by the sidebar's width on the first
+                // pixel, collapsed the right one to its minimum, and put
+                // top/bottom out by the title-bar inset.
+                DragGesture(minimumDistance: 1,
+                            coordinateSpace: .named(CanvasView.viewportSpace))
                     .onChanged { value in
                         if !dragging { dragging = true; syncCursor() }
                         onResize(thickness(at: value.location))

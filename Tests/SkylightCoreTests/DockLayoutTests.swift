@@ -290,3 +290,59 @@ extension DockLayoutTests {
         XCTAssertEqual(DockLayout.dockedItems(docks), Set([a, b]))
     }
 }
+
+/// I3: the drag must hit-test the POINTER, not the tile's corner.
+///
+/// The reviewer's case, reproduced: a 1400x900 viewport with a 560x400 tile.
+/// Hit-testing the corner means the right rail needs the corner at x≥1364,
+/// i.e. the pointer roughly 280pt outside the window — unreachable. Left and
+/// top fire half a tile early, and once the corner goes negative the
+/// non-negative filter drops the edge entirely, so pushing further in makes
+/// the ghost vanish.
+final class DockPointerHitTestTests: XCTestCase {
+    private let viewport = CGSize(width: 1400, height: 900)
+
+    /// Grab the middle of a 560x400 tile and drag it until the POINTER is at
+    /// each edge. Every edge must be reachable.
+    func testEveryEdgeIsReachableWhenDraggingByThePointer() {
+        for (name, point) in [("left", CGPoint(x: 6, y: 450)),
+                              ("right", CGPoint(x: 1394, y: 450)),
+                              ("top", CGPoint(x: 700, y: 6)),
+                              ("bottom", CGPoint(x: 700, y: 894))] {
+            XCTAssertNotNil(DockLayout.hitTest(point: point, viewport: viewport),
+                            "\(name) edge unreachable at \(point)")
+        }
+    }
+
+    /// A pointer past the window edge still targets that edge rather than
+    /// falling off the end of the world — dragging hard into the left must
+    /// not make the ghost disappear.
+    func testAPointerBeyondAnEdgeStillTargetsIt() {
+        XCTAssertEqual(DockLayout.hitTest(point: CGPoint(x: -20, y: 450),
+                                          viewport: viewport)?.edge, .left)
+        XCTAssertEqual(DockLayout.hitTest(point: CGPoint(x: 1420, y: 450),
+                                          viewport: viewport)?.edge, .right)
+        XCTAssertEqual(DockLayout.hitTest(point: CGPoint(x: 700, y: -10),
+                                          viewport: viewport)?.edge, .top)
+        XCTAssertEqual(DockLayout.hitTest(point: CGPoint(x: 700, y: 910),
+                                          viewport: viewport)?.edge, .bottom)
+    }
+
+    /// Pushing further past an edge must not change which edge is chosen.
+    func testPushingHarderKeepsTheSameEdge() {
+        for x in stride(from: 20.0, through: -200.0, by: -20.0) {
+            XCTAssertEqual(
+                DockLayout.hitTest(point: CGPoint(x: x, y: 450),
+                                   viewport: viewport)?.edge, .left,
+                "lost the left edge at x=\(x)")
+        }
+    }
+
+    /// A tile's CORNER at the middle of the canvas means the pointer is
+    /// nowhere near an edge: dragging by the middle of a tile must not dock
+    /// half a tile early.
+    func testTheCentreStillTargetsNothing() {
+        XCTAssertNil(DockLayout.hitTest(point: CGPoint(x: 700, y: 450),
+                                        viewport: viewport))
+    }
+}
