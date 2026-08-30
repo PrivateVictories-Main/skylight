@@ -476,3 +476,89 @@ final class LayoutWithDocksTests: XCTestCase {
         XCTAssertFalse(free.contains { $0.itemID == docked })
     }
 }
+
+final class ArrangePresetTests: XCTestCase {
+    private func tiles(_ n: Int) -> [CanvasTile] {
+        (0..<n).map { i in
+            CanvasTile(itemID: UUID(),
+                       origin: CGPoint(x: CGFloat(i % 3) * 600,
+                                       y: CGFloat(i / 3) * 450),
+                       size: CGSize(width: 560, height: 400))
+        }
+    }
+    private let viewport = CGSize(width: 1600, height: 1000)
+
+    /// The default must be byte-identical to what ⇧⌘A has always done.
+    func testRowsPresetMatchesTodaysArrangedExactly() {
+        for n in 1...8 {
+            let all = tiles(n)
+            XCTAssertEqual(
+                CanvasLayout.arranged(tiles: all, viewport: viewport, preset: .rows),
+                CanvasLayout.arranged(tiles: all, viewport: viewport), "n=\(n)")
+        }
+    }
+
+    func testColumnsPresetMakesExactlyThatManyColumns() {
+        for columns in [2, 3] {
+            let arranged = CanvasLayout.arranged(tiles: tiles(6), viewport: viewport,
+                                                 preset: .columns(columns))
+            let distinctX = Set(arranged.map(\.origin.x))
+            XCTAssertEqual(distinctX.count, columns, "columns=\(columns)")
+        }
+    }
+
+    func testMainAndStackGivesTheFirstTileTheLargestArea() {
+        let arranged = CanvasLayout.arranged(tiles: tiles(4), viewport: viewport,
+                                             preset: .mainAndStack)
+        let areas = arranged.map { $0.size.width * $0.size.height }
+        XCTAssertEqual(areas.max(), areas.first,
+                       "the main tile must be the biggest one")
+    }
+
+    func testGridIsDeterministicAndNeverOverlaps() {
+        for n in 1...12 {
+            // The SAME input twice — the earlier version built fresh tiles
+            // for each call, so it compared different UUIDs and tested
+            // nothing but Foundation's random number generator.
+            let input = tiles(n)
+            let arranged = CanvasLayout.arranged(tiles: input, viewport: viewport,
+                                                 preset: .grid)
+            XCTAssertEqual(arranged,
+                           CanvasLayout.arranged(tiles: input, viewport: viewport,
+                                                 preset: .grid),
+                           "n=\(n) not deterministic")
+            for i in arranged.indices {
+                for j in (i + 1)..<arranged.count {
+                    XCTAssertFalse(
+                        arranged[i].frame.insetBy(dx: 1, dy: 1)
+                            .intersects(arranged[j].frame),
+                        "n=\(n): \(i) overlaps \(j)")
+                }
+            }
+        }
+    }
+
+    /// Every preset keeps every tile — an arrangement that loses one is a
+    /// terminal that vanished.
+    func testNoPresetEverLosesATile() {
+        let all = tiles(7)
+        for preset: CanvasLayout.ArrangePreset in [.rows, .columns(2), .columns(3),
+                                                    .mainAndStack, .grid] {
+            let arranged = CanvasLayout.arranged(tiles: all, viewport: viewport,
+                                                 preset: preset)
+            XCTAssertEqual(Set(arranged.map(\.id)), Set(all.map(\.id)), "\(preset)")
+        }
+    }
+
+    func testPresetsNeverProduceASubMinimumTile() {
+        for preset: CanvasLayout.ArrangePreset in [.columns(3), .mainAndStack, .grid] {
+            for tile in CanvasLayout.arranged(tiles: tiles(9), viewport: viewport,
+                                              preset: preset) {
+                XCTAssertGreaterThanOrEqual(tile.size.width,
+                                            CanvasLayout.minTileSize.width, "\(preset)")
+                XCTAssertGreaterThanOrEqual(tile.size.height,
+                                            CanvasLayout.minTileSize.height, "\(preset)")
+            }
+        }
+    }
+}

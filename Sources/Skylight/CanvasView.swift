@@ -323,14 +323,15 @@ struct CanvasView: View {
     /// repacking under the pointer would yank one out from under it. The
     /// command is dropped, not queued: a rearrange that lands after the drag
     /// finishes is a surprise, not a command.
-    private func arrange(in viewport: CGSize) {
+    private func arrange(in viewport: CGSize,
+                         preset: CanvasLayout.ArrangePreset = .rows) {
         guard !tileInteracting else { return }
         // Nothing to compose below two tiles, and a no-op must be a TRUE
         // no-op: falling through to the fit would silently reset the zoom on
         // an empty or single-tile board. Matches the menu item, which hides
         // itself in exactly these states.
         guard let board, board.freeTiles.count > 1 else { return }
-        state.arrangeCanvas(boardID, viewport: viewport)
+        state.arrangeCanvas(boardID, viewport: viewport, preset: preset)
         apply(.fit, in: viewport)
     }
 
@@ -425,6 +426,15 @@ struct CanvasView: View {
         if (board?.freeTiles.count ?? 0) > 1 {
             menu.addItem(.separator())
             add("Arrange") { arrange(in: viewport) }
+            let presets: [(String, CanvasLayout.ArrangePreset)] = [
+                ("Two Columns", .columns(2)),
+                ("Three Columns", .columns(3)),
+                ("Main and Stack", .mainAndStack),
+                ("Grid", .grid),
+            ]
+            for (title, preset) in presets {
+                add(title) { arrange(in: viewport, preset: preset) }
+            }
         }
         return menu
     }

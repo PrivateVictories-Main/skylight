@@ -77,6 +77,9 @@ then walk top to bottom. Every line should feel instant.
       warning says the session already ended.
 - [ ] Quit: with the keeper running, ⌘Q asks nothing (sessions survive);
       the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
+- [ ] Arrange presets: right-click a canvas with 4+ tiles → Two Columns,
+      Three Columns, Main and Stack, Grid. Each one keeps every terminal, and
+      ⇧⌘A on its own still does exactly what it always did (rows).
 - [ ] Docking, the gesture: drag a tile toward the left edge — a dashed
       ghost appears showing exactly what it will claim, and pushing deeper
       changes the share (full → half → third → quarter). Release: it snaps

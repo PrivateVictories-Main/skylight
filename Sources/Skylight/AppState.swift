@@ -868,13 +868,15 @@ final class AppState: ObservableObject {
     /// order kept) and the board is written back in one mutation, so every
     /// tile springs to its new origin together. The caller fits the view
     /// immediately after — see CanvasView.arrange(in:).
-    func arrangeCanvas(_ canvasID: UUID, viewport: CGSize) {
+    func arrangeCanvas(_ canvasID: UUID, viewport: CGSize,
+                       preset: CanvasLayout.ArrangePreset = .rows) {
         guard let board = canvases.first(where: { $0.id == canvasID }) else { return }
         // Docked tiles are viewport chrome: arranging packs only what is on
         // the plane, into the rect the rails leave behind. Their stored tile
         // entries are carried through untouched so undocking can restore the
         // size and position they had.
-        let arranged = CanvasLayout.arranged(tiles: board.freeTiles, viewport: viewport)
+        let arranged = CanvasLayout.arranged(tiles: board.freeTiles,
+                                             viewport: viewport, preset: preset)
         let docked = board.tiles.filter { tile in
             !arranged.contains { $0.id == tile.id }
         }

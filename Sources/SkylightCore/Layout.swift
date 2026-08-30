@@ -300,6 +300,101 @@ public enum CanvasLayout {
         return result
     }
 
+    /// Named compositions for ⇧⌘A.
+    ///
+    /// `rows` is what the command has always done and stays the default — a
+    /// preset menu that quietly changes the behaviour of the shortcut people
+    /// already use would be a worse feature than no presets at all.
+    public enum ArrangePreset: Equatable, Sendable {
+        case rows
+        case columns(Int)
+        case mainAndStack
+        case grid
+    }
+
+    /// Pack a board into a named composition.
+    ///
+    /// Every preset keeps every tile and never produces one below the minimum
+    /// size: an arrangement that loses a terminal, or shrinks it to a sliver,
+    /// is worse than the mess it replaced.
+    public static func arranged(tiles: [CanvasTile], viewport: CGSize,
+                                preset: ArrangePreset) -> [CanvasTile] {
+        guard !tiles.isEmpty else { return tiles }
+        switch preset {
+        case .rows:
+            return arranged(tiles: tiles, viewport: viewport)
+        case let .columns(count):
+            return packed(tiles, viewport: viewport,
+                          columns: max(1, count),
+                          rows: Int(ceil(Double(tiles.count) / Double(max(1, count)))))
+        case .grid:
+            let columns = max(1, Int(ceil(Double(tiles.count).squareRoot())))
+            let rows = Int(ceil(Double(tiles.count) / Double(columns)))
+            return packed(tiles, viewport: viewport, columns: columns, rows: rows)
+        case .mainAndStack:
+            return mainAndStacked(tiles, viewport: viewport)
+        }
+    }
+
+    /// An even grid inside the viewport, in the tiles' existing reading order.
+    private static func packed(_ tiles: [CanvasTile], viewport: CGSize,
+                               columns: Int, rows: Int) -> [CanvasTile] {
+        let gap: CGFloat = 24
+        let originX: CGFloat = 48
+        let originY: CGFloat = 48
+        let available = CGSize(
+            width: max(minTileSize.width, viewport.width - originX * 2),
+            height: max(minTileSize.height, viewport.height - originY * 2))
+        let cellWidth = max(minTileSize.width,
+                            (available.width - gap * CGFloat(columns - 1)) / CGFloat(columns))
+        let cellHeight = max(minTileSize.height,
+                             (available.height - gap * CGFloat(rows - 1)) / CGFloat(rows))
+        return tiles.enumerated().map { index, tile in
+            var tile = tile
+            let column = index % columns
+            let row = index / columns
+            tile.origin = snapped(CGPoint(
+                x: originX + CGFloat(column) * (cellWidth + gap),
+                y: originY + CGFloat(row) * (cellHeight + gap)))
+            tile.size = CGSize(width: cellWidth, height: cellHeight)
+            return tile
+        }
+    }
+
+    /// One large tile on the left, the rest stacked down the right — the
+    /// shape of "this is what I am working on, and these are watching".
+    private static func mainAndStacked(_ tiles: [CanvasTile],
+                                       viewport: CGSize) -> [CanvasTile] {
+        guard tiles.count > 1 else { return packed(tiles, viewport: viewport,
+                                                   columns: 1, rows: 1) }
+        let gap: CGFloat = 24
+        let originX: CGFloat = 48
+        let originY: CGFloat = 48
+        let available = CGSize(
+            width: max(minTileSize.width * 2 + gap, viewport.width - originX * 2),
+            height: max(minTileSize.height, viewport.height - originY * 2))
+        let mainWidth = max(minTileSize.width, (available.width - gap) * 0.6)
+        let stackWidth = max(minTileSize.width, available.width - mainWidth - gap)
+        let stackCount = tiles.count - 1
+        let stackHeight = max(minTileSize.height,
+                              (available.height - gap * CGFloat(stackCount - 1))
+                                / CGFloat(stackCount))
+        var result: [CanvasTile] = []
+        var main = tiles[0]
+        main.origin = snapped(CGPoint(x: originX, y: originY))
+        main.size = CGSize(width: mainWidth, height: available.height)
+        result.append(main)
+        for (index, tile) in tiles.dropFirst().enumerated() {
+            var tile = tile
+            tile.origin = snapped(CGPoint(
+                x: originX + mainWidth + gap,
+                y: originY + CGFloat(index) * (stackHeight + gap)))
+            tile.size = CGSize(width: stackWidth, height: stackHeight)
+            result.append(tile)
+        }
+        return result
+    }
+
     public static func staggeredOrigin(existing: Int) -> CGPoint {
         CGPoint(x: 48 + CGFloat(existing) * 64, y: 48 + CGFloat(existing) * 48)
     }
