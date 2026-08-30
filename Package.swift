@@ -29,6 +29,11 @@ let package = Package(
                 "SkylightCore",
                 "SkylightDaemonCore",
                 .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                // 485 bundled themes, already on disk in the engine package:
+                // a real choice on day one with nothing to parse. Depended on
+                // by the APP, never by SkylightCore — Core stays engine-free
+                // so its theme logic can be tested without a surface.
+                .product(name: "GhosttyTheme", package: "libghostty-spm"),
             ],
             path: "Sources/Skylight",
             resources: [.process("Resources")]

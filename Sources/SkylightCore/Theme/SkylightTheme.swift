@@ -88,6 +88,30 @@ public struct SkylightTheme: Codable, Equatable, Hashable, Sendable {
         self.skipped = skipped
     }
 
+    /// The shape ghostty's own bundled catalogue stores: bare hex strings, no
+    /// leading hash, palette values likewise. Lives here rather than in the
+    /// app's engine bridge so the whole mapping is testable in SkylightCore,
+    /// which cannot import GhosttyTheme — the bridge above it stays a
+    /// four-line adapter with nothing in it worth a test.
+    ///
+    /// Fails when either anchor colour is unreadable: a catalogue entry we
+    /// cannot parse is a bug to notice, not a black theme to ship.
+    public init?(catalogName: String,
+                 background: String, foreground: String,
+                 cursorColor: String? = nil, cursorText: String? = nil,
+                 selectionBackground: String? = nil, selectionForeground: String? = nil,
+                 palette: [Int: String] = [:]) {
+        guard let background = Color8(background),
+              let foreground = Color8(foreground) else { return nil }
+        self.init(name: catalogName, source: .bundled,
+                  background: background.rgb, foreground: foreground.rgb,
+                  cursor: cursorColor.flatMap(Color8.init)?.rgb,
+                  cursorText: cursorText.flatMap(Color8.init)?.rgb,
+                  selectionBackground: selectionBackground.flatMap(Color8.init)?.rgb,
+                  selectionForeground: selectionForeground.flatMap(Color8.init)?.rgb,
+                  palette: palette.compactMapValues { Color8($0)?.rgb })
+    }
+
     /// Which appearance slot this theme belongs in when a source only gives
     /// one scheme. Luminance, not a guess at the name — "Solarized" is both.
     public var isDarkDerived: Bool { background.luminance < 128 }

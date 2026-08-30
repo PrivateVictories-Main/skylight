@@ -61,6 +61,45 @@ final class SkylightThemeTests: XCTestCase {
         XCTAssertEqual(base.merging(overlay).skipped, ["command", "keybind"])
     }
 
+    /// The shape ghostty's own 485-theme catalogue stores: bare hex strings,
+    /// no leading hash, palette values likewise. The bridge in the app target
+    /// is a thin adapter over THIS, so the mapping is tested here where no
+    /// engine import is needed.
+    func testDefinitionShapedInitMapsEveryField() throws {
+        let theme = try XCTUnwrap(SkylightTheme(
+            catalogName: "Aardvark Blue",
+            background: "102040", foreground: "dddddd",
+            cursorColor: "007acc", cursorText: "bfdbfe",
+            selectionBackground: "bfdbfe", selectionForeground: "000000",
+            palette: [0: "191919", 1: "aa342e", 15: "f7f7f7"]))
+        XCTAssertEqual(theme.name, "Aardvark Blue")
+        XCTAssertEqual(theme.source, .bundled)
+        XCTAssertEqual(theme.background, Color8("#102040"))
+        XCTAssertEqual(theme.foreground, Color8("#dddddd"))
+        XCTAssertEqual(theme.cursor, Color8("#007acc"))
+        XCTAssertEqual(theme.cursorText, Color8("#bfdbfe"))
+        XCTAssertEqual(theme.selectionBackground, Color8("#bfdbfe"))
+        XCTAssertEqual(theme.selectionForeground, Color8("#000000"))
+        XCTAssertEqual(theme.palette[0], Color8("#191919"))
+        XCTAssertEqual(theme.palette[15], Color8("#f7f7f7"))
+        XCTAssertTrue(theme.isDarkDerived)
+    }
+
+    func testDefinitionShapedInitAcceptsHashPrefixedPaletteToo() throws {
+        // The catalogue writes bare hex; a hand-built definition may not.
+        let theme = try XCTUnwrap(SkylightTheme(
+            catalogName: "X", background: "#000000", foreground: "#ffffff",
+            palette: [0: "#112233"]))
+        XCTAssertEqual(theme.palette[0], Color8("#112233"))
+    }
+
+    func testDefinitionShapedInitRefusesAnUnreadableAnchorColour() {
+        XCTAssertNil(SkylightTheme(catalogName: "X", background: "zzz",
+                                   foreground: "#ffffff"))
+        XCTAssertNil(SkylightTheme(catalogName: "X", background: "#000000",
+                                   foreground: ""))
+    }
+
     func testNilOverlayFieldsNeverErasePresentOnes() {
         var base = theme("#000000")
         base.backgroundOpacity = 0.9
