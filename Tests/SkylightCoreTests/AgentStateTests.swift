@@ -58,13 +58,54 @@ final class AgentStateTests: XCTestCase {
         XCTAssertEqual(send(.tick, at: 1), .working)
     }
 
-    /// No event, no state change. Stated as a test because it is the
-    /// idle-CPU promise expressed in code.
-    func testNoStateChangeIsProducedWithoutAnEvent() {
+    /// C1: the decay was only reachable from `.tick`, and `.tick` was emitted
+    /// nowhere in the app — so a dot that went green stayed green forever.
+    /// Tested, passing, and completely unreachable.
+    ///
+    /// Decay is now evaluated at the TOP of every event: whatever happens
+    /// next first ages the state past its quiet window, then applies itself.
+    /// No new event source, no timer.
+    func testAnyLaterEventAgesTheStateFirst() {
         _ = send(.outputArrived, at: 0)
-        let before = machine.state
-        XCTAssertEqual(machine.state, before)
         XCTAssertEqual(machine.state, .working)
+        // A bell long after the work went quiet: the state was already stale
+        // when it arrived, and the bell still wins.
+        XCTAssertEqual(send(.bellRang, at: AgentStateMachine.quietSeconds + 5),
+                       .waitingForYou)
+    }
+
+    func testOutputLongAfterQuietStartsAFreshWorkingPeriod() {
+        _ = send(.outputArrived, at: 0)
+        // Aged to idle on arrival, then this output makes it working again.
+        XCTAssertEqual(send(.outputArrived, at: AgentStateMachine.quietSeconds + 5),
+                       .working)
+    }
+
+    /// The real-world shape: a title-driven `working`, then something
+    /// unrelated much later. It must read idle, not "working since Tuesday".
+    func testTitleDrivenWorkingDecaysOnAnUnrelatedLaterEvent() {
+        _ = send(.outputArrived, at: 100)
+        XCTAssertEqual(machine.state, .working)
+        XCTAssertEqual(send(.viewed, at: 100 + AgentStateMachine.quietSeconds + 1),
+                       .idle)
+    }
+
+    func testSessionEndStillWinsOverADecayedState() {
+        _ = send(.outputArrived, at: 0)
+        XCTAssertEqual(send(.sessionEnded, at: AgentStateMachine.quietSeconds + 99),
+                       .ended)
+    }
+
+    /// The idle-CPU promise, expressed as the thing that is actually true:
+    /// the machine has no clock of its own, so reading it changes nothing.
+    /// (The previous version of this test compared `state` to itself and
+    /// could not fail.)
+    func testReadingTheStateNeverAdvancesIt() {
+        _ = send(.outputArrived, at: 0)
+        let snapshot = machine
+        _ = machine.state
+        _ = machine.state
+        XCTAssertEqual(machine, snapshot)
     }
 
     func testEndedIsTerminal() {

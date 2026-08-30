@@ -72,6 +72,16 @@ public struct AgentStateMachine: Equatable, Sendable {
         // flicker back to life in the sidebar.
         guard state != .ended else { return state }
 
+        // AGE FIRST, then apply. Every event carries a timestamp, so whatever
+        // happens next is also the thing that notices how long ago the last
+        // output was — no timer, no tick source, nothing that wakes up to
+        // discover that nothing happened.
+        //
+        // This used to live in a `.tick` case that the app emitted nowhere,
+        // which made the decay tested, passing, and completely unreachable: a
+        // dot that went green stayed green for the life of the session.
+        decay(at: time)
+
         switch event {
         case .sessionEnded:
             state = .ended
@@ -101,18 +111,19 @@ public struct AgentStateMachine: Equatable, Sendable {
             return state
 
         case .tick:
-            return decayed(at: time)
+            // Carries no meaning of its own; the ageing above was the point.
+            return state
         }
     }
 
-    /// Evaluate the quiet decay. Called on any event, never on a schedule.
-    private mutating func decayed(at time: TimeInterval) -> AgentState {
-        guard state == .working, let lastOutput else { return state }
+    /// Age a stale `working` down to `idle`. Runs at the top of every event,
+    /// never on a schedule.
+    private mutating func decay(at time: TimeInterval) {
+        guard state == .working, let lastOutput else { return }
         let quiet = time - lastOutput
         // A clock that went backwards (sleep, NTP) must not wedge the machine
         // or decay it early.
-        guard quiet >= 0 else { return state }
+        guard quiet >= 0 else { return }
         if quiet >= Self.quietSeconds { state = .idle }
-        return state
     }
 }
