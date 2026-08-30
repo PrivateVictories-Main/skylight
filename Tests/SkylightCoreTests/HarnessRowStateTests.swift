@@ -25,8 +25,6 @@ final class HarnessRowStateTests: XCTestCase {
     func testInstalledButSignedOutIsTheNewThirdState() {
         XCTAssertEqual(HarnessRowState.of(installed: true, subscription: .signedOut),
                        .signedOut)
-        XCTAssertEqual(HarnessRowState.of(installed: true, subscription: .expired),
-                       .signedOut)
     }
 
     /// `.unknown` reads as ready on purpose. Most harnesses have no verified
@@ -45,14 +43,31 @@ final class HarnessRowStateTests: XCTestCase {
         XCTAssertFalse(HarnessRowState.notInstalled.canLaunch)
     }
 
-    /// Every harness in the catalogue must resolve to some row state — a new
-    /// one added without a probe must not fall through into nothing.
-    func testEveryHarnessResolvesWhenInstalled() {
+    /// Every harness resolves to a LAUNCHABLE row on a machine where we have
+    /// no answer — which is the normal case for the nine CLIs with no status
+    /// command. (The previous version of this test never used `harness` at
+    /// all: it evaluated one identical expression eleven times.)
+    func testEveryHarnessIsLaunchableWhenWeHaveNoAnswer() {
         for harness in Catalog.harnesses {
-            let state = HarnessRowState.of(installed: true,
-                                           subscription: .unknown)
+            let state = HarnessRowState.of(
+                installed: true,
+                subscription: AuthProbe.state(stdout: nil, stderr: nil,
+                                              exitCode: nil,
+                                              probe: harness.authProbe
+                                                ?? AuthProbe()))
             XCTAssertEqual(state, .ready, harness.id)
+            XCTAssertTrue(state.canLaunch, harness.id)
         }
+    }
+
+    /// Exactly two harnesses can be asked; the rest report unknown. Pins the
+    /// count so "six no-probe" style claims in docs stay true.
+    func testOnlyTheVerifiedHarnessesCanBeAsked() {
+        let askable = Catalog.harnesses.filter {
+            $0.authProbe?.statusCommand != nil
+        }.map(\.id)
+        XCTAssertEqual(askable, ["claude", "codex"])
+        XCTAssertEqual(Catalog.harnesses.count - askable.count, 9)
     }
 }
 

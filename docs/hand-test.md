@@ -72,8 +72,8 @@ then walk top to bottom. Every line should feel instant.
       the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
 - [ ] Subscriptions, third state: in ⌘T's Agent CLI list, Claude Code and
       Codex show who is signed in ("ryans51105@gmail.com · max", "Signed in");
-      the eight CLIs without a verified probe say nothing at all (not
-      "unknown"). No spinner lingers.
+      the other NINE CLIs say nothing at all (not "unknown") — two harnesses
+      can be asked, nine cannot. No spinner lingers.
 - [ ] Sign out of codex (`codex logout`), reopen ⌘T → its row says "Not
       signed in", shows a Sign in button, and Create is disabled while it is
       selected. Sign in runs `codex login` in a real terminal; when that
@@ -88,6 +88,9 @@ then walk top to bottom. Every line should feel instant.
       CLI is MISSING shows the install banner instead, not this one.
 - [ ] Probe cost: open and close ⌘T ten times — no lag, and Activity Monitor
       shows no repeated CLI processes (answers are cached, nothing polls).
+- [ ] Nothing we cannot ask about is ever blocked: with opencode installed,
+      its row is selectable and Create works — a CLI with no status command
+      must read as usable, never as "Not signed in".
 - [ ] Cursor CLI never triggers a login on its own: open ⌘T with cursor-agent
       installed and confirm nothing starts authenticating in the background
       (its `status` is interactive, so Skylight must never run it).

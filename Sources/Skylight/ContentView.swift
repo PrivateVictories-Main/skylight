@@ -732,6 +732,11 @@ struct SurfaceBanners: View {
                   // Only when the surface actually GOT its harness — a
                   // fallback shell's problem is the missing CLI, not its auth.
                   state.sessions.launchOutcome(for: instance.id)?.missingHarness == nil,
+                  // Never over the sign-in terminal itself. Telling someone
+                  // they are not signed in, on top of the window where they
+                  // are in the middle of signing in, is the app arguing with
+                  // its own advice.
+                  !state.isSignInTerminal(instance.id),
                   let message = SubscriptionCopy.bannerMessage(
                     for: harness, state: state.subscriptionState(harness.id)) {
             SignedOutBanner(instance: instance, harness: harness, message: message)

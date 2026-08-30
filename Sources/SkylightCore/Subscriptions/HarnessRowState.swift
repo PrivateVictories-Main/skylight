@@ -39,7 +39,7 @@ public enum SubscriptionCopy {
         switch state {
         case .unknown:
             return nil
-        case .signedOut, .expired:
+        case .signedOut:
             return "Not signed in"
         case let .signedIn(account, plan):
             // Only what the CLI printed itself — never inferred, never
@@ -53,7 +53,7 @@ public enum SubscriptionCopy {
     /// nil when there is nothing honest to say.
     public static func bannerMessage(for harness: Harness,
                                      state: SubscriptionState) -> String? {
-        guard state == .signedOut || state == .expired else { return nil }
+        guard state == .signedOut else { return nil }
         guard let login = harness.authProbe?.loginCommand, !login.isEmpty else {
             // No verified login command: say the true half rather than
             // printing "run  to connect it" with a hole in it.

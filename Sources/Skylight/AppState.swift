@@ -484,6 +484,10 @@ final class AppState: ObservableObject {
     /// exactly that harness.
     private var signInInstances: [UUID: String] = [:]
 
+    /// True for a terminal that IS the sign-in flow. Used to suppress the
+    /// signed-out banner there — the app must not argue with its own advice.
+    func isSignInTerminal(_ id: UUID) -> Bool { signInInstances[id] != nil }
+
     /// The sheet's launches honor a right-click spawn target; every other
     /// entry point (⇧⌘T, command menu) never does.
     func launchFromSheet(_ spec: TerminalSpec, name: String? = nil) {

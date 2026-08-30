@@ -39,7 +39,7 @@ public struct ProbeCache: Codable, Equatable, Sendable {
             switch state {
             case let .signedIn(_, plan):
                 signedIn = true; self.plan = plan
-            case .signedOut, .expired, .unknown:
+            case .signedOut, .unknown:
                 // .unknown is never stored at all — see `record`.
                 signedIn = false; plan = nil
             }

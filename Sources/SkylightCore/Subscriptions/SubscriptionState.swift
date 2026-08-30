@@ -15,8 +15,12 @@ public enum SubscriptionState: Equatable, Sendable {
     case signedOut
     /// Account and plan appear ONLY when the CLI printed them itself.
     case signedIn(account: String?, plan: String?)
-    /// The CLI says the credential exists but is no longer good.
-    case expired
+
+    // Deliberately NO `.expired`. It existed and nothing could ever produce
+    // it: no declared probe distinguishes "expired" from "signed out", and a
+    // state the app can render but never reach is a promise to the reader
+    // that the code does not keep. If a CLI ever reports expiry distinctly,
+    // add it back with the probe that produces it.
 
     /// Whether a terminal launched with this harness will actually work. Used
     /// to decide between "Create" and "Sign in" — and `.unknown` reads as
@@ -26,7 +30,7 @@ public enum SubscriptionState: Equatable, Sendable {
     public var isUsable: Bool {
         switch self {
         case .signedIn, .unknown: true
-        case .signedOut, .expired: false
+        case .signedOut: false
         }
     }
 
