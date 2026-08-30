@@ -67,31 +67,70 @@ enum ThemeDiscovery {
         }
     }
 
-    /// Read every theme a path yields. A directory (Warp's themes folder) is
-    /// walked one level for readable files; anything else is read directly.
+    /// A theme file is small. These bounds exist because the walk below runs
+    /// on the main actor and the file picker lets someone choose a DIRECTORY —
+    /// so "load this folder" could be the home directory, and an unbounded
+    /// recursive enumeration of it would hang the app with the Settings window
+    /// open.
+    private static let maximumDepth = 4
+    private static let maximumFilesScanned = 400
+    private static let maximumFileBytes = 512 * 1024
+
+    private static let readableExtensions: Set<String> =
+        ["yml", "yaml", "itermcolors", "toml", "json", "conf", "config", "lua"]
+
+    /// Read a file at a byte cap. A theme is kilobytes; anything that is not
+    /// is not a theme, and reading it whole to find that out is the problem.
+    private static func boundedData(at url: URL) -> Data? {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size > 0, size <= maximumFileBytes,
+              let data = try? Data(contentsOf: url) else { return nil }
+        return data
+    }
+
+    /// Read every theme a path yields.
+    ///
+    /// Directories are walked to a BOUNDED depth rather than one level: Warp
+    /// keeps its themes at `~/.warp/themes/<repo>/themes/*.yml`, three deep,
+    /// so a single-level walk would find nothing on the machine this was built
+    /// on. Depth, file-count and per-file byte caps give the same protection
+    /// without breaking the case that actually exists.
     static func load(_ path: String) -> Result<[SkylightTheme], ThemeImportError> {
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
         else { return .failure(.empty) }
 
         if isDirectory.boolValue {
-            let urls = FileManager.default.enumerator(
-                at: URL(fileURLWithPath: path),
-                includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? []
-            let themes = urls
-                .filter { ["yml", "yaml", "itermcolors", "toml", "json", "conf"]
-                    .contains($0.pathExtension.lowercased()) }
-                .compactMap { url -> [SkylightTheme]? in
-                    guard let data = try? Data(contentsOf: url) else { return nil }
-                    return try? ThemeImport.parse(data: data,
-                                                  filename: url.lastPathComponent).get()
+            let root = URL(fileURLWithPath: path)
+            let rootDepth = root.standardizedFileURL.pathComponents.count
+            guard let walker = FileManager.default.enumerator(
+                at: root, includingPropertiesForKeys: [.isDirectoryKey, .fileSizeKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants])
+            else { return .failure(.empty) }
+
+            var themes: [SkylightTheme] = []
+            var scanned = 0
+            for case let url as URL in walker {
+                let depth = url.standardizedFileURL.pathComponents.count - rootDepth
+                if depth > maximumDepth {
+                    walker.skipDescendants()
+                    continue
                 }
-                .flatMap { $0 }
+                guard readableExtensions.contains(url.pathExtension.lowercased())
+                else { continue }
+                scanned += 1
+                if scanned > maximumFilesScanned { break }
+                guard let data = boundedData(at: url),
+                      let parsed = try? ThemeImport.parse(
+                        data: data, filename: url.lastPathComponent).get()
+                else { continue }
+                themes.append(contentsOf: parsed)
+            }
             return themes.isEmpty ? .failure(.malformed("no themes in folder"))
                                   : .success(themes)
         }
 
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+        guard let data = boundedData(at: URL(fileURLWithPath: path)) else {
             return .failure(.empty)
         }
         let parsed = ThemeImport.parse(data: data,
