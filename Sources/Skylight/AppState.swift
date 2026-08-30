@@ -996,7 +996,11 @@ final class AppState: ObservableObject {
            Residency.board(of: focused, in: canvases) == boardID {
             return focused
         }
-        return canvases.first { $0.id == boardID }?.tiles.first?.itemID
+        // freeTiles, not tiles. A docked instance no longer holds a tile
+        // entry, but this fallback still has to name something the command
+        // can sensibly act on — and silently moving an unrelated terminal
+        // because it happened to be first is worse than doing nothing.
+        return canvases.first { $0.id == boardID }?.freeTiles.first?.itemID
     }
 
     var canDockSelected: Bool { dockTargetInstance != nil }
@@ -1004,6 +1008,23 @@ final class AppState: ObservableObject {
     func toggleDockSelected(_ edge: DockEdge) {
         guard let id = dockTargetInstance else { return }
         toggleDock(id, edge: edge)
+    }
+
+    /// Nudge a rail wider or narrower without a mouse. The divider is a drag
+    /// target and nothing else was reachable — a layout you can only build by
+    /// dragging is a layout some people cannot build.
+    func nudgeRail(_ edge: DockEdge, by delta: CGFloat) {
+        guard let boardID = selectedCanvasID,
+              let index = canvases.firstIndex(where: { $0.id == boardID }),
+              let rail = canvases[index].docks[edge] else { return }
+        setRailThickness(rail.thickness + delta, edge: edge, on: boardID)
+    }
+
+    /// The edges that currently have a rail on the visible board.
+    var railEdges: [DockEdge] {
+        guard let boardID = selectedCanvasID,
+              let board = canvases.first(where: { $0.id == boardID }) else { return [] }
+        return DockEdge.allCases.filter { board.docks[$0] != nil }
     }
 
     /// Keyboard route: dock or undock whatever is on screen, so the feature

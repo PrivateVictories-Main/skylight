@@ -94,8 +94,12 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Undock two ways: drag the docked header away from its edge, or click
       its undock button. Either way it returns to the canvas at the size and
       place it had before.
-- [ ] Keyboard: ⌃⌥← / → / ↑ / ↓ dock the focused terminal to that edge;
+- [ ] Keyboard: ⌃⌘← / → / ↑ / ↓ dock the focused terminal to that edge;
       pressing the same one again undocks it. Items grey out with no canvas.
+      (NOT ⌃⌥ — that is VoiceOver's own modifier.)
+- [ ] VoiceOver: turn it on and confirm ⌃⌥arrow still navigates normally
+      inside Skylight, and that the rail divider is reachable and adjustable.
+- [ ] Resize Rail menu widens/narrows without touching the divider.
 - [ ] Corners with two rails: dock left AND top — the left rail owns the full
       height and the top rail starts after it (never overlapping).
 - [ ] R2, the important one: with a docked board, quit and relaunch. The

@@ -1700,6 +1700,29 @@ struct RailDivider: View {
                     .onEnded { _ in dragging = false; syncCursor() }
             )
             .zIndex(3)
+            // Reachable by assistive technology, not just by a pointer.
+            .accessibilityElement()
+            .accessibilityLabel("\(edge.rawValue.capitalized) rail width")
+            .accessibilityHint("Adjust to resize the docked rail")
+            .accessibilityAdjustableAction { direction in
+                let current = currentThickness
+                switch direction {
+                case .increment: onResize(current + 40)
+                case .decrement: onResize(current - 40)
+                @unknown default: break
+                }
+            }
+    }
+
+    /// The rail's present thickness, read back off the free rect so the
+    /// adjustable action nudges from where it actually is.
+    private var currentThickness: CGFloat {
+        switch edge {
+        case .left: return layout.free.minX
+        case .right: return viewport.width - layout.free.maxX
+        case .top: return layout.free.minY
+        case .bottom: return viewport.height - layout.free.maxY
+        }
     }
 
     /// A rail's thickness is the distance from ITS edge to the pointer, so

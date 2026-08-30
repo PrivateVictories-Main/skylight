@@ -56,21 +56,37 @@ struct SkylightApp: App {
                 // item goes grey rather than firing a command that returns
                 // immediately.
                 Divider()
-                // Docking, reachable without a mouse. ⌃⌥ + an arrow is the
-                // direction you are sending it, which is the only mnemonic
-                // this needs; pressing the same one again brings it back.
+                // ⌃⌘ + an arrow, NOT ⌃⌥. Control-Option is the VoiceOver
+                // modifier: ⌃⌥arrow is how VoiceOver users navigate, and
+                // taking it would have made this app hostile to exactly the
+                // people who most need a keyboard route to docking. It is
+                // also a chord TUIs bind. The arrow is the direction you are
+                // sending it; pressing the same one again brings it back.
                 Button("Dock Left") { state.toggleDockSelected(.left) }
-                    .keyboardShortcut(.leftArrow, modifiers: [.control, .option])
+                    .keyboardShortcut(.leftArrow, modifiers: [.control, .command])
                     .disabled(!state.canDockSelected)
                 Button("Dock Right") { state.toggleDockSelected(.right) }
-                    .keyboardShortcut(.rightArrow, modifiers: [.control, .option])
+                    .keyboardShortcut(.rightArrow, modifiers: [.control, .command])
                     .disabled(!state.canDockSelected)
                 Button("Dock Top") { state.toggleDockSelected(.top) }
-                    .keyboardShortcut(.upArrow, modifiers: [.control, .option])
+                    .keyboardShortcut(.upArrow, modifiers: [.control, .command])
                     .disabled(!state.canDockSelected)
                 Button("Dock Bottom") { state.toggleDockSelected(.bottom) }
-                    .keyboardShortcut(.downArrow, modifiers: [.control, .option])
+                    .keyboardShortcut(.downArrow, modifiers: [.control, .command])
                     .disabled(!state.canDockSelected)
+                // Resizing a rail was drag-only, which makes a layout some
+                // people simply cannot build.
+                Menu("Resize Rail") {
+                    ForEach(state.railEdges, id: \.self) { edge in
+                        Button("Widen \(edge.rawValue.capitalized)") {
+                            state.nudgeRail(edge, by: 40)
+                        }
+                        Button("Narrow \(edge.rawValue.capitalized)") {
+                            state.nudgeRail(edge, by: -40)
+                        }
+                    }
+                }
+                .disabled(state.railEdges.isEmpty)
                 Divider()
                 Button("Arrange Canvas") { state.requestArrange() }
                     .keyboardShortcut("a", modifiers: [.command, .shift])
