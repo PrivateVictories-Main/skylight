@@ -94,3 +94,60 @@ final class TitlesTests: XCTestCase {
         XCTAssertEqual(Titles.sanitizedPaste("\u{1B}]0;no terminator"), "]0;no terminator")
     }
 }
+
+final class AbbreviatedPathTests: XCTestCase {
+    private let home = "/Users/ryan_s"
+
+    func testTildeAbbreviation() {
+        XCTAssertEqual(Titles.abbreviatedPath("/Users/ryan_s/code/skylight",
+                                              home: home, maxLength: 40),
+                       "~/code/skylight")
+        XCTAssertEqual(Titles.abbreviatedPath(home, home: home, maxLength: 40), "~")
+    }
+
+    /// A path that is NOT under home keeps its root — silently showing
+    /// "~/…" for /opt/homebrew would be a lie about where you are.
+    func testAPathOutsideHomeIsNotTilded() {
+        XCTAssertEqual(Titles.abbreviatedPath("/opt/homebrew/bin",
+                                              home: home, maxLength: 40),
+                       "/opt/homebrew/bin")
+    }
+
+    /// A near-miss must not be mistaken for a match: /Users/ryan_smith is a
+    /// different person's home.
+    func testAHomePrefixThatIsNotAPathBoundaryIsNotTilded() {
+        XCTAssertEqual(Titles.abbreviatedPath("/Users/ryan_smith/x",
+                                              home: home, maxLength: 40),
+                       "/Users/ryan_smith/x")
+    }
+
+    /// The last component is what tells you where you are; it survives.
+    func testMiddleTruncationKeepsTheLastComponent() throws {
+        let long = "/Users/ryan_s/code/active/skylight/Sources/SkylightCore/Subscriptions"
+        let result = try XCTUnwrap(
+            Titles.abbreviatedPath(long, home: home, maxLength: 28))
+        XCTAssertTrue(result.hasSuffix("Subscriptions"), result)
+        XCTAssertTrue(result.count <= 28, "\(result.count): \(result)")
+        XCTAssertTrue(result.contains("…"), result)
+    }
+
+    /// A single component longer than the budget cannot be split without
+    /// lying about the name, so it is returned whole.
+    func testAnOverlongSingleComponentIsNotMangled() {
+        let name = "/" + String(repeating: "x", count: 40)
+        XCTAssertEqual(Titles.abbreviatedPath(name, home: home, maxLength: 10),
+                       String(repeating: "x", count: 40))
+    }
+
+    func testRootAndEmptyEdgeCases() {
+        XCTAssertEqual(Titles.abbreviatedPath("/", home: home, maxLength: 20), "/")
+        XCTAssertNil(Titles.abbreviatedPath("", home: home, maxLength: 20))
+        XCTAssertNil(Titles.abbreviatedPath("   ", home: home, maxLength: 20))
+    }
+
+    func testTrailingSlashDoesNotProduceAnEmptyTail() {
+        XCTAssertEqual(Titles.abbreviatedPath("/Users/ryan_s/code/",
+                                              home: home, maxLength: 40),
+                       "~/code")
+    }
+}

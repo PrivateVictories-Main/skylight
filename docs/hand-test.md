@@ -70,6 +70,18 @@ then walk top to bottom. Every line should feel instant.
       warning says the session already ended.
 - [ ] Quit: with the keeper running, ⌘Q asks nothing (sessions survive);
       the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
+- [ ] Shell integration is live: open a ⇧⌘T terminal, `cd ~/code` — the tile
+      header shows `~/code` and updates as you move. An AGENT tile shows no
+      path (its directory is a launch choice, not somewhere you navigated).
+- [ ] New terminal here: right-click a canvas near a shell tile that has cd'd
+      somewhere → "New Terminal in ~/…" appears and the new terminal starts
+      THERE. Near an agent-only area, the item is absent rather than wrong.
+- [ ] Kind-aware defaults: after cd'ing a shell to ~/code, ⇧⌘T starts in
+      ~/code; a new agent still starts in the last project directory, not
+      wherever the shell wandered.
+- [ ] zsh setup survives: a terminal opened in Skylight still has your
+      aliases, prompt and $ZDOTDIR-based config (the integration must restore
+      your own zshenv, not replace it).
 - [ ] Subscriptions, third state: in ⌘T's Agent CLI list, Claude Code and
       Codex show who is signed in ("ryans51105@gmail.com · max", "Signed in");
       the other NINE CLIs say nothing at all (not "unknown") — two harnesses

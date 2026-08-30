@@ -107,3 +107,46 @@ public enum Titles {
         }
     }
 }
+
+public extension Titles {
+    /// A working directory, shortened to fit a tile header without lying
+    /// about where you are.
+    ///
+    /// Two rules earn their keep. The tilde is only applied at a real path
+    /// BOUNDARY — `/Users/ryan_smith` merely starts with `/Users/ryan_s` and
+    /// belongs to somebody else. And truncation always keeps the LAST
+    /// component, because that is the part that answers "where am I"; losing
+    /// it to a middle ellipsis leaves a header that is decorative.
+    ///
+    /// nil for a path that is not one.
+    static func abbreviatedPath(_ path: String, home: String,
+                                maxLength: Int) -> String? {
+        var path = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return nil }
+        // A trailing slash would leave an empty last component.
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+
+        var display = path
+        if path == home {
+            display = "~"
+        } else if !home.isEmpty, path.hasPrefix(home + "/") {
+            display = "~" + path.dropFirst(home.count)
+        }
+        guard display.count > maxLength else { return display }
+
+        // Keep the tail whole; drop whole components off the front.
+        var components = display.split(separator: "/", omittingEmptySubsequences: false)
+        guard let last = components.last, !last.isEmpty else { return display }
+        // A single component that alone exceeds the budget cannot be split
+        // without inventing a name — show it whole rather than mangled.
+        guard components.count > 1, last.count < maxLength else { return String(last) }
+
+        while components.count > 2 {
+            components.removeFirst(components.first?.isEmpty == true ? 2 : 1)
+            let candidate = "…/" + components.joined(separator: "/")
+            if candidate.count <= maxLength { return candidate }
+            if components.count <= 1 { break }
+        }
+        return "…/" + String(last)
+    }
+}

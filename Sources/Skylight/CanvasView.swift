@@ -376,6 +376,17 @@ struct CanvasView: View {
         }
         if !menu.items.isEmpty { menu.addItem(.separator()) }
         add("Terminal") { spawn(TerminalSpec(), nil) }
+        // A shell where you already are. The single most-missed everyday
+        // terminal gesture, and it only became possible once shell
+        // integration started reporting the working directory.
+        if let cwd = state.nearestWorkingDirectory(on: boardID, to: contentPoint),
+           let shown = Titles.abbreviatedPath(
+            cwd, home: FileManager.default.homeDirectoryForCurrentUser.path,
+            maxLength: 34) {
+            add("New Terminal in \(shown)") {
+                spawn(TerminalSpec(workingDirectory: cwd), nil)
+            }
+        }
         let installed = Catalog.harnesses.filter {
             state.sessions.cachedResolveHarness($0.id) != nil
         }
@@ -895,7 +906,15 @@ struct TileView: View {
             Text(instance.name)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-            Spacer()
+                .lineLimit(1)
+            // Where this terminal actually is. Only for a shell: an agent's
+            // directory is a launch decision, not something you navigate, and
+            // a path on an agent header is noise.
+            if instance.spec.kind == .shell,
+               let terminal = state.sessions.existingTerminal(for: instance.id) {
+                CwdCaption(terminal: terminal)
+            }
+            Spacer(minLength: 4)
             Button {
                 state.focusedInstance = instance.id
             } label: {

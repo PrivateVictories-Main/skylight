@@ -843,6 +843,38 @@ struct MissingHarnessBanner: View {
     }
 }
 
+/// Where a terminal currently IS, for a tile header.
+///
+/// Its own view purely to hold the `@ObservedObject`: the working directory
+/// belongs to the terminal, not to AppState, so a header that read it inline
+/// would render once and then freeze — the same reason `TitleCaption` exists.
+///
+/// Nothing here spawns anything: callers pass a terminal that has already
+/// been opened.
+struct CwdCaption: View {
+    @ObservedObject var terminal: TerminalViewState
+    var maxLength = 28
+
+    private var display: String? {
+        guard let cwd = terminal.workingDirectory else { return nil }
+        return Titles.abbreviatedPath(
+            cwd,
+            home: FileManager.default.homeDirectoryForCurrentUser.path,
+            maxLength: maxLength)
+    }
+
+    var body: some View {
+        if let display {
+            Text(display)
+                .font(.system(size: 10.5, design: .monospaced))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .truncationMode(.head)
+                .help(terminal.workingDirectory ?? "")
+        }
+    }
+}
+
 /// Hosts the store-owned terminal NSView. The ghostty surface (and its shell
 /// process) lives exactly as long as the store keeps the view — navigation
 /// only reparents it.

@@ -167,6 +167,10 @@ final class AppState: ObservableObject {
         // Every stored property is initialized before `self` is read.
         if selection == nil { selection = instances.first.map { .item($0.id) } }
 
+        sessions.onWorkingDirectory = { [weak self] id, path in
+            guard let self, let instance = self.instance(id) else { return }
+            self.noteWorkingDirectory(path, kind: instance.spec.kind)
+        }
         sessions.onBell = { [weak self] id in
             guard let self, !self.isVisible(id) else { return }
             self.attention.insert(id)
@@ -450,6 +454,12 @@ final class AppState: ObservableObject {
     /// presets, and the New sheet all use. Records the combo locally so the
     /// most-used launch can become a one-click recommendation.
     func launch(_ spec: TerminalSpec, name: String? = nil) {
+        var spec = spec
+        // A shell continues where you were; an agent opens on the last
+        // project. Only when the caller did not choose for itself.
+        if spec.workingDirectory == nil {
+            spec.workingDirectory = defaultWorkingDirectory(for: spec.kind)
+        }
         let instance = TerminalInstance(
             name: Names.numbered(base: name ?? Self.defaultName(for: spec),
                                  among: instances.map(\.name)), spec: spec)
@@ -553,6 +563,48 @@ final class AppState: ObservableObject {
             selection = fallbackSelection
         }
         persist()
+    }
+
+    /// The working directory of the tile nearest a point on a board, for
+    /// "new terminal here". Nearest by centre distance, and only from a
+    /// terminal that has actually reported one — an agent's directory is a
+    /// launch decision rather than a place you navigated to, so shells only.
+    func nearestWorkingDirectory(on boardID: UUID, to point: CGPoint) -> String? {
+        guard let board = canvases.first(where: { $0.id == boardID }) else { return nil }
+        return board.tiles
+            .compactMap { tile -> (CGFloat, String)? in
+                guard let instance = instance(tile.itemID),
+                      instance.spec.kind == .shell,
+                      let cwd = sessions.existingTerminal(for: tile.itemID)?
+                        .workingDirectory
+                else { return nil }
+                let centre = CGPoint(x: tile.frame.midX, y: tile.frame.midY)
+                return (hypot(centre.x - point.x, centre.y - point.y), cwd)
+            }
+            .min { $0.0 < $1.0 }?.1
+    }
+
+    /// The last directory a SHELL reported, and the last an AGENT was given —
+    /// what KindPolicy hands a new terminal of each kind. Updated as sessions
+    /// report; never persisted, because a stale directory from last week is
+    /// worse than home.
+    private(set) var lastShellDirectory: String?
+    private(set) var lastProjectDirectory: String?
+
+    func noteWorkingDirectory(_ path: String, kind: InstanceKind) {
+        switch kind {
+        case .shell: lastShellDirectory = path
+        case .agent: lastProjectDirectory = path
+        }
+    }
+
+    /// Where a new terminal of this kind should start.
+    func defaultWorkingDirectory(for kind: InstanceKind) -> String {
+        KindPolicy.defaultWorkingDirectory(
+            for: kind,
+            home: FileManager.default.homeDirectoryForCurrentUser.path,
+            lastShellDir: lastShellDirectory,
+            lastProjectDir: lastProjectDirectory)
     }
 
     /// Somewhere honest to land after a delete: a free terminal full-window,
@@ -824,6 +876,7 @@ final class LiveSessionStore {
     private var terminals: [UUID: TerminalViewState] = [:]
     private var terminalNSViews: [UUID: TerminalView] = [:]
     private var bellObservers: [UUID: AnyCancellable] = [:]
+    private var cwdObservers: [UUID: AnyCancellable] = [:]
     private var resolvedHarnesses: [String: String?] = [:]
     private var cachedShells: [Shell]?
     private var launchOutcomes: [UUID: LaunchOutcome] = [:]
@@ -940,6 +993,11 @@ final class LiveSessionStore {
     }
 
     func launchOutcome(for id: UUID) -> LaunchOutcome? { launchOutcomes[id] }
+
+    /// Fired when a terminal reports where it is (OSC 7, via shell
+    /// integration). Shells only in practice — an agent binary does not emit
+    /// it — which is exactly the split the caller wants.
+    var onWorkingDirectory: ((UUID, String) -> Void)?
 
     /// Fired when a terminal rings the bell (a CLI is done / needs input).
     var onBell: ((UUID) -> Void)?
@@ -1261,6 +1319,15 @@ final class LiveSessionStore {
         terminals[instance.id] = state
         // The terminal bell is how agent CLIs signal "done / needs input".
         let id = instance.id
+        // Where this session is, remembered so the NEXT terminal of the same
+        // kind can start there. Observed like the bell — the value belongs to
+        // the terminal, and a poll would be a timer.
+        cwdObservers[id] = state.$workingDirectory
+            .compactMap { $0 }
+            .removeDuplicates()
+            .sink { [weak self] path in
+                self?.onWorkingDirectory?(id, path)
+            }
         bellObservers[id] = state.$bellCount
             .dropFirst()
             .sink { [weak self] _ in self?.onBell?(id) }
@@ -1290,6 +1357,7 @@ final class LiveSessionStore {
         terminals.removeValue(forKey: id)
         terminalNSViews.removeValue(forKey: id)
         bellObservers.removeValue(forKey: id)
+        cwdObservers.removeValue(forKey: id)
         launchOutcomes.removeValue(forKey: id)
         surfaceVisibility.removeValue(forKey: id)
         // Ending the instance ends its kept session — delete means delete,
