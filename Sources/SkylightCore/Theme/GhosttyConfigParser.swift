@@ -1,0 +1,147 @@
+import Foundation
+
+/// A ghostty config, read for its LOOK.
+///
+/// This is the highest-fidelity importer there is, because Skylight's internal
+/// theme model is ghostty's model — nothing is being translated, only read.
+/// It is also the one whose fixture is the machine this was built on: if it
+/// cannot read Ryan's own `~/.config/ghostty/config`, nothing below it is
+/// worth trusting.
+///
+/// `theme = NAME` is returned as a REFERENCE rather than resolved here: the
+/// bundled catalogue lives in the engine package, and SkylightCore stays free
+/// of it. The caller resolves the name and merges, so the explicit colour
+/// lines in a config still win over the theme it names — ghostty's own rule.
+public struct ParsedGhosttyConfig: Equatable, Sendable {
+    public var theme: SkylightTheme
+    /// `theme = NAME`
+    public var themeReference: String?
+    /// `theme = light:X,dark:Y`
+    public var lightThemeReference: String?
+    public var darkThemeReference: String?
+}
+
+public enum GhosttyConfigParser {
+    /// nil when the file says nothing about appearance at all. A config full
+    /// of window sizes is not a theme, and returning a black one invented from
+    /// defaults would be worse than admitting there is nothing here.
+    public static func parse(_ contents: String, name: String) -> ParsedGhosttyConfig? {
+        var theme = SkylightTheme(name: name, source: .ghostty,
+                                  background: Color8(r: 0, g: 0, b: 0),
+                                  foreground: Color8(r: 255, g: 255, b: 255))
+        var sawLookKey = false
+        var skipped: Set<String> = []
+        var themeReference: String?
+        var lightReference: String?
+        var darkReference: String?
+        /// An alpha channel smuggled inside `background` becomes opacity — but
+        /// only if the file never states one outright.
+        var alphaOpacity: Double?
+        var explicitOpacity: Double?
+        /// Repeated `font-family` is a FALLBACK CHAIN in ghostty; the head of
+        /// it is the face the user chose, so the first one wins here even
+        /// though every other key is last-wins.
+        var fontFamilySet = false
+
+        for rawLine in contents.split(separator: "\n", omittingEmptySubsequences: false) {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty, !line.hasPrefix("#") else { continue }
+            guard let separator = line.firstIndex(of: "=") else { continue }
+            let key = line[line.startIndex..<separator]
+                .trimmingCharacters(in: .whitespaces).lowercased()
+            let value = line[line.index(after: separator)...]
+                .trimmingCharacters(in: .whitespaces)
+            guard !key.isEmpty else { continue }
+
+            switch ThemeKeyPolicy.decide(key) {
+            case .refused:
+                skipped.insert(key)
+                continue
+            case .ignored:
+                continue
+            case .importable:
+                break
+            }
+
+            sawLookKey = true
+            switch key {
+            case "background":
+                guard let colour = Color8(value) else { sawLookKey = false; continue }
+                theme.background = colour.rgb
+                alphaOpacity = colour.opacity
+            case "foreground":
+                if let colour = Color8(value) { theme.foreground = colour.rgb }
+            case "cursor-color":
+                theme.cursor = Color8(value)?.rgb
+            case "cursor-text":
+                theme.cursorText = Color8(value)?.rgb
+            case "selection-background":
+                theme.selectionBackground = Color8(value)?.rgb
+            case "selection-foreground":
+                theme.selectionForeground = Color8(value)?.rgb
+            case "bold-color":
+                theme.bold = Color8(value)?.rgb
+            case "palette":
+                // `palette = N=#RRGGBB`
+                guard let split = value.firstIndex(of: "=") else { continue }
+                let index = Int(value[value.startIndex..<split]
+                    .trimmingCharacters(in: .whitespaces))
+                let colour = Color8(String(value[value.index(after: split)...]))
+                if let index, let colour, (0...255).contains(index) {
+                    theme.palette[index] = colour.rgb
+                }
+            case "background-opacity":
+                explicitOpacity = Double(value)
+            case "background-blur", "background-blur-radius":
+                theme.backgroundBlur = Int(value)
+            case "font-family":
+                if !fontFamilySet, !value.isEmpty {
+                    theme.fontFamily = value
+                    fontFamilySet = true
+                }
+            case "font-size":
+                theme.fontSize = Double(value)
+            case "cursor-style":
+                theme.cursorStyle = value
+            case "cursor-style-blink":
+                theme.cursorBlink = value == "true"
+            case "window-padding-x":
+                theme.paddingX = Int(value)
+            case "window-padding-y":
+                theme.paddingY = Int(value)
+            case "minimum-contrast":
+                theme.minimumContrast = Double(value)
+            case "theme":
+                // `theme = light:X,dark:Y` or `theme = NAME`.
+                if value.contains("light:") || value.contains("dark:") {
+                    for part in value.split(separator: ",") {
+                        let piece = part.trimmingCharacters(in: .whitespaces)
+                        if piece.hasPrefix("light:") {
+                            lightReference = String(piece.dropFirst(6))
+                                .trimmingCharacters(in: .whitespaces)
+                        } else if piece.hasPrefix("dark:") {
+                            darkReference = String(piece.dropFirst(5))
+                                .trimmingCharacters(in: .whitespaces)
+                        }
+                    }
+                } else {
+                    themeReference = value
+                }
+            default:
+                continue
+            }
+        }
+
+        let hasThemeReference = themeReference != nil
+            || lightReference != nil || darkReference != nil
+        guard sawLookKey || hasThemeReference else { return nil }
+
+        // An explicit background-opacity outranks an alpha channel: one is a
+        // statement, the other a side effect of how the colour was written.
+        theme.backgroundOpacity = explicitOpacity ?? alphaOpacity
+        theme.skipped = skipped.sorted()
+        return ParsedGhosttyConfig(theme: theme, themeReference: themeReference,
+                                   lightThemeReference: lightReference,
+                                   darkThemeReference: darkReference)
+    }
+}
