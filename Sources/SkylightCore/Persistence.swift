@@ -45,16 +45,14 @@ public enum WorkspacePersistence {
         var seen = Set<UUID>()
         state.canvases = state.canvases.map { board in
             var board = board
-            board.tiles = board.tiles.filter {
-                ids.contains($0.itemID) && seen.insert($0.itemID).inserted
-            }
-            // Single residency now spans free tiles AND docked slots. Docking
-            // opened a second way to claim the same instance twice — as a
-            // tile and as a rail slot, or on two different boards — and one
-            // live terminal NSView claimed twice is the precise bug this
-            // whole function exists to prevent. The `seen` set is shared with
-            // the tile pass above on purpose: whichever the file listed first
-            // keeps it.
+            // DOCK SLOTS ARE CLAIMED FIRST, and the order is the whole point.
+            //
+            // Running the tile pass first is what deleted every rail on every
+            // load: it claimed the instance for its tile entry, and the dock
+            // slot then looked like a duplicate and was dropped, emptying the
+            // rail. `dock()` no longer leaves a tile entry behind, so the
+            // clash only arises in a hand-edited file — and there the dock
+            // has to win, because it is the shape a rail depends on.
             var docks: [DockEdge: DockRail] = [:]
             for edge in DockEdge.allCases {
                 guard var rail = board.docks[edge] else { continue }
@@ -64,6 +62,9 @@ public enum WorkspacePersistence {
                 if !rail.slots.isEmpty { docks[edge] = rail }
             }
             board.docks = DockLayout.normalized(docks)
+            board.tiles = board.tiles.filter {
+                ids.contains($0.itemID) && seen.insert($0.itemID).inserted
+            }
             return board
         }
         state.selectedInstance = state.selectedInstance.flatMap { ids.contains($0) ? $0 : nil }

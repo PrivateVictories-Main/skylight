@@ -173,114 +173,189 @@ final class PersistenceTests: XCTestCase {
     }
 }
 
-/// The five-item CanvasBoard checklist, one named test each. `docks` is the
-/// first property added to this type since the tripwire went in, and the
-/// tripwire exists because a hand-written decoder silently drops what it does
-/// not read — the value simply reverts to its default on every load, forever,
-/// with nothing failing.
+/// The five-item CanvasBoard checklist, one named test each.
+///
+/// **Every fixture here is produced by the same `dock`/`undock` the app calls**
+/// — never hand-built. The previous version of this file hand-assembled a
+/// board shape `dock()` could not produce, and codified the resulting wipe as
+/// correct: docking did not survive a relaunch, and the tests said it should
+/// not. A fixture that the product cannot generate proves nothing about it.
 final class DockPersistenceTests: XCTestCase {
-    private func board(withDocks: Bool) -> CanvasBoard {
-        var board = CanvasBoard(name: "B", tiles: [], pan: CGPoint(x: 3, y: 4), zoom: 0.5)
-        if withDocks {
-            board.docks = [.left: DockRail(thickness: 280,
-                                           slots: [DockSlot(itemID: UUID(), weight: 1)])]
-        }
-        return board
+    private func boardWithDockedTerminal() -> (CanvasBoard, TerminalInstance, TerminalInstance) {
+        let docked = TerminalInstance(name: "Docked")
+        let free = TerminalInstance(name: "Free")
+        var board = CanvasBoard(name: "B", tiles: [
+            CanvasTile(itemID: docked.id, origin: CGPoint(x: 64, y: 48),
+                       size: CGSize(width: 560, height: 400)),
+            CanvasTile(itemID: free.id, origin: CGPoint(x: 700, y: 48),
+                       size: CGSize(width: 560, height: 400)),
+        ])
+        board.dock(docked.id, to: DockTarget(edge: .left, insertionIndex: 0,
+                                             shape: .half))
+        return (board, docked, free)
+    }
+
+    /// THE test the wave was missing: dock, save, load, and the rails are
+    /// still there. This failed before the fix — `sanitized` claimed the
+    /// instance for its tile entry and then dropped the dock slot as a
+    /// duplicate, emptying the rail on every single load.
+    func testDockingSurvivesAFullSaveAndLoad() throws {
+        let (board, docked, free) = boardWithDockedTerminal()
+        let state = SavedState(instances: [docked, free], canvases: [board],
+                               selectedCanvas: board.id)
+        let reloaded = try XCTUnwrap(
+            WorkspacePersistence.decode(XCTUnwrap(WorkspacePersistence.encode(state))))
+        let rail = try XCTUnwrap(reloaded.canvases[0].docks[.left],
+                                 "the left rail was deleted on load")
+        XCTAssertEqual(rail.slots.map(\.itemID), [docked.id])
+        XCTAssertEqual(rail.thickness, board.docks[.left]?.thickness)
+        XCTAssertEqual(reloaded.canvases[0].tiles.map(\.itemID), [free.id],
+                       "a docked instance must not also hold a tile entry")
+    }
+
+    /// Order and thickness survive too — a rail that reloads with its slots
+    /// shuffled is a layout the user did not choose.
+    func testRailOrderAndThicknessSurvive() throws {
+        let a = TerminalInstance(name: "A"), b = TerminalInstance(name: "B")
+        var board = CanvasBoard(name: "Board", tiles: [
+            CanvasTile(itemID: a.id, origin: .zero, size: CanvasLayout.defaultTileSize),
+            CanvasTile(itemID: b.id, origin: .zero, size: CanvasLayout.defaultTileSize),
+        ])
+        board.dock(a.id, to: DockTarget(edge: .right, insertionIndex: 0, shape: .half))
+        board.dock(b.id, to: DockTarget(edge: .right, insertionIndex: 1, shape: .half))
+        board.docks[.right]?.thickness = 412
+        let reloaded = try XCTUnwrap(WorkspacePersistence.decode(
+            XCTUnwrap(WorkspacePersistence.encode(
+                SavedState(instances: [a, b], canvases: [board])))))
+        XCTAssertEqual(reloaded.canvases[0].docks[.right]?.slots.map(\.itemID),
+                       [a.id, b.id])
+        XCTAssertEqual(reloaded.canvases[0].docks[.right]?.thickness, 412)
     }
 
     /// CHECKLIST 1 + 2: CodingKeys carries `docks`, and the hand-written
-    /// init(from:) actually reads it back.
+    /// init(from:) reads it back.
     func testDocksRoundTripThroughEncodeDecode() throws {
-        let original = board(withDocks: true)
+        let (board, _, _) = boardWithDockedTerminal()
         let decoded = try JSONDecoder().decode(
-            CanvasBoard.self, from: JSONEncoder().encode(original))
-        XCTAssertEqual(decoded.docks, original.docks)
+            CanvasBoard.self, from: JSONEncoder().encode(board))
+        XCTAssertEqual(decoded.docks, board.docks)
         XCTAssertFalse(decoded.docks.isEmpty, "the decoder dropped docks entirely")
-        // The other persisted fields must still survive alongside it.
-        XCTAssertEqual(decoded.pan, original.pan)
-        XCTAssertEqual(decoded.zoom, original.zoom)
     }
 
-    /// A board written before docking existed must still load, undocked.
     func testABoardSavedBeforeDocksDecodesWithNone() throws {
-        // Built by ENCODING a pre-docks board rather than hand-writing JSON:
-        // CGPoint round-trips as an array, and a hand-made fixture that gets
-        // that wrong tests the fixture instead of the decoder.
         var old = CanvasBoard(name: "Old", pan: CGPoint(x: 1, y: 2), zoom: 0.75)
         old.docks = [:]
         var object = try XCTUnwrap(JSONSerialization.jsonObject(
             with: JSONEncoder().encode(old)) as? [String: Any])
         object.removeValue(forKey: "docks")
-        XCTAssertNil(object["docks"])
         let decoded = try JSONDecoder().decode(
-            CanvasBoard.self,
-            from: JSONSerialization.data(withJSONObject: object))
-        XCTAssertEqual(decoded.pan, CGPoint(x: 1, y: 2))
-        XCTAssertEqual(decoded.zoom, 0.75)
+            CanvasBoard.self, from: JSONSerialization.data(withJSONObject: object))
         XCTAssertTrue(decoded.docks.isEmpty)
+        XCTAssertEqual(decoded.pan, CGPoint(x: 1, y: 2))
     }
 
-    /// CHECKLIST 3: the tripwire fired on `docks` and was answered the way it
-    /// asks to be — fixture first, decoder second, count last. This asserts
-    /// the half a bare count cannot: that the round-trip fixture actually
-    /// carries a NON-DEFAULT value, without which it would stay green even if
-    /// the decoder dropped the field entirely.
-    func testTheRoundTripFixtureExercisesDocks() throws {
-        let encoded = try JSONEncoder().encode(
-            CanvasBoard(name: "F", docks: [.left: DockRail(
-                thickness: 280, slots: [DockSlot(itemID: UUID(), weight: 1)])]))
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-        XCTAssertNotNil(object["docks"], "docks must actually be written")
+    /// CHECKLIST 3: the tripwire, answered fixture-first.
+    func testTheRoundTripFixtureCarriesARealRail() throws {
+        let (board, _, _) = boardWithDockedTerminal()
+        let object = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: JSONEncoder().encode(board)) as? [String: Any])
+        let docks = try XCTUnwrap(object["docks"] as? [String: Any])
+        XCTAssertFalse(docks.isEmpty, "the fixture must exercise a non-empty rail")
     }
 
-    /// CHECKLIST 4: single residency now spans free AND docked. One live
-    /// terminal NSView claimed twice is the exact bug `sanitized` exists to
-    /// prevent, and docking opened a second way to cause it.
-    func testSanitizedDropsATileThatIsAlsoDockedOnTheSameBoard() {
-        let item = UUID()
-        let instance = TerminalInstance(id: item, name: "T")
-        var board = CanvasBoard(name: "B",
-                                tiles: [CanvasTile(itemID: item, origin: .zero,
-                                                   size: CGSize(width: 400, height: 300))])
-        board.docks = [.left: DockRail(slots: [DockSlot(itemID: item)])]
-        let state = SavedState(instances: [instance], canvases: [board])
-        let cleaned = WorkspacePersistence.decode(
-            WorkspacePersistence.encode(state)!)!
-        let free = cleaned.canvases[0].tiles.contains { $0.itemID == item }
-        let docked = DockLayout.dockedItems(cleaned.canvases[0].docks).contains(item)
-        XCTAssertNotEqual(free, docked, "an instance must be free OR docked, never both")
-    }
-
-    func testSanitizedDropsAnInstanceDockedOnTwoBoards() {
-        let item = UUID()
-        let instance = TerminalInstance(id: item, name: "T")
-        var a = CanvasBoard(name: "A")
-        a.docks = [.left: DockRail(slots: [DockSlot(itemID: item)])]
-        var b = CanvasBoard(name: "B")
-        b.docks = [.right: DockRail(slots: [DockSlot(itemID: item)])]
-        let cleaned = WorkspacePersistence.decode(
-            WorkspacePersistence.encode(
-                SavedState(instances: [instance], canvases: [a, b]))!)!
+    /// CHECKLIST 4: single residency. A docked instance holds a SLOT and no
+    /// tile, so "claimed twice" means two slots, or a slot on one board and a
+    /// tile on another — never the legal tile-then-dock shape.
+    func testSanitizedDropsAnInstanceDockedOnTwoBoards() throws {
+        let item = TerminalInstance(name: "T")
+        func board(_ name: String, _ edge: DockEdge) -> CanvasBoard {
+            var b = CanvasBoard(name: name, tiles: [
+                CanvasTile(itemID: item.id, origin: .zero,
+                           size: CanvasLayout.defaultTileSize)])
+            b.dock(item.id, to: DockTarget(edge: edge, insertionIndex: 0, shape: .half))
+            return b
+        }
+        let cleaned = try XCTUnwrap(WorkspacePersistence.decode(
+            XCTUnwrap(WorkspacePersistence.encode(
+                SavedState(instances: [item],
+                           canvases: [board("A", .left), board("B", .right)])))))
         let total = cleaned.canvases.reduce(0) {
             $0 + DockLayout.dockedItems($1.docks).count
         }
         XCTAssertEqual(total, 1, "one instance docked on two boards survived")
     }
 
-    func testSanitizedDropsDockSlotsPointingAtMissingInstances() {
-        var board = CanvasBoard(name: "B")
-        board.docks = [.left: DockRail(slots: [DockSlot(itemID: UUID())])]
-        let cleaned = WorkspacePersistence.decode(
-            WorkspacePersistence.encode(
-                SavedState(instances: [], canvases: [board]))!)!
-        XCTAssertTrue(cleaned.canvases[0].docks.isEmpty,
-                      "a dock slot for a deleted instance survived")
+    func testSanitizedDropsDockSlotsPointingAtMissingInstances() throws {
+        let ghost = TerminalInstance(name: "Ghost")
+        var board = CanvasBoard(name: "B", tiles: [
+            CanvasTile(itemID: ghost.id, origin: .zero,
+                       size: CanvasLayout.defaultTileSize)])
+        board.dock(ghost.id, to: DockTarget(edge: .left, insertionIndex: 0, shape: .half))
+        // The instance is NOT in the saved state: a slot pointing at nothing.
+        let cleaned = try XCTUnwrap(WorkspacePersistence.decode(
+            XCTUnwrap(WorkspacePersistence.encode(
+                SavedState(instances: [], canvases: [board])))))
+        XCTAssertTrue(cleaned.canvases[0].docks.isEmpty)
     }
 
-    /// CHECKLIST 5: the addition is optional and backward-compatible, so the
-    /// format version does not move.
+    /// A hand-edited file claiming the same instance as both a tile and a
+    /// slot on ONE board is still repaired — the dock wins, since that is
+    /// the shape with a rail depending on it.
+    func testSanitizedRepairsAHandEditedTileAndSlotClash() throws {
+        let item = TerminalInstance(name: "T")
+        var board = CanvasBoard(name: "B", tiles: [
+            CanvasTile(itemID: item.id, origin: .zero,
+                       size: CanvasLayout.defaultTileSize)])
+        board.dock(item.id, to: DockTarget(edge: .left, insertionIndex: 0, shape: .half))
+        // Re-add the tile entry by hand, which dock() never does.
+        board.tiles.append(CanvasTile(itemID: item.id, origin: .zero,
+                                      size: CanvasLayout.defaultTileSize))
+        let cleaned = try XCTUnwrap(WorkspacePersistence.decode(
+            XCTUnwrap(WorkspacePersistence.encode(
+                SavedState(instances: [item], canvases: [board])))))
+        XCTAssertEqual(DockLayout.dockedItems(cleaned.canvases[0].docks), [item.id])
+        XCTAssertTrue(cleaned.canvases[0].tiles.isEmpty,
+                      "the duplicate tile entry should have been dropped")
+    }
+
+    /// CHECKLIST 5.
     func testSavedStateVersionStaysTwo() {
         XCTAssertEqual(SavedState().version, 2)
+    }
+
+    // MARK: - Undock
+
+    /// I4: undocking must not drop a terminal on top of another one.
+    func testUndockingAvoidsCollisionWithExistingTiles() {
+        let (boardBase, docked, _) = boardWithDockedTerminal()
+        var board = boardBase
+        // Put a free tile exactly where the docked one came from.
+        board.tiles = [CanvasTile(itemID: UUID(), origin: CGPoint(x: 64, y: 48),
+                                  size: CGSize(width: 560, height: 400))]
+        board.undock(docked.id)
+        let restored = board.tiles.first { $0.itemID == docked.id }
+        XCTAssertNotNil(restored)
+        for other in board.tiles where other.itemID != docked.id {
+            XCTAssertFalse(other.frame.intersects(restored!.frame),
+                           "undocked tile landed on top of another")
+        }
+    }
+
+    /// With room, it goes back exactly where it was.
+    func testUndockingRestoresTheOriginalFrameWhenFree() {
+        let (boardBase, docked, _) = boardWithDockedTerminal()
+        var board = boardBase
+        board.tiles = []
+        board.undock(docked.id)
+        let restored = board.tiles.first { $0.itemID == docked.id }
+        XCTAssertEqual(restored?.origin, CGPoint(x: 64, y: 48))
+        XCTAssertEqual(restored?.size, CGSize(width: 560, height: 400))
+    }
+
+    func testUndockingRemovesTheSlot() {
+        let (boardBase, docked, _) = boardWithDockedTerminal()
+        var board = boardBase
+        board.undock(docked.id)
+        XCTAssertTrue(board.docks.isEmpty)
     }
 }

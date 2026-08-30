@@ -944,16 +944,9 @@ final class AppState: ObservableObject {
             canvases[other].docks = DockLayout.undocked(canvases[other].docks,
                                                         item: itemID)
         }
-        if !canvases[index].tiles.contains(where: { $0.itemID == itemID }) {
-            // Arrived from the sidebar: give it a tile entry to come back to.
-            canvases[index].tiles.append(
-                CanvasTile(itemID: itemID,
-                           origin: CanvasLayout.staggeredOrigin(
-                            existing: canvases[index].tiles.count),
-                           size: CanvasLayout.defaultTileSize))
-        }
-        canvases[index].docks = DockLayout.docked(canvases[index].docks,
-                                                  item: itemID, to: target)
+        // The board owns the transition — same code the persistence tests
+        // exercise, so a fixture can never be a shape the app cannot produce.
+        canvases[index].dock(itemID, to: target)
         selection = .canvas(canvasID)
         syncSurfaceVisibility()
         persist()
@@ -962,7 +955,7 @@ final class AppState: ObservableObject {
     /// Unpin an instance; its tile is waiting where it left it.
     func undock(_ itemID: UUID, on canvasID: UUID) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
-        canvases[index].docks = DockLayout.undocked(canvases[index].docks, item: itemID)
+        canvases[index].undock(itemID)
         syncSurfaceVisibility()
         persist()
     }

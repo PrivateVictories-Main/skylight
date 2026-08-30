@@ -57,6 +57,38 @@ public struct CanvasTile: Identifiable, Codable, Equatable, Sendable {
 }
 
 public extension CanvasBoard {
+    /// Pin an instance to an edge of this board.
+    ///
+    /// The tile entry is REMOVED and its frame remembered inside the slot. A
+    /// docked instance holding both was the rails-deleted-on-load bug:
+    /// `sanitized` claimed the id for the tile, then dropped the dock slot as
+    /// a duplicate and emptied the rail — on every single load.
+    mutating func dock(_ itemID: UUID, to target: DockTarget) {
+        let frame = tiles.first { $0.itemID == itemID }?.frame
+        tiles.removeAll { $0.itemID == itemID }
+        docks = DockLayout.docked(docks, item: itemID, to: target,
+                                  restoreFrame: frame)
+    }
+
+    /// Unpin an instance, putting its tile back where it came from — or as
+    /// close as it can get without landing on top of something else.
+    mutating func undock(_ itemID: UUID) {
+        guard DockLayout.dockedItems(docks).contains(itemID) else { return }
+        let remembered = DockLayout.restoreFrame(docks, item: itemID)
+        docks = DockLayout.undocked(docks, item: itemID)
+        guard !tiles.contains(where: { $0.itemID == itemID }) else { return }
+        let size = remembered?.size ?? CanvasLayout.defaultTileSize
+        // The board moved while it was docked — arranging, reflowing, new
+        // tiles. Its old spot may be occupied now, so the same collision
+        // dodge every other placement uses applies here too.
+        let origin = CanvasLayout.freePosition(
+            desired: remembered?.origin ?? CanvasLayout.staggeredOrigin(
+                existing: tiles.count),
+            size: size,
+            avoiding: tiles.map(\.frame))
+        tiles.append(CanvasTile(itemID: itemID, origin: origin, size: size))
+    }
+
     /// The tiles that actually live on the PLANE.
     ///
     /// A docked instance keeps its tile entry so undocking can restore the

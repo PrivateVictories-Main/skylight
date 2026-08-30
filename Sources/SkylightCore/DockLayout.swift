@@ -9,6 +9,30 @@ public enum DockEdge: String, Codable, Equatable, Hashable, Sendable, CaseIterab
     public var isVertical: Bool { self == .left || self == .right }
 }
 
+/// Without this, `[DockEdge: DockRail]` encodes as a FLAT ARRAY of
+/// alternating keys and values — Swift only writes a JSON object for
+/// dictionaries keyed by String or Int.
+///
+/// Two things that costs, both real. The saved workspace becomes unreadable
+/// at exactly the moment somebody is reading it to work out why their layout
+/// came back wrong. And the order is dictionary iteration order, so the file
+/// differs from itself between runs with no change of meaning — a workspace
+/// that rewrites its own bytes on every save, for nothing.
+extension DockEdge: CodingKeyRepresentable {
+    public var codingKey: any CodingKey { Key(stringValue: rawValue)! }
+
+    public init?<T: CodingKey>(codingKey: T) {
+        self.init(rawValue: codingKey.stringValue)
+    }
+
+    private struct Key: CodingKey {
+        var stringValue: String
+        var intValue: Int? { nil }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}
+
 /// How much of a rail a newly docked tile takes.
 ///
 /// Halves, thirds, quarters — the vocabulary from Lattice, deliberately. It
@@ -39,11 +63,21 @@ public struct DockSlot: Identifiable, Codable, Equatable, Hashable, Sendable {
     /// Share of the rail's long axis. Normalised on read — see
     /// `DockLayout.normalized`.
     public var weight: CGFloat
+    /// Where this terminal sat on the plane before it was docked, so
+    /// undocking puts it back rather than dropping it at a default.
+    ///
+    /// It lives HERE rather than as a lingering tile entry, and that is the
+    /// whole fix for the rails-deleted-on-load bug: a docked instance holds a
+    /// slot and nothing else, so "claimed twice" keeps its simple meaning and
+    /// `sanitized` has no legal duplicate to special-case.
+    public var restoreFrame: CGRect?
 
-    public init(id: UUID = UUID(), itemID: UUID, weight: CGFloat = 1) {
+    public init(id: UUID = UUID(), itemID: UUID, weight: CGFloat = 1,
+                restoreFrame: CGRect? = nil) {
         self.id = id
         self.itemID = itemID
         self.weight = weight
+        self.restoreFrame = restoreFrame
     }
 }
 
@@ -275,24 +309,56 @@ public extension DockLayout {
         return DockTarget(edge: edge, insertionIndex: insertionIndex, shape: shape)
     }
 
+    /// The smallest share a slot may hold.
+    ///
+    /// Without a floor, dropping `.full` onto a rail that already has tenants
+    /// hands the newcomer 95% and leaves the siblings a couple of dozen
+    /// points each — terminals too small to read, produced by a gesture that
+    /// said nothing about them.
+    static func minimumWeight(slotCount: Int) -> CGFloat {
+        guard slotCount > 1 else { return 1 }
+        // Never less than a quarter of an even split.
+        return (1 / CGFloat(slotCount)) * 0.25
+    }
+
     /// Dock an item, moving it if it was docked elsewhere.
     ///
     /// A terminal in two slots would be one live NSView claimed twice — the
     /// same invariant single residency protects for tiles.
     static func docked(_ docks: [DockEdge: DockRail], item: UUID,
-                       to target: DockTarget) -> [DockEdge: DockRail] {
+                       to target: DockTarget,
+                       restoreFrame: CGRect? = nil) -> [DockEdge: DockRail] {
         var docks = undocked(docks, item: item)
         var rail = docks[target.edge] ?? DockRail()
         let index = min(max(0, target.insertionIndex), rail.slots.count)
-        // The new slot's share of the rail is the shape it was dropped with;
-        // normalisation turns that into a weight against its siblings.
+        // The dropped shape is the share the newcomer ASKS for; normalisation
+        // turns it into a weight against its siblings. Capped so the ask can
+        // never squeeze the existing tenants below a readable size — `.full`
+        // onto an occupied rail would otherwise take 95% of it.
         let siblingTotal = rail.slots.reduce(0) { $0 + $1.weight }
+        let requested = target.shape.fraction
+        let count = rail.slots.count + 1
+        let floor = minimumWeight(slotCount: count)
+        let ceiling = 1 - floor * CGFloat(rail.slots.count)
+        let share = min(max(requested, floor), max(floor, ceiling))
         let weight = rail.slots.isEmpty
             ? 1
-            : max(0.05, siblingTotal * target.shape.fraction / max(0.05, 1 - target.shape.fraction))
-        rail.slots.insert(DockSlot(itemID: item, weight: weight), at: index)
+            : siblingTotal * share / max(0.01, 1 - share)
+        rail.slots.insert(
+            DockSlot(itemID: item, weight: weight, restoreFrame: restoreFrame),
+            at: index)
         docks[target.edge] = rail
         return normalized(docks)
+    }
+
+    /// The frame a docked item should return to, if we remember one.
+    static func restoreFrame(_ docks: [DockEdge: DockRail], item: UUID) -> CGRect? {
+        for rail in docks.values {
+            if let slot = rail.slots.first(where: { $0.itemID == item }) {
+                return slot.restoreFrame
+            }
+        }
+        return nil
     }
 
     /// Remove an item from whatever rail holds it, dropping a rail that ends
