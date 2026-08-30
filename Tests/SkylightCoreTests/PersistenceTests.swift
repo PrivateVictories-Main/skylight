@@ -34,6 +34,21 @@ final class PersistenceTests: XCTestCase {
         XCTAssertEqual(decoded, state)
     }
 
+    /// The companion tripwire to testV2RoundTrip's fixture contract: that
+    /// test only guards the fields its fixture SETS, so a brand-new stored
+    /// property nobody adds there would sail through the round trip on its
+    /// default. This count forces this file open the moment CanvasBoard
+    /// grows — set the new field to a non-default value in the fixture,
+    /// decode it in init(from:), then bump the number.
+    func testBoardStoredPropertyCountMatchesFixtureContract() {
+        XCTAssertEqual(Mirror(reflecting: CanvasBoard(name: "X")).children.count, 5,
+                       """
+                       CanvasBoard grew a stored property: give it a \
+                       non-default value in testV2RoundTrip, decode it in \
+                       init(from:), then bump this count.
+                       """)
+    }
+
     func testBoardPanDefaultsToZeroWhenAbsent() throws {
         // A v2 board saved before `pan`/`zoom` existed must still decode.
         let json = """
