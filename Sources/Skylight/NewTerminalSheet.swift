@@ -72,7 +72,12 @@ struct NewTerminalSheet: View {
         .frame(width: 460)
         .onAppear {
             load()
-            if state.debugSheetAgentMode { agentMode = true }
+            // Consumed, not just read: the debug hook targets ONE opening,
+            // and a sticky flag would flip every later sheet in the run.
+            if state.debugSheetAgentMode {
+                agentMode = true
+                state.debugSheetAgentMode = false
+            }
         }
         // First frame from cache (instant); truth arrives a frame later.
         .task { resample() }
