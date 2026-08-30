@@ -64,6 +64,9 @@ final class ThemeStore: ObservableObject {
         isDarkAppearance ? dark ?? light : light ?? dark
     }
 
+    /// An imported theme SHADOWS a bundled one of the same name, deliberately:
+    /// if someone brought over their own "Catppuccin Mocha", that is the one
+    /// they meant, not the catalogue's copy of it.
     private static func resolve(_ name: String?) -> SkylightTheme? {
         guard let name, !name.isEmpty else { return nil }
         if let imported = loadImported(named: name) { return imported }
@@ -80,13 +83,27 @@ final class ThemeStore: ObservableObject {
         return dir
     }()
 
-    /// A filename that cannot escape the themes directory. Theme names come
-    /// from files other people wrote; "../../../etc" is a name too.
+    /// A filename that cannot escape the themes directory, cannot be empty,
+    /// and cannot be a dotfile. Theme names come from files other people
+    /// wrote: "../../../etc" is a name, so is "", so is ".".
+    ///
+    /// Two names that differ only in punctuation DO collide here ("Solarized
+    /// Dark" and "Solarized-Dark" both become "solarized-dark"), and that is
+    /// accepted rather than solved with a hash: the file is meant to be
+    /// findable by a human, a collision costs one overwritten import of a
+    /// theme with a near-identical name, and the alternative is a directory of
+    /// unreadable filenames. A digest suffix is the fix if it ever bites.
     private static func slug(_ name: String) -> String {
-        let safe = name.unicodeScalars.map {
+        let mapped = name.unicodeScalars.map {
             CharacterSet.alphanumerics.contains($0) ? Character($0) : "-"
         }
-        return String(safe).lowercased()
+        // Collapse runs and trim: "  A  B  " must not become "--a--b--".
+        let collapsed = String(mapped).lowercased()
+            .split(separator: "-", omittingEmptySubsequences: true)
+            .joined(separator: "-")
+        // An empty or all-punctuation name would write "" (the directory
+        // itself) or ".json" (a hidden file the picker never shows).
+        return collapsed.isEmpty ? "theme" : collapsed
     }
 
     private static func loadImported(named name: String) -> SkylightTheme? {
@@ -169,7 +186,11 @@ final class ThemeStore: ObservableObject {
             appearance: defaults.string(forKey: Appearance.appearanceKey),
             windowBackground: defaults.string(forKey: Appearance.backgroundKey),
             terminalOpacity: defaults.object(forKey: Appearance.terminalOpacityKey) as? Double,
-            terminalFontSize: defaults.integer(forKey: Appearance.fontSizeKey),
+            // object(forKey:), like the opacity above: integer(forKey:)
+            // returns 0 for "never set", which is indistinguishable from the
+            // 0 that MEANS "engine default" — so a revert could not tell
+            // "restore the default" from "restore nothing".
+            terminalFontSize: defaults.object(forKey: Appearance.fontSizeKey) as? Int,
             fontFamily: defaults.string(forKey: Appearance.fontFamilyKey),
             lightTheme: defaults.string(forKey: lightKey),
             darkTheme: defaults.string(forKey: darkKey))

@@ -142,9 +142,18 @@ public enum GhosttyConfigParser {
                 theme.minimumContrast = Double(value)
             case "theme":
                 // `theme = light:X,dark:Y` or `theme = NAME`.
-                if value.contains("light:") || value.contains("dark:") {
-                    for part in value.split(separator: ",") {
-                        let piece = part.trimmingCharacters(in: .whitespaces)
+                // Decided by each PART's prefix, never by a substring of the
+                // whole: `contains("light:")` also matches a theme genuinely
+                // called "Highlight:Neon", and then neither branch sets a
+                // reference and the theme silently disappears.
+                let parts = value.split(separator: ",").map {
+                    $0.trimmingCharacters(in: .whitespaces)
+                }
+                let isDual = parts.contains {
+                    $0.hasPrefix("light:") || $0.hasPrefix("dark:")
+                }
+                if isDual {
+                    for piece in parts {
                         if piece.hasPrefix("light:") {
                             lightReference = String(piece.dropFirst(6))
                                 .trimmingCharacters(in: .whitespaces)

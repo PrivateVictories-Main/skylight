@@ -73,35 +73,52 @@ enum JSONC {
 
     /// A comma followed only by whitespace and a closing brace/bracket. Same
     /// string-awareness rule: a comma inside `"a, b"` is data.
+    ///
+    /// One pass, building the output — the previous version collected indices
+    /// and then called `remove(at:)` for each, which shifts the tail of the
+    /// array every time and turns a file with many trailing commas quadratic.
+    /// A pending comma is simply held until we know what follows it.
     private static func removingTrailingCommas(_ text: String) -> String {
-        var characters = Array(text)
+        var output = String()
+        output.reserveCapacity(text.count)
         var inString = false
         var escaped = false
-        var removals: [Int] = []
+        /// A comma seen outside a string, plus the whitespace after it, held
+        /// until the next non-space character decides its fate.
+        var pending: String?
 
-        for index in characters.indices {
-            let character = characters[index]
+        for character in text {
             if inString {
+                output.append(character)
                 if escaped { escaped = false }
                 else if character == "\\" { escaped = true }
                 else if character == "\"" { inString = false }
                 continue
             }
-            if character == "\"" { inString = true; continue }
-            guard character == "," else { continue }
-            var lookahead = index + 1
-            while lookahead < characters.count,
-                  characters[lookahead].isWhitespace {
-                lookahead += 1
+
+            if var held = pending {
+                if character.isWhitespace {
+                    held.append(character)
+                    pending = held
+                    continue
+                }
+                // Dropped when it closed nothing but the container.
+                if character != "}", character != "]" {
+                    output.append(held)
+                }
+                pending = nil
             }
-            if lookahead < characters.count,
-               characters[lookahead] == "}" || characters[lookahead] == "]" {
-                removals.append(index)
+
+            if character == "," {
+                pending = ","
+                continue
             }
+            if character == "\"" { inString = true }
+            output.append(character)
         }
 
-        for index in removals.reversed() { characters.remove(at: index) }
-        return String(characters)
+        if let held = pending { output.append(held) }
+        return output
     }
 
     /// Parse a JSONC document into a dictionary, or nil if it is not one.

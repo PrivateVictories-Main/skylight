@@ -95,6 +95,18 @@ final class WarpThemeParserTests: XCTestCase {
         XCTAssertEqual(theme.foreground, Color8("#cdd6f4"))
     }
 
+    /// YAML written with tabs (or a mix) is still YAML people have on disk.
+    /// Counting only spaces read every nested key as top-level, which put the
+    /// colour names outside the terminal_colors block entirely.
+    func testTabIndentedFileParses() throws {
+        let theme = try XCTUnwrap(WarpThemeParser.parse(
+            "background: '#000000'\nforeground: '#ffffff'\n"
+            + "terminal_colors:\n\tnormal:\n\t\tblack: '#111111'\n\t\tred: '#222222'\n",
+            name: "t"))
+        XCTAssertEqual(theme.palette[0], Color8("#111111"))
+        XCTAssertEqual(theme.palette[1], Color8("#222222"))
+    }
+
     func testFileWithoutBackgroundOrForegroundIsNil() {
         XCTAssertNil(WarpThemeParser.parse("details: darker", name: "t"))
         XCTAssertNil(WarpThemeParser.parse("", name: "t"))

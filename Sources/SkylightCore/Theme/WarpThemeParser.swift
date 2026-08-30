@@ -46,7 +46,10 @@ public enum WarpThemeParser {
                     .trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
             }
 
-            let indent = line.prefix { $0 == " " }.count
+            // Tabs count as indentation too. Measuring only spaces read every
+            // tab-indented nested key as top-level, which put the colour names
+            // outside the terminal_colors block and lost the whole palette.
+            let indent = line.prefix { $0 == " " || $0 == "\t" }.count
 
             if indent == 0 {
                 inTerminalColors = key == "terminal_colors"

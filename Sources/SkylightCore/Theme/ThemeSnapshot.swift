@@ -83,6 +83,13 @@ public struct ThemeSnapshotStore: Equatable, Sendable {
     /// A hand edit made after an import. It is the newest deliberate act and
     /// stands on its own, but it must NOT cost the ability to undo the import
     /// — someone nudging the opacity slider has not agreed to keep the theme.
+    ///
+    /// It does NOTHING today, deliberately and visibly: "keep the snapshot" is
+    /// already what happens if nobody calls anything. The method exists so the
+    /// call sites state the intent, and so the test that pins it has something
+    /// to call — but nobody should read `store.noteHandEdit()` and believe a
+    /// rule is being enforced here. The day a hand edit needs to affect the
+    /// snapshot, this is where it goes and the test is already written.
     public mutating func noteHandEdit() {}
 
     /// Restore, and consume. Offering "revert" again once everything is back

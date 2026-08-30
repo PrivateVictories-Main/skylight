@@ -126,6 +126,17 @@ final class GhosttyConfigParserTests: XCTestCase {
         XCTAssertNil(parsed.themeReference)
     }
 
+    /// `contains("light:")` also matches a theme literally named
+    /// "Highlight:Something" — then neither branch sets a reference and the
+    /// theme silently vanishes. The split has to be on the PART's prefix.
+    func testAThemeNameContainingLightIsNotMistakenForADualTheme() throws {
+        let parsed = try XCTUnwrap(
+            GhosttyConfigParser.parse("theme = Highlight:Neon", name: "c"))
+        XCTAssertEqual(parsed.themeReference, "Highlight:Neon")
+        XCTAssertNil(parsed.lightThemeReference)
+        XCTAssertNil(parsed.darkThemeReference)
+    }
+
     func testCommentsBlanksAndInlineWhitespaceIgnored() throws {
         let parsed = try XCTUnwrap(GhosttyConfigParser.parse("""
         # a comment

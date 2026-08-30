@@ -234,11 +234,26 @@ final class ChromeTonesTests: XCTestCase {
 
     func testEveryToneStaysInRangeOnExtremes() {
         // Clamping, not wrapping: pure black must not roll over to white.
+        // (Asserting Color8(tone.hex) != nil proved nothing — hex always
+        // round-trips, so that assertion could not fail for any input.)
         for background in ["#000000", "#ffffff", "#010101", "#fefefe"] {
+            let base = Color8(background)!
             let tones = ThemeApplication.chromeTones(for: theme(background, "#808080"))
-            for tone in [tones.panelBacking, tones.canvasBackdrop,
-                         tones.header, tones.hairline, tones.dotGrid] {
-                XCTAssertNotNil(Color8(tone.hex), background)
+            for (label, tone) in [("backdrop", tones.canvasBackdrop),
+                                  ("header", tones.header),
+                                  ("hairline", tones.hairline),
+                                  ("dotGrid", tones.dotGrid)] {
+                XCTAssertTrue((0...255).contains(tone.luminance),
+                              "\(label) out of range on \(background)")
+                // A step away from black must be LIGHTER and a step away from
+                // white DARKER — wrapping would show up as the opposite.
+                if base.luminance < 128 {
+                    XCTAssertGreaterThanOrEqual(tone.luminance, base.luminance - 0.5,
+                                                "\(label) wrapped on \(background)")
+                } else {
+                    XCTAssertLessThanOrEqual(tone.luminance, base.luminance + 0.5,
+                                             "\(label) wrapped on \(background)")
+                }
             }
         }
     }
