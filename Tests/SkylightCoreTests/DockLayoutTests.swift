@@ -69,6 +69,50 @@ final class DockLayoutTests: XCTestCase {
         }
     }
 
+    /// I5, and the part capping only the NEWCOMER missed: three `.full`
+    /// drops onto one rail left slots of 18, 750 and 131 points. The floor
+    /// has to hold across EVERY slot after normalisation, not just for the
+    /// arrival that triggered it, because each insertion re-squeezes the ones
+    /// already there.
+    func testNoSlotIsEverSqueezedBelowTheFloor() {
+        for drops in 2...8 {
+            var docks: [DockEdge: DockRail] = [:]
+            for _ in 0..<drops {
+                docks = DockLayout.docked(docks, item: UUID(),
+                                          to: DockTarget(edge: .left,
+                                                         insertionIndex: 0,
+                                                         shape: .full))
+            }
+            let floor = DockLayout.minimumWeight(slotCount: drops)
+            for slot in docks[.left]?.slots ?? [] {
+                XCTAssertGreaterThanOrEqual(slot.weight, floor - 0.0001,
+                                            "\(drops) drops produced \(slot.weight)")
+            }
+        }
+    }
+
+    /// The same property in points, which is what a person actually sees.
+    func testRepeatedFullDropsStayReadable() {
+        var docks: [DockEdge: DockRail] = [:]
+        for _ in 0..<4 {
+            docks = DockLayout.docked(docks, item: UUID(),
+                                      to: DockTarget(edge: .left,
+                                                     insertionIndex: 0, shape: .full))
+        }
+        let heights = DockLayout.frames(
+            docks: docks, viewport: CGSize(width: 1400, height: 900))
+            .docked.values.map(\.height)
+        // Asserted against the RULE, not a number I liked the look of: the
+        // floor is a third of an even split, so four slots down 900 points
+        // can be no smaller than 75.
+        let smallest = 900 * DockLayout.minimumWeight(slotCount: 4)
+        for height in heights {
+            XCTAssertGreaterThanOrEqual(height, smallest - 0.001,
+                                        "\(heights.map { Int($0) })")
+        }
+        XCTAssertGreaterThanOrEqual(smallest, 70)
+    }
+
     // MARK: - Shapes (Lattice's vocabulary)
 
     func testShapeFractions() {

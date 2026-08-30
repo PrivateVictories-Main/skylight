@@ -161,6 +161,7 @@ public enum DockLayout {
                 } else {
                     rail.slots = repaired
                 }
+                rail.slots = flooring(rail.slots)
             }
             result[edge] = rail
         }
@@ -320,6 +321,57 @@ public extension DockLayout {
         return DockTarget(edge: edge, insertionIndex: insertionIndex, shape: shape)
     }
 
+    /// Raise every slot to at least the floor, taking the difference from
+    /// the ones with room to give.
+    ///
+    /// Capping the ARRIVING slot is not enough: each insertion re-divides
+    /// what is left, so a sequence of drops squeezes the earliest tenants
+    /// smaller and smaller. Three `.full` drops on one rail produced slots of
+    /// 18, 750 and 131 points — a terminal nobody can read, arrived at
+    /// gradually. This runs after normalisation, so it is the last word.
+    ///
+    /// Iterated because lifting one slot lowers the others; bounded because a
+    /// fixed point is not guaranteed in floating point.
+    private static func flooring(_ slots: [DockSlot]) -> [DockSlot] {
+        guard slots.count > 1 else { return slots }
+        let floor = minimumWeight(slotCount: slots.count)
+        var slots = slots
+        for _ in 0..<8 {
+            let deficient = slots.filter { $0.weight < floor }
+            guard !deficient.isEmpty else { break }
+            let needed = deficient.reduce(0) { $0 + (floor - $1.weight) }
+            let donors = slots.filter { $0.weight > floor }
+            let available = donors.reduce(0) { $0 + ($1.weight - floor) }
+            guard available > 0 else {
+                // Everything is at or under the floor: an even split is the
+                // only arrangement left that keeps them all usable.
+                let share = 1 / CGFloat(slots.count)
+                return slots.map { slot in
+                    var slot = slot
+                    slot.weight = share
+                    return slot
+                }
+            }
+            let take = min(1, needed / available)
+            slots = slots.map { slot in
+                var slot = slot
+                if slot.weight < floor {
+                    slot.weight = floor
+                } else {
+                    slot.weight -= (slot.weight - floor) * take
+                }
+                return slot
+            }
+        }
+        let total = slots.reduce(0) { $0 + $1.weight }
+        guard abs(total - 1) > 1e-9, total > 0 else { return slots }
+        return slots.map { slot in
+            var slot = slot
+            slot.weight /= total
+            return slot
+        }
+    }
+
     /// The smallest share a slot may hold.
     ///
     /// Without a floor, dropping `.full` onto a rail that already has tenants
@@ -328,8 +380,12 @@ public extension DockLayout {
     /// said nothing about them.
     static func minimumWeight(slotCount: Int) -> CGFloat {
         guard slotCount > 1 else { return 1 }
-        // Never less than a quarter of an even split.
-        return (1 / CGFloat(slotCount)) * 0.25
+        // A THIRD of an even split. A quarter was the first attempt and it
+        // was still too mean: four slots down a 900pt rail left the smallest
+        // at 56 points, which is about three rows of text — technically
+        // present, practically useless. A third gives 75, which is a terminal
+        // you can actually read something in.
+        return (1 / CGFloat(slotCount)) / 3
     }
 
     /// Dock an item, moving it if it was docked elsewhere.
