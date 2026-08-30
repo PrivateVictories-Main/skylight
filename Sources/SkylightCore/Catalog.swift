@@ -53,7 +53,6 @@ public enum Catalog {
                     format: .json(loggedInKey: "loggedIn",
                                   accountKey: "email",
                                   planKey: "subscriptionType"),
-                    credentialMarkers: ["~/.claude.json"],
                     loginCommand: ["auth", "login"])),
         Harness(id: "codex", displayName: "Codex",
                 installCommand: "npm i -g @openai/codex", brand: .openai,
@@ -63,7 +62,6 @@ public enum Catalog {
                     statusCommand: ["login", "status"],
                     format: .text(signedIn: ["Logged in using"],
                                   signedOut: ["Not logged in", "not logged in"]),
-                    credentialMarkers: ["~/.codex/auth.json"],
                     loginCommand: ["login"])),
         Harness(id: "gemini", displayName: "Gemini CLI",
                 installCommand: "npm i -g @google/gemini-cli", brand: .gemini,
@@ -71,7 +69,6 @@ public enum Catalog {
                 // Not installed here, so nothing could be verified: markers
                 // only, from its documented credential path.
                 authProbe: AuthProbe(
-                    credentialMarkers: ["~/.gemini/oauth_creds.json"],
                     loginCommand: [])),
         Harness(id: "copilot", displayName: "Copilot CLI",
                 installCommand: "npm i -g @github/copilot", brand: .copilot,
@@ -89,7 +86,6 @@ public enum Catalog {
                 // for, on a background queue, with a timeout as the only way
                 // out. This is what "nil means we will not guess" is for.
                 authProbe: AuthProbe(
-                    credentialMarkers: ["~/.cursor"],
                     loginCommand: ["login"])),
         Harness(id: "qwen", displayName: "Qwen Code",
                 installCommand: "npm i -g @qwen-code/qwen-code", brand: .qwen),
@@ -98,11 +94,11 @@ public enum Catalog {
         Harness(id: "opencode", displayName: "OpenCode",
                 installCommand: "npm i -g opencode-ai", brand: .opencode,
                 autonomyFlag: "--auto",
-                // `opencode auth list` was not verified (the run was killed
-                // alongside the cursor-agent hang), so no status command —
-                // markers and a login only.
+                // `opencode auth list` was not verified (its run died
+                // alongside the cursor-agent hang), so no status command: it
+                // reports .unknown and stays launchable, which is exactly
+                // right for a CLI we cannot ask about.
                 authProbe: AuthProbe(
-                    credentialMarkers: ["~/.local/share/opencode/auth.json"],
                     loginCommand: ["auth", "login"])),
         // The 2026 wave — real adoption, official CLIs, no official vector
         // marks yet (brand nil = glyph, per the never-fake-a-mark rule).

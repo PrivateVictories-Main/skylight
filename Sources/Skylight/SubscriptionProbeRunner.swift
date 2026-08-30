@@ -23,9 +23,8 @@ import SkylightCore
 ///   and the read never finishes.
 /// - **Never on the main thread**, never on a timer, never at render.
 ///
-/// It reads stdout AND stderr, and never a credential file — the marker check
-/// below is `fileExists`, and there is deliberately no code path in this file
-/// that could open one.
+/// It reads stdout AND stderr and nothing else. It does not open, stat, or
+/// even name a credential file anywhere.
 enum SubscriptionProbeRunner {
     /// Generous enough for a cold node start, short enough that a hung CLI is
     /// a two-second annoyance rather than a wedged Settings pane.
@@ -42,32 +41,18 @@ enum SubscriptionProbeRunner {
             return Outcome(state: .unknown, checkedAt: Date())
         }
 
-        let markersPresent = probe.credentialMarkers.contains { marker in
-            // EXISTENCE ONLY. There is no read anywhere in this function, and
-            // that is the point — the contents are the user's credentials and
-            // Skylight has no business with them.
-            FileManager.default.fileExists(atPath: expand(marker))
-        }
-
+        // Nothing to ask, so nothing is claimed. Skylight no longer stats the
+        // user's credential paths at all: once markers were forbidden from
+        // deciding anything — which they could never honestly do — carrying
+        // and touching those paths was surface with no purpose behind it.
         guard let arguments = probe.statusCommand else {
-            return Outcome(state: AuthProbe.state(stdout: nil, exitCode: nil,
-                                                  markersPresent: markersPresent,
-                                                  probe: probe),
-                           checkedAt: Date())
+            return Outcome(state: .unknown, checkedAt: Date())
         }
 
         let (stdout, stderr, exitCode) = run(binaryPath, arguments)
         return Outcome(state: AuthProbe.state(stdout: stdout, stderr: stderr,
-                                              exitCode: exitCode,
-                                              markersPresent: markersPresent,
-                                              probe: probe),
+                                              exitCode: exitCode, probe: probe),
                        checkedAt: Date())
-    }
-
-    private static func expand(_ path: String) -> String {
-        guard path.hasPrefix("~/") else { return path }
-        return FileManager.default.homeDirectoryForCurrentUser.path
-            + String(path.dropFirst(1))
     }
 
     /// Returns (stdout, stderr, exitCode). A timeout returns a nil exit code,

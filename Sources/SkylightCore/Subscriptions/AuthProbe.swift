@@ -18,10 +18,7 @@ public enum ProbeOutputFormat: Equatable, Sendable {
 ///
 /// 1. `statusCommand` — the vendor's OWN read-only status subcommand, run
 ///    detached with a hard timeout and no tty.
-/// 2. `credentialMarkers` — paths whose EXISTENCE and mtime we stat. The
-///    contents are credentials and are never opened. A marker being present
-///    is not proof of a working subscription and is never treated as one.
-/// 3. `loginCommand` — what a real Skylight terminal runs so the user can sign
+/// 2. `loginCommand` — what a real Skylight terminal runs so the user can sign
 ///    in with the vendor's own flow. That terminal IS the interconnect;
 ///    Skylight holds nothing.
 ///
@@ -38,19 +35,15 @@ public struct AuthProbe: Equatable, Sendable {
     /// a second, unreviewed launch path.
     public let statusCommand: [String]?
     public let format: ProbeOutputFormat
-    /// `~`-relative paths. Stat only — never read, never parsed.
-    public let credentialMarkers: [String]
     /// Arguments for a terminal that signs the user in, or nil when the CLI
     /// signs in by simply being run.
     public let loginCommand: [String]?
 
     public init(statusCommand: [String]? = nil,
                 format: ProbeOutputFormat = .text(signedIn: [], signedOut: []),
-                credentialMarkers: [String] = [],
                 loginCommand: [String]? = nil) {
         self.statusCommand = statusCommand
         self.format = format
-        self.credentialMarkers = credentialMarkers
         self.loginCommand = loginCommand
     }
 }
@@ -61,12 +54,22 @@ public extension AuthProbe {
     /// `stat` happens above this line, which is what makes the whole decision
     /// testable from captured output.
     ///
-    /// `markersPresent` is deliberately weak evidence. A credential file on
-    /// disk may be expired, revoked, or for an account the user has since
-    /// changed — so it can move an answerless probe from "signed out" to
-    /// "unknown", and it can never on its own produce `.signedIn`. Claiming a
-    /// working subscription because a file exists is exactly the guess this
-    /// module refuses everywhere else.
+    /// **Only the CLI's own words can produce an answer.** Not the presence of
+    /// a credential file, not its absence, not anything we inferred.
+    ///
+    /// This function used to fall back to `.signedOut` whenever a probe could
+    /// not decide and no credential file was found, and that broke the rule
+    /// this module is built on in the place it hurt most: `.signedOut` dims
+    /// the row, ignores clicks, disables Create, and banners running surfaces.
+    /// So a guessed path being wrong did not degrade gracefully — it made a
+    /// working CLI unusable.
+    ///
+    /// It was wrong on this very machine. opencode is installed and signed in;
+    /// its declared marker path did not exist, so it was reported "Not signed
+    /// in" and could not be launched at all.
+    ///
+    /// Now: a CLI that says nothing we recognise leaves us `.unknown`, which
+    /// is usable, and the CLI gets to speak for itself when it runs.
     /// stdout and stderr BOTH, because a CLI's idea of where a status line
     /// belongs is its own. Verified on 2026-08-30: `codex login status` prints
     /// "Logged in using ChatGPT" on **stderr** and leaves stdout empty, so a
@@ -76,16 +79,11 @@ public extension AuthProbe {
     ///
     /// stdout is preferred where both speak: a CLI that answers on stdout and
     /// warns on stderr must not be read off the warning.
-    static func state(stdout: String?, stderr: String? = nil, exitCode: Int32?,
-                      markersPresent: Bool, probe: AuthProbe) -> SubscriptionState {
-        /// No usable answer. A marker keeps it honest at "unknown"; without
-        /// one, signed out is the only reading left.
-        func undecided() -> SubscriptionState {
-            markersPresent ? .unknown : .signedOut
-        }
-
-        // No probe was declared, or none was run: markers are all there is.
-        guard probe.statusCommand != nil else { return undecided() }
+    static func state(stdout: String?, stderr: String?, exitCode: Int32?,
+                      probe: AuthProbe) -> SubscriptionState {
+        // No status command means no evidence of any kind. Not "signed out" —
+        // unknown, and launchable.
+        guard probe.statusCommand != nil else { return .unknown }
         // A CLI that failed has not told us anything, whatever it printed on
         // the way down.
         guard exitCode == 0 else { return .unknown }
@@ -113,7 +111,11 @@ public extension AuthProbe {
                     return .signedIn(account: nil, plan: nil)
                 }
             }
-            return undecided()
+            // Words we do not recognise are a question we failed to answer,
+            // exactly like unparseable JSON below — never a negative answer.
+            // A codex release that rewords its status line must not silently
+            // block a CLI that works.
+            return .unknown
 
         case let .json(loggedInKey, accountKey, planKey):
             for stream in streams {
