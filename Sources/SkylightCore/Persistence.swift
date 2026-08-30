@@ -48,6 +48,22 @@ public enum WorkspacePersistence {
             board.tiles = board.tiles.filter {
                 ids.contains($0.itemID) && seen.insert($0.itemID).inserted
             }
+            // Single residency now spans free tiles AND docked slots. Docking
+            // opened a second way to claim the same instance twice — as a
+            // tile and as a rail slot, or on two different boards — and one
+            // live terminal NSView claimed twice is the precise bug this
+            // whole function exists to prevent. The `seen` set is shared with
+            // the tile pass above on purpose: whichever the file listed first
+            // keeps it.
+            var docks: [DockEdge: DockRail] = [:]
+            for edge in DockEdge.allCases {
+                guard var rail = board.docks[edge] else { continue }
+                rail.slots = rail.slots.filter {
+                    ids.contains($0.itemID) && seen.insert($0.itemID).inserted
+                }
+                if !rail.slots.isEmpty { docks[edge] = rail }
+            }
+            board.docks = DockLayout.normalized(docks)
             return board
         }
         state.selectedInstance = state.selectedInstance.flatMap { ids.contains($0) ? $0 : nil }

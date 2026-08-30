@@ -65,17 +65,22 @@ public struct CanvasBoard: Identifiable, Codable, Equatable, Sendable {
     /// Persisted zoom scale (screen = content × zoom + pan) so a canvas
     /// reopens at exactly the magnification you left it at.
     public var zoom: CGFloat
+    /// Terminals pinned to the edges of the VIEWPORT rather than placed on
+    /// the board. They do not pan and they do not zoom — see DockLayout.
+    public var docks: [DockEdge: DockRail]
 
     public init(id: UUID = UUID(), name: String, tiles: [CanvasTile] = [],
-                pan: CGPoint = .zero, zoom: CGFloat = 1) {
+                pan: CGPoint = .zero, zoom: CGFloat = 1,
+                docks: [DockEdge: DockRail] = [:]) {
         self.id = id
         self.name = name
         self.tiles = tiles
         self.pan = pan
         self.zoom = zoom
+        self.docks = docks
     }
 
-    enum CodingKeys: String, CodingKey { case id, name, tiles, pan, zoom }
+    enum CodingKeys: String, CodingKey { case id, name, tiles, pan, zoom, docks }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -90,6 +95,9 @@ public struct CanvasBoard: Identifiable, Codable, Equatable, Sendable {
         // loudly: the value simply reverts to its default on every load.
         pan = try container.decodeIfPresent(CGPoint.self, forKey: .pan) ?? .zero
         zoom = try container.decodeIfPresent(CGFloat.self, forKey: .zoom) ?? 1
+        // Boards saved before docking existed decode with no rails.
+        docks = try container.decodeIfPresent([DockEdge: DockRail].self,
+                                              forKey: .docks) ?? [:]
     }
 }
 
@@ -108,8 +116,14 @@ public struct LaunchPreset: Identifiable, Codable, Equatable, Sendable {
 /// Where an instance lives — always derived from board membership, never
 /// stored, so the sidebar can't drift out of sync with the canvases.
 public enum Residency {
+    /// An instance lives on the board that holds it as a free tile OR docks
+    /// it to an edge. Docking is a way of being ON a board, not an escape
+    /// from residency — the sidebar has to keep telling the truth.
     public static func board(of instanceID: UUID, in boards: [CanvasBoard]) -> UUID? {
-        boards.first { $0.tiles.contains { $0.itemID == instanceID } }?.id
+        boards.first { board in
+            board.tiles.contains { $0.itemID == instanceID }
+                || DockLayout.dockedItems(board.docks).contains(instanceID)
+        }?.id
     }
 
     public static func free(_ instances: [TerminalInstance],
@@ -117,8 +131,17 @@ public enum Residency {
         instances.filter { board(of: $0.id, in: boards) == nil }
     }
 
+    /// Free tiles first in board order, then whatever the rails hold — so a
+    /// docked terminal still appears under its canvas in the sidebar.
     public static func residents(of board: CanvasBoard,
                                  from instances: [TerminalInstance]) -> [TerminalInstance] {
-        board.tiles.compactMap { tile in instances.first { $0.id == tile.itemID } }
+        let free = board.tiles.compactMap { tile in
+            instances.first { $0.id == tile.itemID }
+        }
+        let dockedIDs = DockEdge.allCases.flatMap { edge in
+            board.docks[edge]?.slots.map(\.itemID) ?? []
+        }
+        let docked = dockedIDs.compactMap { id in instances.first { $0.id == id } }
+        return free + docked
     }
 }
