@@ -115,8 +115,12 @@ extension Server {
                 // births in 60ms — most surfaces report their settled grid
                 // immediately — and only an actually-moving grid (a second,
                 // DIFFERENT size cancels the fast timer via its generation)
-                // pays the full quiet period.
-                let settle = generation == 1 ? 0.06 : 0.2
+                // pays the full quiet period. Several spawns pending at once
+                // means a cold multi-tile restore — the one launch where
+                // layout is slowest and a fast birth risks a post-birth
+                // resize redrawing the first prompt — so they all wait out
+                // the full quiet period; a lone sheet spawn stays snappy.
+                let settle = generation == 1 && pendingSpawns.count == 1 ? 0.06 : 0.2
                 // Identity- and generation-guarded: a kill-then-respawn
                 // replaces the pending object, and a newer size obsoletes
                 // this timer.
