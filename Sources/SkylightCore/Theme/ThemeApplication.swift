@@ -114,6 +114,67 @@ public enum ThemeApplication {
                           fontSize: theme.fontSize)
     }
 
+    /// The app's own surfaces, tinted from the theme instead of from system
+    /// colours. Without this an import recolours the TEXT and leaves the app
+    /// around it wearing macOS grey — which reads as a terminal pasted into
+    /// somebody else's window rather than one app.
+    public struct ChromeTones: Equatable, Sendable {
+        /// Sits under the (translucent) terminal surface.
+        public let panelBacking: Color8
+        /// The canvas plane behind the tiles.
+        public let canvasBackdrop: Color8
+        /// Tile headers and bars.
+        public let header: Color8
+        /// Hairline borders.
+        public let hairline: Color8
+        /// The endless-canvas dot field.
+        public let dotGrid: Color8
+    }
+
+    /// Derived by stepping AWAY from the background — lighter on a dark theme,
+    /// darker on a light one. A fixed offset in one direction works for half
+    /// the themes in the catalogue and disappears for the other half, and a
+    /// hairline you cannot see is the whole glass look gone.
+    public static func chromeTones(for theme: SkylightTheme) -> ChromeTones {
+        let background = theme.background
+        // Which way is "away". Mid-grey backgrounds are the ambiguous case;
+        // going darker there keeps chrome reading as recessed.
+        let towardLight = background.luminance < 128
+
+        func stepped(_ amount: Double) -> Color8 {
+            let delta = towardLight ? amount : -amount
+            func channel(_ value: UInt8) -> UInt8 {
+                UInt8(min(255, max(0, Double(value) + delta)).rounded())
+            }
+            return Color8(r: channel(background.r),
+                          g: channel(background.g),
+                          b: channel(background.b))
+        }
+
+        // The panel backing IS the terminal background: it sits directly under
+        // a translucent surface, and any drift reads as a dirty smear instead
+        // of depth.
+        return ChromeTones(
+            panelBacking: background,
+            canvasBackdrop: stepped(10),
+            header: stepped(18),
+            // The hairline has to clear the contrast floor on pure black and
+            // pure white alike — 32 is the smallest step that does on both.
+            hairline: stepped(32),
+            // Texture, not content: pulled toward the foreground far enough to
+            // be seen, never far enough to compete with text sitting on it.
+            dotGrid: mixed(background, theme.foreground, amount: 0.28))
+    }
+
+    /// A linear blend, used only for the dot grid — the one tone that wants to
+    /// belong to the foreground rather than step away from the background.
+    private static func mixed(_ a: Color8, _ b: Color8, amount: Double) -> Color8 {
+        func channel(_ x: UInt8, _ y: UInt8) -> UInt8 {
+            UInt8((Double(x) + (Double(y) - Double(x)) * amount).rounded())
+        }
+        return Color8(r: channel(a.r, b.r), g: channel(a.g, b.g), b: channel(a.b, b.b))
+    }
+
     /// One clamp, one precedence rule, one place. Reduce Transparency outranks
     /// the theme outright — the system setting is the top of the order, and an
     /// import is not allowed to reach over it.

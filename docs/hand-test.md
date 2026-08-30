@@ -123,6 +123,10 @@ then walk top to bottom. Every line should feel instant.
       pick a bundled theme — all three recolour at once, no relaunch, and the
       choice survives a relaunch. Opening a NEW terminal shows the theme from
       its first frame (no flash of the old colours).
+- [ ] Theme tints the APP, not just the text: with a strong theme (try a
+      light one on a dark system), the canvas plane, the dot grid, the panel
+      backing behind a terminal and the hairline outlines all move with it.
+      Hairlines must stay visible on a pure-black AND a pure-white theme.
 - [ ] Theme vs Reduce Transparency: with a translucent theme applied, turn
       Reduce Transparency ON — every surface goes solid live and stays solid
       through a theme change; OFF restores the theme's own translucency.

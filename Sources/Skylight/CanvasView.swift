@@ -179,7 +179,7 @@ struct CanvasView: View {
                 arrange(in: viewport)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+        .background(ThemeTint.canvasBackdrop.opacity(0.55))
         .navigationTitle(board?.name ?? "Canvas")
         // The dot grid reaches the window top: no toolbar band, no safe-area
         // gap between the glass and the traffic lights.
@@ -658,6 +658,11 @@ private struct DotGrid: View {
     let pan: CGPoint
     let zoom: CGFloat
 
+    /// Read once per render rather than inside the draw loop — the grid paints
+    /// hundreds of dots per frame and every one of them would otherwise
+    /// re-resolve the active theme.
+    private var dotColor: Color { ThemeTint.dotGrid }
+
     var body: some View {
         Canvas { context, size in
             let step = CanvasLayout.grid * 4 * CanvasZoom.safe(zoom)
@@ -672,7 +677,7 @@ private struct DotGrid: View {
                 while y < size.height + step {
                     context.fill(
                         Path(ellipseIn: CGRect(x: x - 1, y: y - 1, width: 2, height: 2)),
-                        with: .color(.secondary.opacity(0.18))
+                        with: .color(dotColor)
                     )
                     y += step
                 }

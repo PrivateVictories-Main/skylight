@@ -135,3 +135,70 @@ final class ThemeApplicationTests: XCTestCase {
         }
     }
 }
+
+final class ChromeTonesTests: XCTestCase {
+    private func theme(_ background: String, _ foreground: String) -> SkylightTheme {
+        SkylightTheme(name: "T", source: .ghostty,
+                      background: Color8(background)!, foreground: Color8(foreground)!)
+    }
+
+    private var mocha: SkylightTheme { theme("#1e1e2e", "#cdd6f4") }
+    private var alabaster: SkylightTheme { theme("#F7F7F7", "#000000") }
+
+    func testTonesAreDeterministic() {
+        XCTAssertEqual(ThemeApplication.chromeTones(for: mocha),
+                       ThemeApplication.chromeTones(for: mocha))
+    }
+
+    /// The panel backing sits UNDER a translucent terminal surface. If it
+    /// drifts far from the terminal's own background the glass reads as a
+    /// dirty smear rather than depth.
+    func testPanelBackingTracksTheTerminalBackground() {
+        let tones = ThemeApplication.chromeTones(for: mocha)
+        XCTAssertEqual(tones.panelBacking, mocha.background)
+    }
+
+    /// Chrome must stay legible against the surface it decorates, in BOTH
+    /// directions: a near-black theme needs lighter chrome, a near-white one
+    /// needs darker. A fixed offset works for one and vanishes for the other.
+    func testChromeContrastFloorIsRespectedOnLightAndDarkThemes() {
+        for theme in [mocha, alabaster, self.theme("#000000", "#ffffff"),
+                      self.theme("#ffffff", "#000000")] {
+            let tones = ThemeApplication.chromeTones(for: theme)
+            let gap = abs(tones.hairline.luminance - theme.background.luminance)
+            XCTAssertGreaterThan(gap, 12,
+                                 "hairline vanished on \(theme.background.hex)")
+            let headerGap = abs(tones.header.luminance - theme.background.luminance)
+            XCTAssertGreaterThan(headerGap, 4,
+                                 "header vanished on \(theme.background.hex)")
+        }
+    }
+
+    func testDarkThemesGetLighterChromeAndLightThemesDarker() {
+        let dark = ThemeApplication.chromeTones(for: mocha)
+        XCTAssertGreaterThan(dark.hairline.luminance, mocha.background.luminance)
+        let light = ThemeApplication.chromeTones(for: alabaster)
+        XCTAssertLessThan(light.hairline.luminance, alabaster.background.luminance)
+    }
+
+    /// The dot grid is background texture: present, never competing with the
+    /// text sitting on top of it.
+    func testDotGridSitsBetweenBackgroundAndForeground() {
+        let tones = ThemeApplication.chromeTones(for: mocha)
+        let low = min(mocha.background.luminance, mocha.foreground.luminance)
+        let high = max(mocha.background.luminance, mocha.foreground.luminance)
+        XCTAssertGreaterThan(tones.dotGrid.luminance, low)
+        XCTAssertLessThan(tones.dotGrid.luminance, high)
+    }
+
+    func testEveryToneStaysInRangeOnExtremes() {
+        // Clamping, not wrapping: pure black must not roll over to white.
+        for background in ["#000000", "#ffffff", "#010101", "#fefefe"] {
+            let tones = ThemeApplication.chromeTones(for: theme(background, "#808080"))
+            for tone in [tones.panelBacking, tones.canvasBackdrop,
+                         tones.header, tones.hairline, tones.dotGrid] {
+                XCTAssertNotNil(Color8(tone.hex), background)
+            }
+        }
+    }
+}

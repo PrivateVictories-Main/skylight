@@ -599,7 +599,7 @@ private struct TerminalPanel: ViewModifier {
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
-            .background(Color(nsColor: .textBackgroundColor).opacity(backingOpacity),
+            .background(ThemeTint.panelBacking.opacity(backingOpacity),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .onReceive(NSWorkspace.shared.notificationCenter.publisher(
                 for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in
@@ -611,7 +611,7 @@ private struct TerminalPanel: ViewModifier {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(Color.primary.opacity(0.20), lineWidth: 0.5)
+                    .strokeBorder(ThemeTint.hairline(opacity: 0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { SurfaceBanners(instance: instance) }
             // A sliver of window glass around all four sides so the hairline
