@@ -282,11 +282,33 @@ final class AuthProbeTests: XCTestCase {
             .unknown)
     }
 
-    func testLoginCommandsAreOfferedForEveryProbeWeHave() {
-        // A probe that can say "signed out" and cannot offer a way in is a
-        // dead end with a label on it.
-        for harness in Catalog.harnesses where harness.authProbe != nil {
-            XCTAssertNotNil(harness.authProbe?.loginCommand, harness.id)
+    /// NON-EMPTY, not merely non-nil. `loginCommand: []` sailed through an
+    /// XCTAssertNotNil and produced a harness with no Sign in button — a dead
+    /// end with a label on it.
+    func testLoginCommandsAreOfferedAndAreNotEmpty() {
+        for harness in Catalog.harnesses {
+            guard let probe = harness.authProbe else { continue }
+            let login = try? XCTUnwrap(probe.loginCommand, harness.id)
+            XCTAssertFalse(login?.isEmpty ?? true,
+                           "\(harness.id) declares a probe with no way to sign in")
         }
+    }
+
+    /// The rule the empty array violated, stated as the property that matters:
+    /// anything that can be reported signed-out must have a way back.
+    func testEveryHarnessThatCanReportSignedOutOffersAWayIn() {
+        for harness in Catalog.harnesses {
+            guard let probe = harness.authProbe, probe.statusCommand != nil
+            else { continue }
+            XCTAssertNotNil(SubscriptionCopy.signInSpec(for: harness),
+                            "\(harness.id) can say signed-out with no Sign in")
+        }
+    }
+
+    /// Gemini authenticates by API key as often as by login, so an
+    /// unverified login command would have been a guess on top of a guess.
+    /// It carries no probe at all now — .unknown, launchable, honest.
+    func testGeminiCarriesNoProbeRatherThanAnEmptyOne() {
+        XCTAssertNil(Catalog.harness("gemini")?.authProbe)
     }
 }

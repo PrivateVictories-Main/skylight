@@ -65,11 +65,15 @@ public enum Catalog {
                     loginCommand: ["login"])),
         Harness(id: "gemini", displayName: "Gemini CLI",
                 installCommand: "npm i -g @google/gemini-cli", brand: .gemini,
-                autonomyFlag: "--yolo",
-                // Not installed here, so nothing could be verified: markers
-                // only, from its documented credential path.
-                authProbe: AuthProbe(
-                    loginCommand: [])),
+                autonomyFlag: "--yolo"),
+                // NO probe. Gemini is not installed here, so nothing could be
+                // verified — and it authenticates by API key at least as often
+                // as by login, so a login command would have been a guess on
+                // top of a guess. It reports .unknown, stays launchable, and
+                // says nothing. An empty loginCommand was worse than none: it
+                // slipped past a not-nil assertion and produced a harness that
+                // could be marked signed-out with no way back.
+
         Harness(id: "copilot", displayName: "Copilot CLI",
                 installCommand: "npm i -g @github/copilot", brand: .copilot,
                 autonomyFlag: "--allow-all-tools"),
