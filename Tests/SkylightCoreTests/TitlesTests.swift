@@ -151,3 +151,38 @@ final class AbbreviatedPathTests: XCTestCase {
                        "~/code")
     }
 }
+
+final class DurationTests: XCTestCase {
+    private func d(_ seconds: Double) -> String? {
+        Titles.duration(nanos: UInt64(seconds * 1_000_000_000))
+    }
+
+    /// A command that finished instantly does not deserve a badge — showing
+    /// "3ms" after every `ls` is clutter, not information.
+    func testTrivialDurationsAreNotWorthShowing() {
+        XCTAssertNil(d(0))
+        XCTAssertNil(d(0.4))
+        XCTAssertNil(Titles.duration(nanos: 0))
+    }
+
+    func testSecondsAndSubSeconds() {
+        XCTAssertEqual(d(1.2), "1.2s")
+        XCTAssertEqual(d(9.9), "9.9s")
+        // Past ten seconds the tenth stops earning its character.
+        XCTAssertEqual(d(12), "12s")
+        XCTAssertEqual(d(59), "59s")
+    }
+
+    func testMinutesAndHours() {
+        XCTAssertEqual(d(60), "1m 0s")
+        XCTAssertEqual(d(95), "1m 35s")
+        XCTAssertEqual(d(3600), "1h 0m")
+        XCTAssertEqual(d(3725), "1h 2m")
+    }
+
+    /// A garbage duration must not render as a wall of digits in a header.
+    func testOverflowIsSafe() {
+        XCTAssertNotNil(Titles.duration(nanos: UInt64.max))
+        XCTAssertTrue((Titles.duration(nanos: UInt64.max)?.count ?? 99) < 12)
+    }
+}

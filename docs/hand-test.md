@@ -76,6 +76,9 @@ then walk top to bottom. Every line should feel instant.
 - [ ] New terminal here: right-click a canvas near a shell tile that has cd'd
       somewhere → "New Terminal in ~/…" appears and the new terminal starts
       THERE. Near an agent-only area, the item is absent rather than wrong.
+- [ ] Command badge: run `sleep 2` in a shell tile → a quiet "2.0s" appears
+      in the header; run `false` → "exit 1" in red beside it. An instant `ls`
+      shows nothing at all (no badge clutter for trivial commands).
 - [ ] Kind-aware defaults: after cd'ing a shell to ~/code, ⇧⌘T starts in
       ~/code; a new agent still starts in the last project directory, not
       wherever the shell wandered.

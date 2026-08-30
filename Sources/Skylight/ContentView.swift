@@ -875,6 +875,34 @@ struct CwdCaption: View {
     }
 }
 
+/// The last command's cost, when it cost anything worth saying.
+///
+/// A non-zero exit is the part people actually want and terminals usually
+/// bury — the badge says so plainly rather than making someone scroll back
+/// to find it.
+struct CommandResultBadge: View {
+    @ObservedObject var terminal: TerminalViewState
+
+    private var failed: Bool {
+        (terminal.lastCommandExitCode ?? 0) != 0
+    }
+
+    var body: some View {
+        if let duration = terminal.lastCommandDurationNanos.flatMap(Titles.duration(nanos:)) {
+            HStack(spacing: 3) {
+                if failed, let code = terminal.lastCommandExitCode {
+                    Text("exit \(code)")
+                        .foregroundStyle(.red.opacity(0.85))
+                }
+                Text(duration)
+                    .foregroundStyle(.tertiary)
+            }
+            .font(.system(size: 10, design: .monospaced))
+            .help(failed ? "The last command failed" : "How long the last command took")
+        }
+    }
+}
+
 /// Hosts the store-owned terminal NSView. The ghostty surface (and its shell
 /// process) lives exactly as long as the store keeps the view — navigation
 /// only reparents it.

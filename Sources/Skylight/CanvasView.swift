@@ -913,6 +913,7 @@ struct TileView: View {
             if instance.spec.kind == .shell,
                let terminal = state.sessions.existingTerminal(for: instance.id) {
                 CwdCaption(terminal: terminal)
+                CommandResultBadge(terminal: terminal)
             }
             Spacer(minLength: 4)
             Button {

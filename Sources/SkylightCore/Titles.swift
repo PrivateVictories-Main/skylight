@@ -150,3 +150,34 @@ public extension Titles {
         return "…/" + String(last)
     }
 }
+
+public extension Titles {
+    /// How long a command took, for a quiet badge beside the prompt.
+    ///
+    /// nil below half a second: showing "3ms" after every `ls` is clutter
+    /// wearing the costume of information. The badge exists for the command
+    /// you walked away from.
+    ///
+    /// Precision drops as the number grows — a tenth of a second matters at
+    /// 1.2s and is noise at 12s — so the string stays short enough to sit in
+    /// a header without pushing anything out.
+    static func duration(nanos: UInt64) -> String? {
+        let seconds = Double(nanos) / 1_000_000_000
+        guard seconds >= 0.5, seconds.isFinite else { return nil }
+        if seconds < 10 {
+            return String(format: "%.1fs", seconds)
+        }
+        if seconds < 60 {
+            return "\(Int(seconds.rounded()))s"
+        }
+        if seconds < 3600 {
+            let minutes = Int(seconds) / 60
+            return "\(minutes)m \(Int(seconds) % 60)s"
+        }
+        let hours = Int(seconds) / 3600
+        // Capped rather than allowed to run to five digits: a header is not
+        // the place to discover that a duration overflowed.
+        guard hours < 1000 else { return "999h+" }
+        return "\(hours)h \((Int(seconds) % 3600) / 60)m"
+    }
+}
