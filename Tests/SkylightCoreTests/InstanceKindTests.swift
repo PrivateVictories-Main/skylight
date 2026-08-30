@@ -42,3 +42,62 @@ final class InstanceKindTests: XCTestCase {
         XCTAssertEqual(set.count, 3)
     }
 }
+
+final class KindPolicyTests: XCTestCase {
+    /// Pins the EXACT strings AppState.defaultName produces today. This is the
+    /// behavior contract the move into SkylightCore must not bend: a shell
+    /// names itself after its shell, an agent after its display name, and an
+    /// unknown harness after its own id rather than a placeholder.
+    func testDefaultNameMatchesLegacyBehaviourForShellAndAgent() {
+        XCTAssertEqual(KindPolicy.defaultName(for: TerminalSpec()), "Terminal")
+        XCTAssertEqual(KindPolicy.defaultName(for: TerminalSpec(shellPath: "/bin/fish")),
+                       "fish")
+        XCTAssertEqual(KindPolicy.defaultName(for: TerminalSpec(harness: "claude")),
+                       "Claude Code")
+        XCTAssertEqual(KindPolicy.defaultName(for: TerminalSpec(harness: "cursor-agent")),
+                       "Cursor CLI")
+        // Unknown harness: its own id, never "Terminal" — the name must not
+        // quietly claim to be a shell.
+        XCTAssertEqual(KindPolicy.defaultName(for: TerminalSpec(harness: "mystery")),
+                       "mystery")
+        // A harness outranks a shell path: that is what the terminal RUNS.
+        XCTAssertEqual(
+            KindPolicy.defaultName(for: TerminalSpec(shellPath: "/bin/fish",
+                                                     harness: "codex")),
+            "Codex")
+    }
+
+    func testShellCwdPrefersLastShellDir() {
+        XCTAssertEqual(
+            KindPolicy.defaultWorkingDirectory(for: .shell, home: "/Users/x",
+                                               lastShellDir: "/tmp/work",
+                                               lastProjectDir: "/code/proj"),
+            "/tmp/work")
+    }
+
+    func testAgentCwdPrefersLastProjectDir() {
+        // Agents are project-scoped: the last PROJECT wins, not wherever a
+        // shell happened to be.
+        XCTAssertEqual(
+            KindPolicy.defaultWorkingDirectory(for: .agent(harness: "claude"),
+                                               home: "/Users/x",
+                                               lastShellDir: "/tmp/work",
+                                               lastProjectDir: "/code/proj"),
+            "/code/proj")
+    }
+
+    func testBothFallBackToHome() {
+        for kind: InstanceKind in [.shell, .agent(harness: "claude")] {
+            XCTAssertEqual(
+                KindPolicy.defaultWorkingDirectory(for: kind, home: "/Users/x",
+                                                   lastShellDir: nil,
+                                                   lastProjectDir: nil),
+                "/Users/x", "\(kind)")
+        }
+        // An empty string is not a directory — it must not beat home.
+        XCTAssertEqual(
+            KindPolicy.defaultWorkingDirectory(for: .shell, home: "/Users/x",
+                                               lastShellDir: "", lastProjectDir: ""),
+            "/Users/x")
+    }
+}

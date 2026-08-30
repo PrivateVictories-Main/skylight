@@ -416,12 +416,11 @@ final class AppState: ObservableObject {
         persist()
     }
 
+    /// The per-kind defaults live in SkylightCore, where they are pure and
+    /// pinned by test. This stays as the app's call site so nothing else has
+    /// to learn a new name.
     static func defaultName(for spec: TerminalSpec) -> String {
-        if let harness = spec.harness {
-            return Catalog.harness(harness)?.displayName ?? harness
-        }
-        if let shell = spec.shellPath { return (shell as NSString).lastPathComponent }
-        return "Terminal"
+        KindPolicy.defaultName(for: spec)
     }
 
     func rename(_ id: UUID, to newName: String) {
