@@ -295,8 +295,11 @@ struct InstanceRow: View {
                         .lineLimit(1)
                 } else if let terminal = state.sessions.existingTerminal(for: instance.id) {
                     if instance.spec.kind == .shell {
-                        // A shell's useful second line is where it IS.
-                        CwdCaption(terminal: terminal, maxLength: 30)
+                        // A shell's useful second line is where it IS — and
+                        // its live title when it cannot say (bash, or a zsh
+                        // before its first prompt).
+                        CwdCaption(terminal: terminal, maxLength: 30,
+                                   fallbackName: instance.name)
                     } else {
                         TitleCaption(name: instance.name, terminal: terminal)
                     }
@@ -903,8 +906,11 @@ struct MissingHarnessBanner: View {
 struct CwdCaption: View {
     @ObservedObject var terminal: TerminalViewState
     var maxLength = 28
+    /// The name to compare a title against, so a caption never just repeats
+    /// the row's own label back at it.
+    var fallbackName: String?
 
-    private var display: String? {
+    private var cwd: String? {
         guard let cwd = terminal.workingDirectory else { return nil }
         return Titles.abbreviatedPath(
             cwd,
@@ -912,14 +918,27 @@ struct CwdCaption: View {
             maxLength: maxLength)
     }
 
+    /// The live title, which is what this line showed before directories
+    /// existed. Kept as the fallback because bash gets no shell integration
+    /// and a zsh shows nothing until its first prompt — replacing the title
+    /// outright left both of them staring at a blank line where they used to
+    /// have information. A regular terminal must never come out of a wave
+    /// worse off than it went in.
+    private var title: String? {
+        let title = terminal.title.trimmingCharacters(in: .whitespaces)
+        guard !title.isEmpty, title != fallbackName else { return nil }
+        return title
+    }
+
     var body: some View {
-        if let display {
-            Text(display)
-                .font(.system(size: 10.5, design: .monospaced))
+        if let text = cwd ?? title {
+            Text(text)
+                .font(.system(size: 10.5,
+                              design: cwd == nil ? .default : .monospaced))
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
-                .truncationMode(.head)
-                .help(terminal.workingDirectory ?? "")
+                .truncationMode(cwd == nil ? .tail : .head)
+                .help(terminal.workingDirectory ?? terminal.title)
         }
     }
 }
@@ -936,15 +955,26 @@ struct CommandResultBadge: View {
         (terminal.lastCommandExitCode ?? 0) != 0
     }
 
+    private var duration: String? {
+        terminal.lastCommandDurationNanos.flatMap(Titles.duration(nanos:))
+    }
+
     var body: some View {
-        if let duration = terminal.lastCommandDurationNanos.flatMap(Titles.duration(nanos:)) {
+        // A FAILURE is worth saying however fast it was. It was nested inside
+        // the duration, which is suppressed below half a second — so
+        // `cat missing` failing in 4ms, the most common failure shape there
+        // is, showed nothing at all. The duration threshold exists to stop
+        // clutter, not to hide the one thing worth reporting.
+        if failed || duration != nil {
             HStack(spacing: 3) {
                 if failed, let code = terminal.lastCommandExitCode {
                     Text("exit \(code)")
                         .foregroundStyle(.red.opacity(0.85))
                 }
-                Text(duration)
-                    .foregroundStyle(.tertiary)
+                if let duration {
+                    Text(duration)
+                        .foregroundStyle(.tertiary)
+                }
             }
             .font(.system(size: 10, design: .monospaced))
             .help(failed ? "The last command failed" : "How long the last command took")

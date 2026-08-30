@@ -912,7 +912,7 @@ struct TileView: View {
             // a path on an agent header is noise.
             if instance.spec.kind == .shell,
                let terminal = state.sessions.existingTerminal(for: instance.id) {
-                CwdCaption(terminal: terminal)
+                CwdCaption(terminal: terminal, fallbackName: instance.name)
                 CommandResultBadge(terminal: terminal)
             }
             Spacer(minLength: 4)
