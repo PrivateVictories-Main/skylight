@@ -579,6 +579,9 @@ struct EmptyDetail: View {
 /// that fills the detail pane with a terminal wears this and nothing else.
 private struct TerminalPanel: ViewModifier {
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
+    /// Same reason as CanvasView: the backing and the hairline are theme
+    /// colours now, and nothing else would invalidate them.
+    @ObservedObject private var themes = ThemeStore.shared
     // The backing tracks the surface's own translucency: ghostty's
     // background-opacity composites OVER this layer, so a slider that only
     // thinned the surface would still hit a near-solid backing and read as

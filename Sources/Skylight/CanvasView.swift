@@ -42,6 +42,9 @@ private enum CanvasZoom {
 struct CanvasView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
+    /// Observed for its revision token: applying a theme must repaint the
+    /// plane and the dot grid, not wait for an unrelated redraw.
+    @ObservedObject private var themes = ThemeStore.shared
     let boardID: UUID
     /// The drag-preview copy of a board must never rearrange it.
     var reflowEnabled = true
@@ -92,7 +95,7 @@ struct CanvasView: View {
                     },
                     installsEventMonitors: reflowEnabled
                 )
-                DotGrid(pan: pan, zoom: zoom)
+                DotGrid(pan: pan, zoom: zoom, dotColor: ThemeTint.dotGrid)
                     .allowsHitTesting(false)
                 ForEach(board?.tiles ?? []) { tile in
                     if let instance = state.instance(tile.itemID) {
@@ -658,13 +661,19 @@ private struct DotGrid: View {
     let pan: CGPoint
     let zoom: CGFloat
 
-    /// Read once per render rather than inside the draw loop — the grid paints
-    /// hundreds of dots per frame and every one of them would otherwise
-    /// re-resolve the active theme.
-    private var dotColor: Color { ThemeTint.dotGrid }
+    /// The canvas repaints on every pan and zoom frame, and the theme has to
+    /// be able to change it — so it is an input, resolved ONCE by the parent
+    /// and handed down. It was a computed property read inside the draw loop,
+    /// which meant a UserDefaults read, an appearance query and a theme
+    /// resolve PER DOT, hundreds of times a frame, during the one gesture in
+    /// the app that has to stay smooth.
+    let dotColor: Color
 
     var body: some View {
         Canvas { context, size in
+            // Bound before the loops for the same reason: the closure runs per
+            // frame, the loops run per dot.
+            let dotColor = self.dotColor
             let step = CanvasLayout.grid * 4 * CanvasZoom.safe(zoom)
             // Zoomed far out the dots crowd into noise — a plain field reads
             // better than a grey haze.

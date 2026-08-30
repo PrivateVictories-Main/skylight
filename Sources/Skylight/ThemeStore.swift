@@ -15,7 +15,7 @@ import SkylightCore
 /// a second version of it to drift. (Imported themes get their own sidecar
 /// files; that arrives with the import UI.)
 @MainActor
-final class ThemeStore {
+final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
 
     static let lightKey = "themeLight"
@@ -23,6 +23,16 @@ final class ThemeStore {
 
     private(set) var light: SkylightTheme?
     private(set) var dark: SkylightTheme?
+
+    /// Bumped whenever the active theme changes.
+    ///
+    /// The terminal surfaces are pushed at directly, but the app's own chrome
+    /// is SwiftUI reading a static (`ThemeTint`) that no view depends on — so
+    /// nothing invalidated, and the canvas, dot grid and panels kept their old
+    /// tint until some unrelated state change happened to redraw them.
+    /// Repainting because the Settings window activated is not repainting; it
+    /// is a coincidence that usually looks like it worked.
+    @Published private(set) var revision = 0
 
     private init() {
         reload()
@@ -34,6 +44,7 @@ final class ThemeStore {
     func reload() {
         light = Self.resolve(UserDefaults.standard.string(forKey: Self.lightKey))
         dark = Self.resolve(UserDefaults.standard.string(forKey: Self.darkKey))
+        revision &+= 1
     }
 
     /// Set a slot by name; nil clears it back to the engine default.
