@@ -119,6 +119,13 @@ then walk top to bottom. Every line should feel instant.
       flip it ON with terminals open — window AND terminal surfaces go
       solid live; the Settings pane says the system setting is in charge;
       flip OFF → the stored glass choices return.
+- [ ] Theme applies LIVE: with 3 terminals open (one full-window, two tiles),
+      pick a bundled theme — all three recolour at once, no relaunch, and the
+      choice survives a relaunch. Opening a NEW terminal shows the theme from
+      its first frame (no flash of the old colours).
+- [ ] Theme vs Reduce Transparency: with a translucent theme applied, turn
+      Reduce Transparency ON — every surface goes solid live and stays solid
+      through a theme change; OFF restores the theme's own translucency.
 - [ ] Text Size: change it in ⌘, with terminals open — every open
       terminal reflows live at the new size, colors untouched; Default
       returns to the engine size; the choice survives relaunch.

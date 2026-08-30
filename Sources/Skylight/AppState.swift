@@ -1025,6 +1025,30 @@ final class LiveSessionStore {
         }
     }
 
+    /// The colour half of the same lane: an imported or picked theme reaches
+    /// every LIVE surface, not just the next one opened. Same 50ms coalescer
+    /// and same latest-wins reading as refreshSurfaceConfig — a theme picker
+    /// with a preview fires as fast as a slider drag does.
+    ///
+    /// `setTheme`, deliberately, and never `updateConfigSource`: that lane
+    /// replaces the whole config source WITHOUT theme composition, which is
+    /// how you wash the colours off every open terminal. The library layers
+    /// base → configuration → theme with last-key-wins, so this and
+    /// refreshSurfaceConfig can both be in flight without fighting.
+    private var themeRefreshQueued = false
+    func refreshSurfaceTheme() {
+        guard !themeRefreshQueued else { return }
+        themeRefreshQueued = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return }
+            self.themeRefreshQueued = false
+            let theme = ThemeStore.shared.terminalTheme()
+            for terminal in self.terminals.values {
+                terminal.controller.setTheme(theme)
+            }
+        }
+    }
+
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
         if let existing = terminals[instance.id] { return existing }
         let config = Self.surfaceConfig()
@@ -1040,7 +1064,11 @@ final class LiveSessionStore {
             outcome.missingShell = shell
         }
         launchOutcomes[instance.id] = outcome
+        // Born already wearing the theme. Applying it after creation would
+        // paint one frame of the engine default first — a flash of the wrong
+        // colours on every single terminal you open.
         let state = TerminalViewState(configSource: .generated(config),
+                                      theme: ThemeStore.shared.terminalTheme(),
                                       terminalConfiguration: Self.surfaceConfiguration())
         if let daemon = daemon() {
             // The survival lane: the daemon owns the pty; this surface is a

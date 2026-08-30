@@ -129,6 +129,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { _ in
             MainActor.assumeIsolated {
                 AppState.shared?.sessions.refreshSurfaceConfig()
+                // The theme carries opacity and blur too, and Reduce
+                // Transparency outranks both — so the colour lane has to be
+                // re-applied alongside the config lane, or a themed terminal
+                // would keep its translucency after the system said solid.
+                AppState.shared?.sessions.refreshSurfaceTheme()
             }
         }
     }
