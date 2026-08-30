@@ -101,3 +101,36 @@ final class KindPolicyTests: XCTestCase {
             "/Users/x")
     }
 }
+
+/// Menu items that silently do nothing are the exact lie the zoom menu's own
+/// comments forbid — so the enablement rule is pure and pinned.
+final class TerminalCommandAvailabilityTests: XCTestCase {
+    func testUnavailableWithNothingSelected() {
+        XCTAssertFalse(TerminalCommands.available(hasTerminal: false,
+                                                  focused: false, zoom: 1))
+    }
+
+    func testAvailableForAFullWindowTerminal() {
+        XCTAssertTrue(TerminalCommands.available(hasTerminal: true,
+                                                 focused: false, zoom: 1))
+    }
+
+    func testAvailableInFocusMode() {
+        XCTAssertTrue(TerminalCommands.available(hasTerminal: true,
+                                                 focused: true, zoom: 0.5))
+    }
+
+    /// At overview zoom no tile is typable — the canvas says so, and a Find
+    /// or Clear aimed at a surface you cannot type into would go nowhere.
+    func testUnavailableAtOverviewZoomOnACanvas() {
+        XCTAssertFalse(TerminalCommands.available(hasTerminal: true,
+                                                  focused: false, zoom: 0.5))
+        XCTAssertFalse(TerminalCommands.available(hasTerminal: true,
+                                                  focused: false, zoom: 1.5))
+    }
+
+    func testAvailableAtExactlyOneHundredPercent() {
+        XCTAssertTrue(TerminalCommands.available(hasTerminal: true,
+                                                 focused: false, zoom: 1))
+    }
+}

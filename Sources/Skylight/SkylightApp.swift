@@ -59,6 +59,34 @@ struct SkylightApp: App {
                     .keyboardShortcut("a", modifiers: [.command, .shift])
                     .disabled(!state.canArrange)
             }
+            // Terminal: the everyday commands a terminal is expected to
+            // have. All of them are disabled rather than silently inert when
+            // there is no typable surface to aim at.
+            CommandMenu("Terminal") {
+                Button("Clear") { state.performTerminalAction("clear_screen") }
+                    .keyboardShortcut("k", modifiers: [.command])
+                    .disabled(!state.terminalCommandsAvailable)
+                // Ghostty's palette, under its own name and its own
+                // shortcut. It is NOT a find: libghostty exposes no search
+                // action at all, so a ⌘F labelled "Find…" pointing here
+                // would be the silent lie this menu is built to avoid.
+                // In-terminal search stays unavailable until the engine has
+                // one, and the absence is stated rather than papered over.
+                Button("Command Palette…") {
+                    state.performTerminalAction("toggle_command_palette")
+                }
+                    .keyboardShortcut("p", modifiers: [.command, .shift])
+                    .disabled(!state.terminalCommandsAvailable)
+                Divider()
+                // Prompt-at-a-time navigation, which only became possible
+                // once shell integration started marking prompts.
+                Button("Previous Prompt") { state.jumpPrompt(by: -1) }
+                    .keyboardShortcut(.upArrow, modifiers: [.command])
+                    .disabled(!state.terminalCommandsAvailable)
+                Button("Next Prompt") { state.jumpPrompt(by: 1) }
+                    .keyboardShortcut(.downArrow, modifiers: [.command])
+                    .disabled(!state.terminalCommandsAvailable)
+            }
             // App menu: FDA is an app-level grant, not a document action.
             CommandGroup(after: .appSettings) {
                 // Granted once to Skylight, inherited by every terminal and

@@ -410,6 +410,44 @@ final class AppState: ObservableObject {
     /// What an agent terminal is doing, or nil for a shell.
     func agentState(_ id: UUID) -> AgentState? { agentStates[id] }
 
+    // MARK: - Terminal commands
+
+    /// The terminal a menu command should act on: whatever is focused, else
+    /// the full-window selection. On a canvas at 100% it is the tile with
+    /// keyboard focus, which the surface itself knows.
+    var commandTargetInstance: UUID? {
+        if let focusedInstance { return focusedInstance }
+        if case let .item(id)? = selection { return id }
+        return sessions.focusedSessionID
+    }
+
+    /// Whether the terminal-aimed commands may fire. The rule is pure and
+    /// tested (TerminalCommands.available) — a menu item that looks live and
+    /// does nothing is the lie the zoom menu already refuses to tell.
+    var terminalCommandsAvailable: Bool {
+        TerminalCommands.available(
+            hasTerminal: commandTargetInstance != nil,
+            focused: focusedInstance != nil,
+            zoom: selectedCanvasID.flatMap { id in
+                canvases.first { $0.id == id }?.zoom
+            } ?? 1)
+    }
+
+    /// Send a ghostty binding action to the terminal in charge.
+    func performTerminalAction(_ action: String) {
+        guard let id = commandTargetInstance,
+              let terminal = sessions.existingTerminal(for: id) else { return }
+        _ = terminal.performBindingAction(action)
+    }
+
+    /// Jump a whole prompt at a time — the everyday-terminal navigation that
+    /// shell integration's prompt marks make possible.
+    func jumpPrompt(by offset: Int16) {
+        guard let id = commandTargetInstance,
+              let terminal = sessions.existingTerminal(for: id) else { return }
+        _ = terminal.jumpToPrompt(by: offset)
+    }
+
     /// Grant or revoke full autonomy for one harness. Takes effect for every
     /// terminal launched from here on — a session already running keeps the
     /// command line it started with, which is what the toggle's copy promises.
@@ -1000,6 +1038,13 @@ final class LiveSessionStore {
                 client.kill(id)
             }
         }
+    }
+
+    /// Which open surface currently owns the keyboard, if any. Lets a menu
+    /// command find the tile you are typing in without the canvas having to
+    /// report its own focus upward.
+    var focusedSessionID: UUID? {
+        terminals.first { $0.value.isFocused }?.key
     }
 
     /// Every instance with a surface right now — what quitting would kill.

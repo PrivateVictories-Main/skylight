@@ -77,6 +77,10 @@ then walk top to bottom. Every line should feel instant.
       warning says the session already ended.
 - [ ] Quit: with the keeper running, ⌘Q asks nothing (sessions survive);
       the warning dialog only exists in the SKYLIGHT_NO_DAEMON lane below.
+- [ ] Terminal menu: ⌘K clears the focused terminal; ⌘↑/⌘↓ jump a whole
+      prompt at a time (needs shell integration, so try it after a few
+      commands); ⇧⌘P opens ghostty's command palette. All four go grey when
+      no terminal is typable — zoom a canvas to 80% and check they dim.
 - [ ] Shell integration is live: open a ⇧⌘T terminal, `cd ~/code` — the tile
       header shows `~/code` and updates as you move. An AGENT tile shows no
       path (its directory is a launch choice, not somewhere you navigated).
@@ -194,3 +198,11 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Text Size: change it in ⌘, with terminals open — every open
       terminal reflows live at the new size, colors untouched; Default
       returns to the engine size; the choice survives relaunch.
+
+## Known gaps (stated, not hidden)
+
+- No in-terminal find. libghostty exposes no search action, so ⌘F is
+  deliberately unbound rather than pointed at the command palette and
+  mislabelled.
+- bash gets no shell integration (it needs a startup-argv change, not env),
+  so cwd/prompt/command features are zsh- and fish-only for now.

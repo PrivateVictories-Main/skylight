@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 /// What a terminal instance IS, named once instead of re-derived at every call
@@ -30,5 +31,23 @@ public extension TerminalSpec {
     /// disagreeing, and the sidebar would believe the wrong one.
     var kind: InstanceKind {
         harness.map { .agent(harness: $0) } ?? .shell
+    }
+}
+
+/// When the terminal-aimed menu commands (clear, find, prompt jumping) may
+/// actually do something.
+///
+/// Pure and pinned because the alternative is a menu item that looks live and
+/// silently does nothing — the exact lie the zoom menu's own comments already
+/// forbid. It shares the canvas's honest-zoom contract: at anything other
+/// than exactly 100% a tile is an overview thumbnail, not a surface you can
+/// type into, so a command aimed at one would go nowhere.
+public enum TerminalCommands {
+    public static func available(hasTerminal: Bool, focused: Bool,
+                                 zoom: CGFloat) -> Bool {
+        guard hasTerminal else { return false }
+        // Focus mode fills the window: no canvas transform applies.
+        if focused { return true }
+        return zoom == 1
     }
 }
