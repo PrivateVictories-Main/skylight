@@ -42,8 +42,9 @@ private enum CanvasZoom {
 struct CanvasView: View {
     @EnvironmentObject private var state: AppState
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
-    /// Observed for its revision token: applying a theme must repaint the
-    /// plane and the dot grid, not wait for an unrelated redraw.
+    /// The tints are read THROUGH this object (`themes.canvasBackdrop`,
+    /// `themes.dotGrid`), so the invalidation dependency is a compile-time
+    /// fact rather than a convention someone has to remember.
     @ObservedObject private var themes = ThemeStore.shared
     let boardID: UUID
     /// The drag-preview copy of a board must never rearrange it.
@@ -95,7 +96,7 @@ struct CanvasView: View {
                     },
                     installsEventMonitors: reflowEnabled
                 )
-                DotGrid(pan: pan, zoom: zoom, dotColor: ThemeTint.dotGrid)
+                DotGrid(pan: pan, zoom: zoom, dotColor: themes.dotGrid)
                     .allowsHitTesting(false)
                 ForEach(board?.tiles ?? []) { tile in
                     if let instance = state.instance(tile.itemID) {
@@ -182,7 +183,7 @@ struct CanvasView: View {
                 arrange(in: viewport)
             }
         }
-        .background(ThemeTint.canvasBackdrop.opacity(0.55))
+        .background(themes.canvasBackdrop.opacity(0.55))
         .navigationTitle(board?.name ?? "Canvas")
         // The dot grid reaches the window top: no toolbar band, no safe-area
         // gap between the glass and the traffic lights.

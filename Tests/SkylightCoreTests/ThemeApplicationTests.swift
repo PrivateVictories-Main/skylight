@@ -232,6 +232,25 @@ final class ChromeTonesTests: XCTestCase {
         XCTAssertLessThan(tones.dotGrid.luminance, high)
     }
 
+    /// The other half of the invalidation guarantee. The view side is now
+    /// compile-enforced (tints are read through the observed store, so
+    /// deleting the observation fails the build); this pins the value side —
+    /// two different themes must produce two different sets of tones, so a
+    /// future cache keyed on nothing, or a tone function that stopped reading
+    /// its argument, fails here rather than showing stale chrome.
+    func testDifferentThemesProduceDifferentTones() {
+        let dark = ThemeApplication.chromeTones(for: mocha)
+        let light = ThemeApplication.chromeTones(for: alabaster)
+        XCTAssertNotEqual(dark, light)
+        XCTAssertNotEqual(dark.canvasBackdrop, light.canvasBackdrop)
+        XCTAssertNotEqual(dark.dotGrid, light.dotGrid)
+        XCTAssertNotEqual(dark.hairline, light.hairline)
+        // And the backing follows the theme's own background exactly, so a
+        // theme swap can never leave the panel wearing the old one.
+        XCTAssertEqual(dark.panelBacking, mocha.background)
+        XCTAssertEqual(light.panelBacking, alabaster.background)
+    }
+
     func testEveryToneStaysInRangeOnExtremes() {
         // Clamping, not wrapping: pure black must not roll over to white.
         // (Asserting Color8(tone.hex) != nil proved nothing — hex always

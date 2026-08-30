@@ -579,8 +579,8 @@ struct EmptyDetail: View {
 /// that fills the detail pane with a terminal wears this and nothing else.
 private struct TerminalPanel: ViewModifier {
     @Environment(\.sidebarCollapsed) private var sidebarCollapsed
-    /// Same reason as CanvasView: the backing and the hairline are theme
-    /// colours now, and nothing else would invalidate them.
+    /// The backing and hairline are read THROUGH this object, so removing it
+    /// fails the build instead of quietly restoring stale chrome.
     @ObservedObject private var themes = ThemeStore.shared
     // The backing tracks the surface's own translucency: ghostty's
     // background-opacity composites OVER this layer, so a slider that only
@@ -602,7 +602,7 @@ private struct TerminalPanel: ViewModifier {
             // Text rides to the very top, Ghostty-style: the terminal NSView
             // handles its own mouseDown, so AppKit yields the titlebar band
             // to it instead of dragging the window (drag by the sidebar).
-            .background(ThemeTint.panelBacking.opacity(backingOpacity),
+            .background(themes.panelBacking.opacity(backingOpacity),
                         in: RoundedRectangle(cornerRadius: 16, style: .continuous))
             .onReceive(NSWorkspace.shared.notificationCenter.publisher(
                 for: NSWorkspace.accessibilityDisplayOptionsDidChangeNotification)) { _ in
@@ -614,7 +614,7 @@ private struct TerminalPanel: ViewModifier {
             .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .strokeBorder(ThemeTint.hairline(opacity: 0.20), lineWidth: 0.5)
+                    .strokeBorder(themes.hairline(opacity: 0.20), lineWidth: 0.5)
             )
             .overlay(alignment: .top) { SurfaceBanners(instance: instance) }
             // A sliver of window glass around all four sides so the hairline
