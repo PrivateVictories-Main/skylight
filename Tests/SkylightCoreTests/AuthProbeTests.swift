@@ -90,6 +90,126 @@ final class AuthProbeTests: XCTestCase {
         }
     }
 
+    // MARK: - Evaluation
+    //
+    // Fixtures below are REAL output captured from the live CLIs on
+    // 2026-08-30, not invented shapes.
+
+    private var claudeProbe: AuthProbe { Catalog.harness("claude")!.authProbe! }
+    private var codexProbe: AuthProbe { Catalog.harness("codex")!.authProbe! }
+
+    private let claudeSignedIn = """
+    {
+      "loggedIn": true,
+      "authMethod": "claude.ai",
+      "apiProvider": "firstParty",
+      "email": "ryans51105@gmail.com",
+      "orgName": "ryans51105@gmail.com's Organization",
+      "subscriptionType": "max"
+    }
+    """
+
+    func testClaudeSignedInYieldsAccountAndPlanItPrintedItself() {
+        let state = AuthProbe.state(stdout: claudeSignedIn, exitCode: 0,
+                                    markersPresent: true, probe: claudeProbe)
+        XCTAssertEqual(state, .signedIn(account: "ryans51105@gmail.com", plan: "max"))
+        XCTAssertTrue(state.isUsable)
+    }
+
+    func testClaudeLoggedInFalseIsSignedOut() {
+        let state = AuthProbe.state(stdout: #"{"loggedIn": false}"#, exitCode: 0,
+                                    markersPresent: true, probe: claudeProbe)
+        XCTAssertEqual(state, .signedOut)
+        XCTAssertFalse(state.isUsable)
+    }
+
+    func testCodexSignedInMatchesTheDeclaredLiteral() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "Logged in using ChatGPT", exitCode: 0,
+                            markersPresent: true, probe: codexProbe),
+            .signedIn(account: nil, plan: nil))
+    }
+
+    func testCodexSignedOutMatchesItsOwnLiteral() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "Not logged in", exitCode: 0,
+                            markersPresent: true, probe: codexProbe),
+            .signedOut)
+    }
+
+    /// THE honesty rule of this whole feature: a credential file existing is
+    /// not proof of a working subscription. It may be expired, revoked, or
+    /// for a different account.
+    func testUnmatchedOutputWithAMarkerPresentIsUnknownNotSignedIn() {
+        let state = AuthProbe.state(stdout: "some unexpected banner", exitCode: 0,
+                                    markersPresent: true, probe: codexProbe)
+        XCTAssertEqual(state, .unknown)
+        XCTAssertNotEqual(state, .signedIn(account: nil, plan: nil))
+    }
+
+    /// No answer AND no credential on disk: signed out is the honest read.
+    func testUnmatchedOutputWithNoMarkerIsSignedOut() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "some unexpected banner", exitCode: 0,
+                            markersPresent: false, probe: codexProbe),
+            .signedOut)
+    }
+
+    func testNonZeroExitIsUnknownEvenIfTheTextWouldHaveMatched() {
+        // A crashed CLI that happened to print the magic words has not told
+        // us anything.
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "Logged in using ChatGPT", exitCode: 1,
+                            markersPresent: true, probe: codexProbe),
+            .unknown)
+    }
+
+    func testNoStdoutAtAllIsUnknown() {
+        for stdout in [nil, "", "   "] as [String?] {
+            XCTAssertEqual(
+                AuthProbe.state(stdout: stdout, exitCode: 0,
+                                markersPresent: true, probe: codexProbe),
+                .unknown, String(describing: stdout))
+        }
+    }
+
+    /// A probe with no status command never runs one, so it can only report
+    /// on markers — and a marker alone is never .signedIn.
+    func testProbeWithoutAStatusCommandIsUnknownWhenAMarkerExists() {
+        let probe = try! XCTUnwrap(Catalog.harness("cursor-agent")?.authProbe)
+        XCTAssertEqual(
+            AuthProbe.state(stdout: nil, exitCode: nil,
+                            markersPresent: true, probe: probe), .unknown)
+        XCTAssertEqual(
+            AuthProbe.state(stdout: nil, exitCode: nil,
+                            markersPresent: false, probe: probe), .signedOut)
+    }
+
+    func testExpiredIsReportedWhenTheCLISaysSo() {
+        let probe = AuthProbe(statusCommand: ["s"],
+                              format: .text(signedIn: ["Logged in"],
+                                            signedOut: ["expired"]))
+        // "expired" is declared as a signed-out literal, so it reads as such
+        // rather than inventing a state nobody claimed.
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "token expired", exitCode: 0,
+                            markersPresent: true, probe: probe), .signedOut)
+    }
+
+    func testMalformedJSONIsUnknownNotSignedOut() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: "{not json", exitCode: 0,
+                            markersPresent: true, probe: claudeProbe),
+            .unknown)
+    }
+
+    func testJSONMissingItsAccountKeysStillReportsSignedIn() {
+        XCTAssertEqual(
+            AuthProbe.state(stdout: #"{"loggedIn": true}"#, exitCode: 0,
+                            markersPresent: true, probe: claudeProbe),
+            .signedIn(account: nil, plan: nil))
+    }
+
     func testLoginCommandsAreOfferedForEveryProbeWeHave() {
         // A probe that can say "signed out" and cannot offer a way in is a
         // dead end with a label on it.

@@ -54,3 +54,60 @@ public struct AuthProbe: Equatable, Sendable {
         self.loginCommand = loginCommand
     }
 }
+
+public extension AuthProbe {
+    /// Turn a completed probe into a state. **Pure** — it runs nothing, opens
+    /// nothing, and knows only what it is handed. Every subprocess and every
+    /// `stat` happens above this line, which is what makes the whole decision
+    /// testable from captured output.
+    ///
+    /// `markersPresent` is deliberately weak evidence. A credential file on
+    /// disk may be expired, revoked, or for an account the user has since
+    /// changed — so it can move an answerless probe from "signed out" to
+    /// "unknown", and it can never on its own produce `.signedIn`. Claiming a
+    /// working subscription because a file exists is exactly the guess this
+    /// module refuses everywhere else.
+    static func state(stdout: String?, exitCode: Int32?,
+                      markersPresent: Bool, probe: AuthProbe) -> SubscriptionState {
+        /// No usable answer. A marker keeps it honest at "unknown"; without
+        /// one, signed out is the only reading left.
+        func undecided() -> SubscriptionState {
+            markersPresent ? .unknown : .signedOut
+        }
+
+        // No probe was declared, or none was run: markers are all there is.
+        guard probe.statusCommand != nil else { return undecided() }
+        // A CLI that failed has not told us anything, whatever it printed on
+        // the way down.
+        guard exitCode == 0 else { return .unknown }
+        guard let stdout, !stdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return .unknown }
+
+        switch probe.format {
+        case let .text(signedIn, signedOut):
+            // Signed-out literals are checked FIRST: "Not logged in" contains
+            // no signed-in literal today, but a future pair where one is a
+            // substring of the other must not silently resolve the wrong way.
+            if signedOut.contains(where: stdout.contains) { return .signedOut }
+            if signedIn.contains(where: stdout.contains) {
+                return .signedIn(account: nil, plan: nil)
+            }
+            return undecided()
+
+        case let .json(loggedInKey, accountKey, planKey):
+            guard let data = stdout.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data),
+                  let root = object as? [String: Any]
+            else {
+                // It claimed to print JSON and did not. That is a broken
+                // answer, not a "signed out" one.
+                return .unknown
+            }
+            guard let loggedIn = root[loggedInKey] as? Bool else { return .unknown }
+            guard loggedIn else { return .signedOut }
+            // Account and plan appear ONLY because the CLI printed them.
+            return .signedIn(account: accountKey.flatMap { root[$0] as? String },
+                             plan: planKey.flatMap { root[$0] as? String })
+        }
+    }
+}
