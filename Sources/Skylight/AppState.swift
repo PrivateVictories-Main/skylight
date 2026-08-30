@@ -520,13 +520,32 @@ final class AppState: ObservableObject {
     /// Launch a terminal from a spec — the single entry point shortcuts,
     /// presets, and the New sheet all use. Records the combo locally so the
     /// most-used launch can become a one-click recommendation.
+    /// Resolve where a launch should start, and remember it.
+    ///
+    /// ONE function, used by every launch path. `launchTile` used to skip the
+    /// default entirely, so double-clicking a canvas and pressing ⇧⌘T — the
+    /// same act, in the same place — disagreed about the directory.
+    ///
+    /// It also closes the other half: an agent never emits OSC 7 (it runs a
+    /// binary and gets no shell integration by design), so the ONLY moment a
+    /// project directory can be learned is the launch the user configured.
+    /// Without recording it here, "a new agent opens on the last project" was
+    /// a rule with nothing to read.
+    ///
+    /// The resolved directory is deliberately NOT written back into the
+    /// persisted spec — see `resolvedWorkingDirectory`.
+    private func resolvedWorkingDirectory(for spec: TerminalSpec) -> String {
+        let directory = spec.workingDirectory ?? defaultWorkingDirectory(for: spec.kind)
+        // A directory the user picked for an agent IS the project. Recorded
+        // whether it was explicit or inherited, so the next agent follows the
+        // last one rather than falling home.
+        noteWorkingDirectory(directory, kind: spec.kind)
+        return directory
+    }
+
     func launch(_ spec: TerminalSpec, name: String? = nil) {
         var spec = spec
-        // A shell continues where you were; an agent opens on the last
-        // project. Only when the caller did not choose for itself.
-        if spec.workingDirectory == nil {
-            spec.workingDirectory = defaultWorkingDirectory(for: spec.kind)
-        }
+        spec.workingDirectory = resolvedWorkingDirectory(for: spec)
         let instance = TerminalInstance(
             name: Names.numbered(base: name ?? Self.defaultName(for: spec),
                                  among: instances.map(\.name)), spec: spec)
@@ -582,6 +601,11 @@ final class AppState: ObservableObject {
     func launchTile(_ spec: TerminalSpec, name: String? = nil,
                     on canvasID: UUID, at point: CGPoint) {
         guard let index = canvases.firstIndex(where: { $0.id == canvasID }) else { return }
+        var spec = spec
+        // The SAME rule the sidebar launch uses. This path had none, so every
+        // canvas spawn — double-click, right-click, sheet with a pending
+        // target — started at home while ⇧⌘T did not.
+        spec.workingDirectory = resolvedWorkingDirectory(for: spec)
         let instance = TerminalInstance(
             name: Names.numbered(base: name ?? Self.defaultName(for: spec),
                                  among: instances.map(\.name)), spec: spec)
@@ -1240,6 +1264,25 @@ final class LiveSessionStore {
             base: ProcessInfo.processInfo.environment)
     }
 
+    /// A directory a child can actually start in.
+    ///
+    /// The launch directory is stored on the instance so a restored session
+    /// comes back where it belongs — but a path is not a promise. A `/tmp`
+    /// working directory that was real yesterday is gone today; a checkout
+    /// gets deleted; an external disk unmounts. Spawning into a directory
+    /// that no longer exists fails the launch outright, which turns "the
+    /// folder moved" into "the terminal is broken".
+    ///
+    /// Falls back to home, which always exists.
+    static func spawnableDirectory(_ path: String?) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        guard let path else { return home }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory),
+              isDirectory.boolValue else { return home }
+        return path
+    }
+
     /// The generated per-surface config: translucency plus balanced inner
     /// padding so no row — least of all an agent's bottom status line — ever
     /// clips against the rounded chrome. The opacity is the Settings slider's
@@ -1369,8 +1412,7 @@ final class LiveSessionStore {
                 daemon.spawn(SpawnRequest(
                     id: id,
                     argv: daemonArgv(for: instance),
-                    cwd: instance.spec.workingDirectory
-                        ?? FileManager.default.homeDirectoryForCurrentUser.path,
+                    cwd: Self.spawnableDirectory(instance.spec.workingDirectory),
                     env: Self.shellIntegrationEnvironment(for: instance)),
                     session: session)
             }
@@ -1396,8 +1438,7 @@ final class LiveSessionStore {
             }
             state.configuration = TerminalSurfaceOptions(
                 backend: .exec,
-                workingDirectory: instance.spec.workingDirectory
-                    ?? FileManager.default.homeDirectoryForCurrentUser.path,
+                workingDirectory: Self.spawnableDirectory(instance.spec.workingDirectory),
                 command: command
             )
         }

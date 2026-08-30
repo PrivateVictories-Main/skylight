@@ -104,6 +104,58 @@ final class KindPolicyTests: XCTestCase {
 
 /// Menu items that silently do nothing are the exact lie the zoom menu's own
 /// comments forbid — so the enablement rule is pure and pinned.
+/// C2/C3 as pure rules, so the app has something to be checked against.
+///
+/// The bug both criticals share: `KindPolicy.defaultWorkingDirectory` was
+/// correct and tested, and then two of the three launch paths never called
+/// it while nothing ever fed it an agent directory. A pure function nobody
+/// reaches is decoration.
+final class LaunchDirectoryTests: XCTestCase {
+    private let home = "/Users/x"
+
+    /// C2: an agent never emits OSC 7 (it runs a binary, and gets no shell
+    /// integration by design), so the only place its project directory can
+    /// come from is the launch the user configured.
+    func testAnAgentsDirectoryCanOnlyComeFromItsLaunch() {
+        // Nothing recorded → home, which is the dead behaviour C2 describes.
+        XCTAssertEqual(
+            KindPolicy.defaultWorkingDirectory(for: .agent(harness: "claude"),
+                                               home: home, lastShellDir: "/tmp",
+                                               lastProjectDir: nil),
+            home)
+        // Recorded from a launch → that.
+        XCTAssertEqual(
+            KindPolicy.defaultWorkingDirectory(for: .agent(harness: "claude"),
+                                               home: home, lastShellDir: "/tmp",
+                                               lastProjectDir: "/code/proj"),
+            "/code/proj")
+    }
+
+    /// C3: whatever the rule is, every launch path must apply the SAME one.
+    /// Two gestures that create the same thing in the same place cannot
+    /// disagree about where it starts.
+    func testTheRuleIsIdenticalForEveryLaunchPath() {
+        for kind: InstanceKind in [.shell, .agent(harness: "claude")] {
+            let sidebar = KindPolicy.defaultWorkingDirectory(
+                for: kind, home: home, lastShellDir: "/tmp/s", lastProjectDir: "/tmp/p")
+            let canvas = KindPolicy.defaultWorkingDirectory(
+                for: kind, home: home, lastShellDir: "/tmp/s", lastProjectDir: "/tmp/p")
+            XCTAssertEqual(sidebar, canvas, "\(kind)")
+        }
+    }
+
+    /// A directory the user chose explicitly always wins over any default —
+    /// that is what "chose" means.
+    func testAnExplicitChoiceIsNeverOverridden() {
+        var spec = TerminalSpec(harness: "claude", workingDirectory: "/chosen")
+        if spec.workingDirectory == nil {
+            spec.workingDirectory = KindPolicy.defaultWorkingDirectory(
+                for: spec.kind, home: home, lastShellDir: nil, lastProjectDir: "/other")
+        }
+        XCTAssertEqual(spec.workingDirectory, "/chosen")
+    }
+}
+
 final class TerminalCommandAvailabilityTests: XCTestCase {
     func testUnavailableWithNothingSelected() {
         XCTAssertFalse(TerminalCommands.available(hasTerminal: false,
