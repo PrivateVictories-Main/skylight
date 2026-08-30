@@ -24,6 +24,18 @@ final class Color8Tests: XCTestCase {
         }
     }
 
+    /// Character.isHexDigit says YES to fullwidth and other non-ASCII digit
+    /// forms; UInt8(_:radix:) says nil. The gate and the conversion disagreed,
+    /// and a force-unwrap sat in the gap — so one poisoned file crashed the
+    /// app, and ThemeDiscovery auto-parses on opening the Theme tab, which
+    /// made ⌘, the trigger.
+    func testFullwidthAndNonASCIIHexDigitsAreRefusedNotCrashed() {
+        for hostile in ["#ＦＦ００ＡＡ", "#ＦＦＡ", "ＦＦ００ＡＡ", "0xＦＦ００ＡＡ",
+                       "#１２３４５６", "#٠١٢٣٤٥"] {
+            XCTAssertNil(Color8(hostile), hostile)
+        }
+    }
+
     func testAlphaIsPreservedNotDropped() {
         // Alpha carries a terminal's transparency. Dropping it silently is how
         // an imported theme loses the look it was imported for — it is folded

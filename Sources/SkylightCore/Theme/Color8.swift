@@ -70,20 +70,41 @@ public struct Color8: Codable, Equatable, Hashable, Sendable {
         } else if body.lowercased().hasPrefix("0x") {
             body.removeFirst(2)
         }
-        guard body.allSatisfy(\.isHexDigit) else { return nil }
+        // `Character.isHexDigit` is TRUE for fullwidth forms (Ｆ, U+FF26),
+        // Arabic-Indic digits, and other non-ASCII hex digits;
+        // `UInt8(_:radix:)` returns nil for every one of them. Gating on the
+        // first and converting with the second left a force-unwrap sitting in
+        // the gap — a crash reachable from any format, and the Theme tab
+        // auto-parses discovered configs, so a single poisoned file made ⌘,
+        // the trigger.
+        //
+        // ASCII, explicitly. `hexDigitValue` removes the crash but is
+        // Unicode-aware, so it would happily read "#ＦＦ００ＡＡ" as a colour —
+        // and a hex literal is ASCII by definition in every format here.
+        // Accepting homoglyphs would mean two spellings of one colour and a
+        // file that looks wrong but parses.
+        //
+        // One authority for both questions, which is the actual fix: whether a
+        // character is a hex digit and what it is worth are now decided by the
+        // same function, so they cannot disagree and there is no gap left for
+        // a force-unwrap to sit in.
+        let nibbles = body.compactMap { character -> Int? in
+            guard character.isASCII, let value = character.hexDigitValue else {
+                return nil
+            }
+            return value
+        }
+        guard nibbles.count == body.count else { return nil }
 
-        switch body.count {
+        switch nibbles.count {
         case 3, 4:
             // #RGB / #RGBA — each nibble doubles (the CSS rule).
-            let nibbles = body.map { UInt8(String($0), radix: 16)! }
-            let expanded = nibbles.map { $0 << 4 | $0 }
+            let expanded = nibbles.map { UInt8($0) << 4 | UInt8($0) }
             self.init(r: expanded[0], g: expanded[1], b: expanded[2],
                       a: expanded.count == 4 ? expanded[3] : nil)
         case 6, 8:
-            let bytes = stride(from: 0, to: body.count, by: 2).map { offset -> UInt8 in
-                let start = body.index(body.startIndex, offsetBy: offset)
-                let end = body.index(start, offsetBy: 2)
-                return UInt8(body[start..<end], radix: 16)!
+            let bytes = stride(from: 0, to: nibbles.count, by: 2).map {
+                UInt8(nibbles[$0]) << 4 | UInt8(nibbles[$0 + 1])
             }
             self.init(r: bytes[0], g: bytes[1], b: bytes[2],
                       a: bytes.count == 4 ? bytes[3] : nil)
