@@ -84,6 +84,12 @@ final class AppState: ObservableObject {
     /// permission prompts skipped. Off for everything until he says otherwise,
     /// once per harness, and it survives relaunches.
     @Published private(set) var trustedHarnesses: Set<String>
+    /// Remembered auth answers per harness. Never probed on a timer, never at
+    /// render — see `refreshSubscriptions`.
+    @Published private(set) var subscriptions: ProbeCache
+    /// Harnesses with a probe in flight, so the UI can say "checking…" and so
+    /// two triggers landing together do not run the CLI twice.
+    @Published private(set) var probing: Set<String> = []
 
     let sessions = LiveSessionStore()
 
@@ -104,6 +110,9 @@ final class AppState: ObservableObject {
     private static var presetsURL: URL { supportDir.appendingPathComponent("presets.json") }
     private static var usageURL: URL { supportDir.appendingPathComponent("usage.json") }
     private static var trustedURL: URL { supportDir.appendingPathComponent("trusted.json") }
+    private static var subscriptionsURL: URL {
+        supportDir.appendingPathComponent("subscriptions.json")
+    }
 
     init() {
         var saved: SavedState?
@@ -152,6 +161,8 @@ final class AppState: ObservableObject {
         // Unreadable or absent = trusted nothing. A grant this consequential
         // must never be recovered by guessing.
         trustedHarnesses = Self.loadSidecar(Set<String>.self, from: Self.trustedURL) ?? []
+        subscriptions = Self.loadSidecar(ProbeCache.self, from: Self.subscriptionsURL)
+            ?? ProbeCache()
 
         // Every stored property is initialized before `self` is read.
         if selection == nil { selection = instances.first.map { .item($0.id) } }
@@ -295,6 +306,56 @@ final class AppState: ObservableObject {
     private func persistTrusted() {
         if let data = try? JSONEncoder().encode(trustedHarnesses) {
             try? data.write(to: Self.trustedURL, options: .atomic)
+        }
+    }
+
+    // MARK: - Subscriptions
+
+    /// What we currently believe about a harness's subscription. Cheap: a
+    /// dictionary read, safe to call from a view body.
+    func subscriptionState(_ harnessID: String) -> SubscriptionState {
+        subscriptions.state(for: harnessID) ?? .unknown
+    }
+
+    /// Ask every installed harness that has a probe and no fresh answer.
+    ///
+    /// The three triggers, and ONLY these: the New sheet re-sampling (it
+    /// already does that when the app becomes active), an explicit Check
+    /// button, and a login terminal exiting. No timer, no polling, nothing at
+    /// render — the idle-CPU promise is a feature, not an aspiration.
+    func refreshSubscriptions(force: Bool = false) {
+        for harness in Catalog.harnesses {
+            guard harness.authProbe != nil,
+                  let binary = sessions.cachedResolveHarness(harness.id),
+                  !probing.contains(harness.id) else { continue }
+            if force { subscriptions.invalidate(harness.id) }
+            guard subscriptions.needsProbe(harness.id) else { continue }
+
+            probing.insert(harness.id)
+            let id = harness.id
+            Task.detached(priority: .utility) {
+                let outcome = SubscriptionProbeRunner.probe(harness: harness,
+                                                            binaryPath: binary)
+                await MainActor.run { [weak self] in
+                    guard let self else { return }
+                    self.probing.remove(id)
+                    self.subscriptions.record(id, outcome.state, at: outcome.checkedAt)
+                    self.persistSubscriptions()
+                }
+            }
+        }
+    }
+
+    /// A sign-in terminal just ended: whatever we believed is now stale.
+    func invalidateSubscription(_ harnessID: String) {
+        subscriptions.invalidate(harnessID)
+        persistSubscriptions()
+        refreshSubscriptions()
+    }
+
+    private func persistSubscriptions() {
+        if let data = try? JSONEncoder().encode(subscriptions) {
+            try? data.write(to: Self.subscriptionsURL, options: .atomic)
         }
     }
 
