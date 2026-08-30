@@ -541,7 +541,7 @@ final class AppState: ObservableObject {
     var canArrange: Bool {
         guard canvasZoomAvailable, let id = selectedCanvasID,
               let board = canvases.first(where: { $0.id == id }) else { return false }
-        return board.tiles.count > 1
+        return board.freeTiles.count > 1
     }
 
     var freeInstances: [TerminalInstance] {
@@ -653,7 +653,7 @@ final class AppState: ObservableObject {
         let desired = CGPoint(x: point.x - size.width / 2, y: point.y - 24)
         let origin = CanvasLayout.freePosition(
             desired: desired, size: size,
-            avoiding: canvases[index].tiles.map(\.frame))
+            avoiding: canvases[index].freeTiles.map(\.frame))
         canvases[index].tiles.append(
             CanvasTile(itemID: instance.id, origin: origin, size: size))
         selection = .canvas(canvasID)
@@ -867,8 +867,15 @@ final class AppState: ObservableObject {
     /// immediately after — see CanvasView.arrange(in:).
     func arrangeCanvas(_ canvasID: UUID, viewport: CGSize) {
         guard let board = canvases.first(where: { $0.id == canvasID }) else { return }
-        setTiles(CanvasLayout.arranged(tiles: board.tiles, viewport: viewport),
-                 for: canvasID)
+        // Docked tiles are viewport chrome: arranging packs only what is on
+        // the plane, into the rect the rails leave behind. Their stored tile
+        // entries are carried through untouched so undocking can restore the
+        // size and position they had.
+        let arranged = CanvasLayout.arranged(tiles: board.freeTiles, viewport: viewport)
+        let docked = board.tiles.filter { tile in
+            !arranged.contains { $0.id == tile.id }
+        }
+        setTiles(arranged + docked, for: canvasID)
     }
 
     // MARK: - Tiles
@@ -902,7 +909,7 @@ final class AppState: ObservableObject {
                 ?? CanvasLayout.staggeredOrigin(existing: canvases[index].tiles.count)
             let origin = CanvasLayout.freePosition(
                 desired: desired, size: size,
-                avoiding: canvases[index].tiles.map(\.frame))
+                avoiding: canvases[index].freeTiles.map(\.frame))
             canvases[index].tiles.append(
                 CanvasTile(itemID: itemID, origin: origin, size: size))
             // Only a newly placed tile is worth panning to; nudging one that

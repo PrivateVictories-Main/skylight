@@ -249,7 +249,7 @@ struct CanvasView: View {
 
     /// The whole arrangement's content-space bounding box.
     private var contentBounds: CGRect? {
-        let frames = board?.tiles.map(\.frame) ?? []
+        let frames = board?.freeTiles.map(\.frame) ?? []
         guard let first = frames.first else { return nil }
         return frames.dropFirst().reduce(first) { $0.union($1) }
     }
@@ -312,7 +312,7 @@ struct CanvasView: View {
         // no-op: falling through to the fit would silently reset the zoom on
         // an empty or single-tile board. Matches the menu item, which hides
         // itself in exactly these states.
-        guard let board, board.tiles.count > 1 else { return }
+        guard let board, board.freeTiles.count > 1 else { return }
         state.arrangeCanvas(boardID, viewport: viewport)
         apply(.fit, in: viewport)
     }
@@ -405,7 +405,7 @@ struct CanvasView: View {
         // own trailing section. Uses this view's live viewport, same as ⌘⇧A.
         // Hidden below two tiles, where arranging is a no-op — this menu
         // promises never to show a dead item.
-        if (board?.tiles.count ?? 0) > 1 {
+        if (board?.freeTiles.count ?? 0) > 1 {
             menu.addItem(.separator())
             add("Arrange") { arrange(in: viewport) }
         }
@@ -440,14 +440,18 @@ struct CanvasView: View {
         let contentViewport = CGSize(width: viewport.width / safeZoom,
                                      height: viewport.height / safeZoom)
         let contentPan = CGPoint(x: pan.x / safeZoom, y: pan.y / safeZoom)
-        guard let result = CanvasLayout.reflowed(tiles: board.tiles, pan: contentPan,
+        guard let result = CanvasLayout.reflowed(tiles: board.freeTiles, pan: contentPan,
                                                  viewport: contentViewport) else { return }
         let screenPan = CGPoint(x: result.pan.x * safeZoom, y: result.pan.y * safeZoom)
         withAnimation(Motion.viewport) {
             pan = screenPan
         }
         state.setPan(screenPan, for: boardID)
-        state.setTiles(result.tiles, for: boardID)   // state now, disk write coalesced
+        // Only free tiles moved; docked entries ride through untouched.
+        let dockedTiles = board.tiles.filter { tile in
+            !result.tiles.contains { $0.id == tile.id }
+        }
+        state.setTiles(result.tiles + dockedTiles, for: boardID)   // coalesced
     }
 }
 

@@ -56,6 +56,23 @@ public struct CanvasTile: Identifiable, Codable, Equatable, Sendable {
     public var frame: CGRect { CGRect(origin: origin, size: size) }
 }
 
+public extension CanvasBoard {
+    /// The tiles that actually live on the PLANE.
+    ///
+    /// A docked instance keeps its tile entry so undocking can restore the
+    /// size and position it had — but while it is docked it is viewport
+    /// chrome, and every piece of board math (arrange, reflow, magnets,
+    /// collision) must look straight past it. Feeding a docked tile to
+    /// `arranged` would pack a rectangle that is not on the plane; feeding it
+    /// to `magnetSnapped` would snap a dragged tile to a frame in a different
+    /// coordinate system entirely.
+    var freeTiles: [CanvasTile] {
+        let docked = DockLayout.dockedItems(docks)
+        guard !docked.isEmpty else { return tiles }
+        return tiles.filter { !docked.contains($0.itemID) }
+    }
+}
+
 public struct CanvasBoard: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var name: String

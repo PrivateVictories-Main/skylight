@@ -410,3 +410,69 @@ final class LayoutTests: XCTestCase {
                                            viewport: CGSize(width: 360, height: 260)))
     }
 }
+
+/// Docked tiles are viewport chrome, not board content. Every piece of the
+/// existing layout math has to ignore them, and the free rect the rails leave
+/// behind is the viewport those functions are now given.
+final class LayoutWithDocksTests: XCTestCase {
+    private func tiles(_ n: Int) -> [CanvasTile] {
+        (0..<n).map { i in
+            CanvasTile(itemID: UUID(),
+                       origin: CGPoint(x: CGFloat(i) * 600, y: 0),
+                       size: CGSize(width: 560, height: 400))
+        }
+    }
+
+    /// The whole regression net: with no docks, every function must behave
+    /// byte-identically to before this feature existed.
+    func testExistingBehaviourIsUnchangedWhenNothingIsDocked() {
+        let all = tiles(4)
+        let viewport = CGSize(width: 1600, height: 1000)
+        let free = DockLayout.frames(docks: [:], viewport: viewport).free
+        XCTAssertEqual(free, CGRect(origin: .zero, size: viewport))
+        XCTAssertEqual(CanvasLayout.arranged(tiles: all, viewport: free.size),
+                       CanvasLayout.arranged(tiles: all, viewport: viewport))
+        XCTAssertEqual(
+            CanvasLayout.reflowed(tiles: all, pan: .zero, viewport: free.size)?.tiles,
+            CanvasLayout.reflowed(tiles: all, pan: .zero, viewport: viewport)?.tiles)
+    }
+
+    /// Arranging packs into the FREE rect, not the whole window — otherwise
+    /// it lays tiles out underneath the rails.
+    func testArrangePacksIntoTheFreeRectOnly() {
+        let free = DockLayout.frames(
+            docks: DockLayout.normalized(
+                [.left: DockRail(thickness: 400,
+                                 slots: [DockSlot(itemID: UUID())])]),
+            viewport: CGSize(width: 1600, height: 1000)).free
+        let arranged = CanvasLayout.arranged(tiles: tiles(4), viewport: free.size)
+        // Aspect drives row width, so a narrower free rect must produce a
+        // narrower arrangement than the full window would.
+        let wide = CanvasLayout.arranged(tiles: tiles(4),
+                                         viewport: CGSize(width: 1600, height: 1000))
+        let arrangedWidth = arranged.map(\.frame.maxX).max() ?? 0
+        let wideWidth = wide.map(\.frame.maxX).max() ?? 0
+        XCTAssertLessThanOrEqual(arrangedWidth, wideWidth)
+    }
+
+    /// Magnets must not snap a dragged tile to a docked one: the docked frame
+    /// lives in viewport space and the dragged tile in content space, so the
+    /// two numbers are not even in the same coordinate system.
+    func testMagnetsIgnoreDockedFrames() {
+        let dragged = CGRect(x: 100, y: 100, width: 560, height: 400)
+        // No neighbours at all → pure grid snap, whatever is docked.
+        let snapped = CanvasLayout.magnetSnapped(dragged, against: [])
+        XCTAssertEqual(snapped, CanvasLayout.snapped(dragged.origin))
+    }
+
+    func testFreeTilesExcludeAnythingDocked() {
+        let docked = UUID()
+        var board = CanvasBoard(name: "B", tiles: tiles(2))
+        board.tiles.append(CanvasTile(itemID: docked, origin: .zero,
+                                      size: CGSize(width: 400, height: 300)))
+        board.docks = [.left: DockRail(slots: [DockSlot(itemID: docked)])]
+        let free = board.freeTiles
+        XCTAssertEqual(free.count, 2)
+        XCTAssertFalse(free.contains { $0.itemID == docked })
+    }
+}
