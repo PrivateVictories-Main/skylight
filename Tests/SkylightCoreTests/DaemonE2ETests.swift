@@ -40,6 +40,31 @@ final class DaemonE2ETests: XCTestCase {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
+    /// The env carried by SpawnRequest must actually reach the child. The
+    /// plumbing was always there and unused, so nothing had ever proved it —
+    /// and shell integration, which is what makes the regular terminal
+    /// first-class, is delivered entirely through this one field.
+    func testSpawnEnvironmentReachesTheChild() throws {
+        let id = UUID()
+        var conn = try Conn(path: socketPath)
+        try conn.send(WireFrame(type: .hello))
+        _ = try conn.expect(.helloReply)
+
+        let spawn = SpawnRequest(
+            id: id,
+            argv: ["/bin/sh", "-c", "echo ENV_IS:$SKYLIGHT_E2E_VAR; exec cat"],
+            env: ["SKYLIGHT_E2E_VAR": "carried"])
+        try conn.send(WireFrame(type: .spawn,
+                                payload: JSONEncoder().encode(spawn)))
+        try conn.sendResize(id)
+        let output = try conn.collectOutput(for: id, until: "ENV_IS:")
+        XCTAssertTrue(output.contains("ENV_IS:carried"),
+                      "environment did not reach the child: \(output)")
+
+        try conn.send(WireFrame(type: .kill, payload: WirePayload.uuidData(id)))
+        conn.close()
+    }
+
     func testSpawnSurviveDisconnectReplayKill() throws {
         let id = UUID()
         var conn = try Conn(path: socketPath)

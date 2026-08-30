@@ -1079,6 +1079,24 @@ final class LiveSessionStore {
         return [flag] + spec.arguments
     }
 
+    /// Switch ghostty's shell integration on for this session.
+    ///
+    /// The daemon has ALWAYS merged `SpawnRequest.env` over the inherited
+    /// environment — the plumbing was there and the app simply never filled
+    /// it, which is why the regular-terminal path had no cwd reporting, no
+    /// prompt marks and no command reports. No daemon change was needed.
+    ///
+    /// The decision itself is pure and tested (`Launch.environment`); this
+    /// only supplies the live bundle path and the real environment.
+    static func shellIntegrationEnvironment(
+        for instance: TerminalInstance) -> [String: String] {
+        Launch.environment(
+            kind: instance.spec.kind,
+            shellPath: instance.spec.shellPath,
+            resourcesPath: GhosttyRuntimeResources.directoryURL?.path,
+            base: ProcessInfo.processInfo.environment)
+    }
+
     /// The generated per-surface config: translucency plus balanced inner
     /// padding so no row — least of all an agent's bottom status line — ever
     /// clips against the rounded chrome. The opacity is the Settings slider's
@@ -1209,7 +1227,8 @@ final class LiveSessionStore {
                     id: id,
                     argv: daemonArgv(for: instance),
                     cwd: instance.spec.workingDirectory
-                        ?? FileManager.default.homeDirectoryForCurrentUser.path),
+                        ?? FileManager.default.homeDirectoryForCurrentUser.path,
+                    env: Self.shellIntegrationEnvironment(for: instance)),
                     session: session)
             }
             state.configuration = TerminalSurfaceOptions(backend: .inMemory(session))
