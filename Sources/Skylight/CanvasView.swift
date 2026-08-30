@@ -953,10 +953,10 @@ struct TileView: View {
         state.updateTile(updated, in: boardID)
     }
 
+    /// Same question the sidebar row asks, asked the same way: the mark
+    /// belongs to the kind, not to an optional string.
     private var harnessBrand: Brand? {
-        instance.spec.harness.flatMap { id in
-            Catalog.harness(id)?.brand
-        }
+        Catalog.harness(for: instance.spec.kind)?.brand
     }
 
     /// The visible affordance. Same commit path as the ring — it is simply the

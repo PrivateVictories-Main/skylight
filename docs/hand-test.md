@@ -83,6 +83,9 @@ then walk top to bottom. Every line should feel instant.
 - [ ] Flood: run `yes hello` in a tile — the app stays responsive (other
       tiles type fine), memory holds steady, and ⌃C stops it instantly.
       Quit mid-flood, relaunch: the flood resumes into the replay.
+- [ ] Kinds unchanged after the InstanceKind carve: agent rows still wear
+      their vendor mark, shell rows the terminal glyph, in the sidebar AND on
+      tile headers; names still issue as "Claude Code" / "zsh" / "Terminal".
 - [ ] `SKYLIGHT_APPEARANCE=dark` and `=light` both look clean.
 - [ ] Focus transition: enter/leave focus mode repeatedly — the terminal
       surface must never go blank or vanish after the cross-fade.

@@ -1110,7 +1110,7 @@ final class LiveSessionStore {
         state.onClose = { [weak self] _ in self?.onSessionEnd?(id) }
         // Only agents name themselves, and only while they still answer to
         // the name the launcher gave them.
-        if instance.spec.harness != nil, Self.wearsLaunchName(instance) {
+        if instance.spec.kind.isAgent, Self.wearsLaunchName(instance) {
             titleCapture[id] = TitleCapture(defaultName: instance.name)
             installKeyMonitorIfNeeded()
         }

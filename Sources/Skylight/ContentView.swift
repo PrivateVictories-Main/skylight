@@ -319,10 +319,10 @@ struct InstanceRow: View {
         }
     }
 
+    /// The vendor mark, or nil for a shell — asked of the instance's KIND
+    /// rather than by unwrapping a raw harness id.
     private var harnessBrand: Brand? {
-        instance.spec.harness.flatMap { id in
-            Catalog.harness(id)?.brand
-        }
+        Catalog.harness(for: instance.spec.kind)?.brand
     }
 
     /// Where this row sits in the Terminals section, for the reorder commands.
