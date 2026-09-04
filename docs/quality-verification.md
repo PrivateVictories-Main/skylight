@@ -1,5 +1,9 @@
 # Desktop visual alignment and verification — September 4, 2026
 
+For the subsequent platform-preset pass, including 12 target-OS workflows and
+422 native tests, see [platform preset verification](platform-preset-verification.md).
+This page preserves the earlier visual-alignment baseline.
+
 Windows and Linux now follow the native macOS workspace structure: a quiet sidebar,
 a bare terminal panel, and a sparse canvas. The previous preview's prominent logo,
 Quick Launch sidebar section, and permanent terminal-action toolbar were removed.

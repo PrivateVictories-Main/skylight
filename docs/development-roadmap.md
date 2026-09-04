@@ -37,4 +37,5 @@ It separates functioning preview capabilities from the next engineering work.
 Each implementation pass should publish its tested source, measured scope, known
 limits, and target-OS evidence to GitHub. Current records:
 [visual design](visual-design.md), [desktop verification](quality-verification.md),
-[session recovery](session-recovery.md), and [platform presets](platform-presets.md).
+[session recovery](session-recovery.md), [platform presets](platform-presets.md),
+and [platform preset verification](platform-preset-verification.md).

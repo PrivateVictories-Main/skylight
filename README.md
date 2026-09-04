@@ -74,6 +74,11 @@ process — same pid, unbroken step count — still going when the app returns.*
 
 For session recovery and keyboard launch details, see [the recovery guide](docs/session-recovery.md).
 
+Launch presets can carry separate macOS, Windows, and Linux shell or AI CLI
+settings behind the same launch button. See [platform presets](docs/platform-presets.md),
+[verified app checks](docs/platform-preset-verification.md), and the
+[development direction](docs/development-roadmap.md).
+
 ## What it deliberately isn't
 
 - No chat UI, no web views, no API keys, no network calls, no telemetry.

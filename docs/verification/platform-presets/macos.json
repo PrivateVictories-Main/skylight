@@ -1,0 +1,13 @@
+{
+  "platform": "macOS",
+  "success": true,
+  "checks": [
+    "Native preset edit persists macOS folder and preserves defaults, Windows and Linux entries",
+    "Cancel edit leaves on-disk preset file byte-for-byte unchanged",
+    "New preset launch runs /bin/sh in overridden folder and accepts input without a terminal click",
+    "Workspace search resolves preset and launches shell in overridden folder",
+    "Canvas context menu resolves preset and launches shell with keyboard focus"
+  ],
+  "sourceCommit": "8e2ce490b30bea3c3f5115f9130d4ed1f035d379",
+  "method": "Actual isolated native release app, macOS UI automation and shell-created files"
+}
