@@ -28,6 +28,7 @@ let previousBoard: string | undefined;
 let modal: HTMLDialogElement | undefined;
 let saving = Promise.resolve();
 let allowClose = false;
+let providerRefresh: Promise<void> | undefined;
 const sessions = new Map<string, TerminalSession>();
 
 function element<K extends keyof HTMLElementTagNameMap>(
@@ -168,7 +169,24 @@ function select(item: { kind: "terminal" | "canvas"; id: string }): void {
   void persist();
 }
 function render(): void {
-  for (const session of sessions.values()) session.setVisible(false);
+  const board =
+    selected?.kind === "canvas"
+      ? workspace.canvases.find((b) => b.id === selected!.id)
+      : undefined;
+  const visibleIDs = new Set(
+    selected?.kind === "terminal"
+      ? [selected.id]
+      : board?.zoom === 1
+        ? board.tiles.map((tile) => tile.itemID)
+        : [],
+  );
+  const focused = [...sessions.values()].find((session) =>
+    session.element.contains(document.activeElement),
+  );
+  // A status update or move between visible surfaces should not rebuild the GPU
+  // renderer. Release it only when the terminal actually leaves the live view.
+  for (const [id, session] of sessions)
+    if (!visibleIDs.has(id)) session.setVisible(false);
   renderNav();
   toolbar.replaceChildren();
   content.replaceChildren();
@@ -177,9 +195,10 @@ function render(): void {
     return;
   }
   if (selected.kind === "canvas") {
-    const board = workspace.canvases.find((b) => b.id === selected!.id);
     if (board) renderCanvas(board);
     else renderWelcome();
+    if (focused && visibleIDs.has(focused.instance.id))
+      focused.terminal.focus();
     return;
   }
   const instance = workspace.instances.find((i) => i.id === selected!.id);
@@ -272,7 +291,12 @@ async function start(instance: Instance): Promise<void> {
     instance,
     () => {
       renderNav();
-      if (selected?.id === instance.id) render();
+      if (
+        selected?.id === instance.id ||
+        (selected?.kind === "canvas" &&
+          boardFor(workspace, instance.id)?.id === selected.id)
+      )
+        render();
     },
     report,
   );
@@ -337,11 +361,6 @@ function quoteArgument(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
 async function editInstance(instance?: Instance): Promise<void> {
-  try {
-    data.providers = await invoke("refresh_providers");
-  } catch (error) {
-    report(error);
-  }
   const {
     dialog: dlg,
     body,
@@ -447,6 +466,33 @@ async function editInstance(instance?: Instance): Promise<void> {
   dlg.showModal();
   name.focus();
   name.select();
+  // Open immediately from the last discovery result. Slow PATH locations must
+  // not hold up shell editing or create a delayed dialog after another action.
+  mode.setAttribute("aria-busy", "true");
+  providerRefresh ??= invoke<Bootstrap["providers"]>("refresh_providers")
+    .then((providers) => {
+      data.providers = providers;
+    })
+    .finally(() => {
+      providerRefresh = undefined;
+    });
+  void providerRefresh
+    .then(() => {
+      if (modal !== dlg) return;
+      for (const provider of data.providers) {
+        const option = [...mode.options].find(
+          (option) => option.value === provider.id,
+        );
+        if (!option) continue;
+        option.disabled = !provider.executable;
+        option.textContent =
+          provider.name + (provider.executable ? "" : " — not installed");
+      }
+    })
+    .catch((error) => {
+      if (modal === dlg) report(error);
+    })
+    .finally(() => mode.removeAttribute("aria-busy"));
 }
 async function confirm(
   title: string,
@@ -497,7 +543,7 @@ async function removeInstance(instance: Instance): Promise<void> {
   await persist();
   render();
 }
-async function newCanvas(): Promise<void> {
+async function newCanvas(initialInstance?: Instance): Promise<void> {
   const { dialog: dlg, body, close } = dialog("New canvas");
   const name = field("Canvas name", "Untitled canvas");
   const form = element("form");
@@ -516,6 +562,7 @@ async function newCanvas(): Promise<void> {
       zoom: 1,
     };
     workspace.canvases.push(board);
+    if (initialInstance) moveToCanvas(initialInstance, board);
     close();
     select({ kind: "canvas", id: board.id });
   };
@@ -524,7 +571,7 @@ async function newCanvas(): Promise<void> {
 }
 async function placeInstance(instance: Instance): Promise<void> {
   if (!workspace.canvases.length) {
-    await newCanvas();
+    await newCanvas(instance);
     return;
   }
   const { dialog: dlg, body, close } = dialog("Move to canvas");
@@ -533,20 +580,7 @@ async function placeInstance(instance: Instance): Promise<void> {
       button(
         board.name,
         () => {
-          for (const current of workspace.canvases) {
-            current.tiles = current.tiles.filter(
-              (t) => t.itemID !== instance.id,
-            );
-            for (const rail of Object.values(current.docks))
-              rail.slots = rail.slots.filter((s) => s.itemID !== instance.id);
-          }
-          const count = board.tiles.length;
-          board.tiles.push({
-            id: crypto.randomUUID(),
-            itemID: instance.id,
-            origin: [32 + (count % 2) * 580, 32 + Math.floor(count / 2) * 400],
-            size: [540, 360],
-          });
+          moveToCanvas(instance, board);
           close();
           select({ kind: "canvas", id: board.id });
         },
@@ -554,6 +588,20 @@ async function placeInstance(instance: Instance): Promise<void> {
       ),
     );
   dlg.showModal();
+}
+function moveToCanvas(instance: Instance, board: Canvas): void {
+  for (const current of workspace.canvases) {
+    current.tiles = current.tiles.filter((t) => t.itemID !== instance.id);
+    for (const rail of Object.values(current.docks))
+      rail.slots = rail.slots.filter((s) => s.itemID !== instance.id);
+  }
+  const count = board.tiles.length;
+  board.tiles.push({
+    id: crypto.randomUUID(),
+    itemID: instance.id,
+    origin: [32 + (count % 2) * 580, 32 + Math.floor(count / 2) * 400],
+    size: [540, 360],
+  });
 }
 function renderCanvas(board: Canvas): void {
   toolbar.append(

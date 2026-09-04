@@ -132,14 +132,31 @@ fn output_flood_is_bounded_and_does_not_block_another_session() {
     use skylight_runtime::session::OUTPUT_WINDOW;
     let directory = tempfile::tempdir().unwrap();
     let (sender, receiver) = mpsc::channel();
-    let noisy=Session::spawn(LaunchRequest{program:"/bin/sh".into(),arguments:vec!["-c".into(),"while :; do printf '012345678901234567890123456789012345678901234567890123456789\n'; done".into()],cwd:Some(directory.path().to_path_buf()),columns:80,rows:24},Arc::new(move |e| sender.send(e).map_err(|e|e.to_string()))).unwrap();
+    let noisy=Session::spawn(LaunchRequest{program:"/bin/sh".into(),arguments:vec!["-c".into(),"sleep 0.2; while :; do printf '012345678901234567890123456789012345678901234567890123456789\n'; done".into()],cwd:Some(directory.path().to_path_buf()),columns:80,rows:24},Arc::new(move |e| sender.send(e).map_err(|e|e.to_string()))).unwrap();
     let mut bytes = 0;
-    while let Ok(event) = receiver.recv_timeout(Duration::from_millis(100)) {
-        if let SessionEvent::Output(chunk) = event {
-            bytes += chunk.len() as u64;
+    let fill_deadline = Instant::now() + Duration::from_secs(5);
+    // The producer deliberately starts late. A short startup gap is not proof
+    // of backpressure: wait until fewer than one maximum read fits the window.
+    loop {
+        let timeout = if bytes > OUTPUT_WINDOW - 16 * 1024 {
+            Duration::from_millis(100)
+        } else {
+            fill_deadline.saturating_duration_since(Instant::now())
+        };
+        match receiver.recv_timeout(timeout) {
+            Ok(SessionEvent::Output(chunk)) => {
+                bytes += chunk.len() as u64;
+                assert!(
+                    bytes <= OUTPUT_WINDOW,
+                    "Output exceeded its unacknowledged budget"
+                );
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) if bytes > OUTPUT_WINDOW - 16 * 1024 => break,
+            result => {
+                panic!("Producer did not saturate its output window: {bytes} bytes, {result:?}")
+            }
         }
     }
-    assert!(bytes > 0 && bytes <= OUTPUT_WINDOW);
     // With no acknowledgements the noisy reader must stop before the next
     // frame. Another real terminal still needs to accept input and finish.
     real_pty_accepts_input_resizes_and_reports_exit();

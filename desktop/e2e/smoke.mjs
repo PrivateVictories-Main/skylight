@@ -1,207 +1,392 @@
 // Real native WebDriver input and real PTYs. No mocked Tauri commands or providers.
-import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
-import { homedir, platform, release, tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
+import assert from "node:assert/strict";
+import { spawn, spawnSync } from "node:child_process";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { homedir, platform, release, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
-const windows = platform() === 'win32';
-assert(windows || platform() === 'linux', 'Run on Windows or Linux with its native WebDriver');
-const resultDir = resolve('e2e/results');
+const windows = platform() === "win32";
+assert(
+  windows || platform() === "linux",
+  "Run on Windows or Linux with its native WebDriver",
+);
+const resultDir = resolve("e2e/results");
 await mkdir(resultDir, { recursive: true });
-const support = await mkdtemp(join(tmpdir(), 'skylight-ui-'));
-const project = join(support, 'project with spaces');
+const support = await mkdtemp(join(tmpdir(), "skylight-ui-"));
+const project = join(support, "project with spaces");
 await mkdir(project);
-const application = resolve(`target/release/skylight-desktop${windows ? '.exe' : ''}`);
-const evidence = { platform: platform(), release: release(), application, checks: [], success: false };
+const application = resolve(
+  `target/release/skylight-desktop${windows ? ".exe" : ""}`,
+);
+const evidence = {
+  platform: platform(),
+  release: release(),
+  application,
+  checks: [],
+  success: false,
+};
 let session;
-let driverLog = '';
+let driverLog = "";
 let driverError;
-const driver = spawn(join(homedir(), '.cargo/bin', `tauri-driver${windows ? '.exe' : ''}`), [], {
-  env: { ...process.env, SKYLIGHT_PORTABLE_SUPPORT_DIR: support },
-  stdio: ['ignore', 'pipe', 'pipe'],
+const driver = spawn(
+  join(homedir(), ".cargo/bin", `tauri-driver${windows ? ".exe" : ""}`),
+  [],
+  {
+    env: { ...process.env, SKYLIGHT_PORTABLE_SUPPORT_DIR: support },
+    stdio: ["ignore", "pipe", "pipe"],
+    detached: !windows,
+  },
+);
+driver.on("error", (error) => {
+  driverError = error;
 });
-driver.on('error', error => { driverError = error; });
 for (const stream of [driver.stdout, driver.stderr]) {
-  stream.on('data', chunk => { driverLog = (driverLog + chunk).slice(-100_000); });
+  stream.on("data", (chunk) => {
+    driverLog = (driverLog + chunk).slice(-100_000);
+  });
 }
 async function request(method, path, body) {
   if (driverError) throw driverError;
   const response = await fetch(`http://127.0.0.1:4444${path}`, {
-    method, headers: { 'Content-Type': 'application/json' },
+    method,
+    headers: { "Content-Type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(30_000),
   });
   const payload = await response.json();
-  if (!response.ok || payload.value?.error) throw new Error(`${method} ${path}: ${JSON.stringify(payload.value)}`);
+  if (!response.ok || payload.value?.error)
+    throw new Error(`${method} ${path}: ${JSON.stringify(payload.value)}`);
   return payload.value;
 }
-const command = (method, path, body) => request(method, `/session/${session}${path}`, body);
+const command = (method, path, body) =>
+  request(method, `/session/${session}${path}`, body);
 async function until(label, predicate, timeout = 15_000) {
   const deadline = Date.now() + timeout;
   let last;
   while (Date.now() < deadline) {
-    try { const value = await predicate(); if (value) return value; } catch (error) { last = error; }
+    try {
+      const value = await predicate();
+      if (value) return value;
+    } catch (error) {
+      last = error;
+    }
     await delay(150);
   }
-  throw new Error(`Timed out: ${label}${last ? `: ${last.message}` : ''}`);
+  throw new Error(`Timed out: ${label}${last ? `: ${last.message}` : ""}`);
 }
-const inspect = script => command('POST', '/execute/sync', { script, args: [] });
-async function find(value, using = 'css selector') {
-  const element = await command('POST', '/element', { using, value });
-  return element['element-6066-11e4-a52e-4f735466cecf'];
+const inspect = (script) =>
+  command("POST", "/execute/sync", { script, args: [] });
+async function find(value, using = "css selector") {
+  const element = await command("POST", "/element", { using, value });
+  return element["element-6066-11e4-a52e-4f735466cecf"];
 }
 async function click(selector) {
   const id = await until(selector, () => find(selector));
-  await command('POST', `/element/${id}/click`, {});
+  await command("POST", `/element/${id}/click`, {});
 }
 async function clickText(text) {
-  const id = await until(text, () => find(`//button[normalize-space(.)='${text}']`, 'xpath'));
-  await command('POST', `/element/${id}/click`, {});
+  const id = await until(text, () =>
+    find(`//button[normalize-space(.)='${text}']`, "xpath"),
+  );
+  await command("POST", `/element/${id}/click`, {});
 }
 async function fill(label, text) {
   const id = await until(label, () => find(`input[aria-label="${label}"]`));
-  await command('POST', `/element/${id}/clear`, {});
-  if (text) await command('POST', `/element/${id}/value`, { text, value: [...text] });
+  await command("POST", `/element/${id}/clear`, {});
+  if (text)
+    await command("POST", `/element/${id}/value`, { text, value: [...text] });
 }
 async function keys(text) {
-  await command('POST', '/actions', { actions: [{ type: 'key', id: 'keyboard', actions:
-    [...text].flatMap(value => [{ type: 'keyDown', value }, { type: 'keyUp', value }]),
-  }] });
+  await command("POST", "/actions", {
+    actions: [
+      {
+        type: "key",
+        id: "keyboard",
+        actions: [...text].flatMap((value) => [
+          { type: "keyDown", value },
+          { type: "keyUp", value },
+        ]),
+      },
+    ],
+  });
 }
 async function screenshot(name) {
-  const png = await command('GET', '/screenshot');
-  await writeFile(join(resultDir, `${name}.png`), Buffer.from(png, 'base64'));
+  const png = await command("GET", "/screenshot");
+  await writeFile(join(resultDir, `${name}.png`), Buffer.from(png, "base64"));
 }
 async function check(name, action) {
   const start = performance.now();
   await action();
-  evidence.checks.push({ name, elapsedMs: Math.round(performance.now() - start) });
+  evidence.checks.push({
+    name,
+    elapsedMs: Math.round(performance.now() - start),
+  });
   console.log(`PASS ${name}`);
 }
-const running = () => until('running terminal', () => inspect("return document.querySelector('#toolbar .session-status')?.textContent === 'running'"));
-const ended = () => until('ended terminal', () => inspect("return document.querySelector('#toolbar .session-status')?.textContent === 'ended'"));
+const running = () =>
+  until("running terminal", () =>
+    inspect(
+      "return document.querySelector('#toolbar .session-status')?.textContent === 'running'",
+    ),
+  );
+const ended = () =>
+  until("ended terminal", () =>
+    inspect(
+      "return document.querySelector('#toolbar .session-status')?.textContent === 'ended'",
+    ),
+  );
 async function marker(name, focus = true) {
-  if (focus) await click('.xterm-screen');
-  await until('terminal keyboard focus', () => inspect("return document.activeElement?.classList.contains('xterm-helper-textarea')"));
+  if (focus) await click(".xterm-screen");
+  await until("terminal keyboard focus", () =>
+    inspect(
+      "return document.activeElement?.classList.contains('xterm-helper-textarea')",
+    ),
+  );
   await keys(`echo SKYLIGHT_${name}>${name}.txt\uE007`);
-  await until(`real shell marker ${name}`, async () => (await readFile(join(project, `${name}.txt`), 'utf8')).trim() === `SKYLIGHT_${name}`);
+  await until(
+    `real shell marker ${name}`,
+    async () =>
+      (await readFile(join(project, `${name}.txt`), "utf8")).trim() ===
+      `SKYLIGHT_${name}`,
+  );
 }
 async function openApp() {
-  const result = await request('POST', '/session', {
-    capabilities: { alwaysMatch: { browserName: 'wry', 'tauri:options': { application } } },
+  const result = await request("POST", "/session", {
+    capabilities: {
+      alwaysMatch: { browserName: "wry", "tauri:options": { application } },
+    },
   });
   session = result.sessionId;
-  await until('workspace ready', () => inspect("return document.querySelector('#platform')?.textContent.includes('Local workspace')"));
+  await until("workspace ready", () =>
+    inspect(
+      "return document.querySelector('#platform')?.textContent.includes('Local workspace')",
+    ),
+  );
 }
 try {
-  await until('native driver ready', () => request('GET', '/status'), 30_000);
-  await check('Native app startup', openApp);
-  await check('Create shell with explicit working folder', async () => {
-    await click('#new-terminal');
-    await fill('Name', 'QA shell');
-    await fill('Shell executable', windows ? 'C:\\Windows\\System32\\cmd.exe' : '/bin/sh');
-    await fill('Working folder', project);
-    await fill('Arguments', windows ? '/Q /D' : '');
-    assert.equal(await inspect("return document.querySelector('select[aria-label=Run]').options.length"), 12);
-    await clickText('Open terminal');
+  await until("native driver ready", () => request("GET", "/status"), 30_000);
+  await check("Native app startup", openApp);
+  await check("Create shell with explicit working folder", async () => {
+    await click("#new-terminal");
+    await fill("Name", "QA shell");
+    await fill(
+      "Shell executable",
+      windows ? "C:\\Windows\\System32\\cmd.exe" : "/bin/sh",
+    );
+    await fill("Working folder", project);
+    await fill("Arguments", windows ? "/Q /D" : "");
+    assert.equal(
+      await inspect(
+        "return document.querySelector('select[aria-label=Run]').options.length",
+      ),
+      12,
+    );
+    await clickText("Open terminal");
     await running();
-    await marker('initial', false);
+    await marker("initial", false);
   });
-  await check('Save reusable launch preset', async () => {
-    await clickText('Save preset');
-    await fill('Preset name', 'Daily shell');
-    await clickText('Save to Quick Launch');
-    await until('preset in sidebar', () => find('.preset-launch'));
-    await marker('after_preset', false);
+  await check("Save reusable launch preset", async () => {
+    await clickText("Save preset");
+    await fill("Preset name", "Daily shell");
+    await clickText("Save to Quick Launch");
+    await until("preset in sidebar", () => find(".preset-launch"));
+    await marker("after_preset", false);
   });
-  await check('Create canvas and move live terminal', async () => {
-    await click('#new-canvas');
-    await fill('Canvas name', 'QA canvas');
-    await clickText('Create canvas');
-    await click('.session-row');
-    await clickText('Move to canvas');
-    await clickText('QA canvas');
-    await until('live canvas tile', () => find('.tile .xterm-screen'));
-    await marker('canvas');
+  await check("Create canvas and move live terminal", async () => {
+    // The first move must create the canvas AND place the terminal in it.
+    await clickText("Move to canvas");
+    await fill("Canvas name", "QA canvas");
+    await clickText("Create canvas");
+    await until("first move completed", () => find(".tile .xterm-screen"));
+    await click("#new-canvas");
+    await fill("Canvas name", "Spare canvas");
+    await clickText("Create canvas");
+    await click(".session-row");
+    await clickText("Move to canvas");
+    await clickText("QA canvas");
+    await until("live canvas tile", () => find(".tile .xterm-screen"));
+    await marker("canvas");
   });
-  await check('Resize, move, and zoom canvas', async () => {
+  await check("Resize, move, and zoom canvas", async () => {
     await click('[aria-label="Resize QA shell"]');
-    await keys('\uE014');
-    assert.equal(await inspect("return document.querySelector('.tile').style.width"), '556px');
-    const header = await find('.tile header');
-    await command('POST', '/actions', { actions: [{ type: 'pointer', id: 'mouse', parameters: { pointerType: 'mouse' }, actions: [
-      { type: 'pointerMove', duration: 0, origin: { 'element-6066-11e4-a52e-4f735466cecf': header }, x: 0, y: 0 },
-      { type: 'pointerDown', button: 0 },
-      { type: 'pointerMove', duration: 300, origin: 'pointer', x: 64, y: 40 },
-      { type: 'pointerUp', button: 0 },
-    ] }] });
-    assert.equal(await inspect("return document.querySelector('.tile').style.left"), '96px');
-    await clickText('−');
-    assert.equal(await inspect("return document.querySelector('.zoom').textContent"), '90%');
-    assert.equal(await inspect("return document.querySelectorAll('.tile .terminal-surface').length"), 0);
-    await clickText('100%');
-    await marker('after_zoom');
-    await screenshot('canvas');
-    await click('[aria-label="Focus QA shell"]');
-    await running();
-  });
-  await check('Cancel close keeps terminal usable', async () => {
-    await clickText('Close');
-    await clickText('Cancel');
-    await marker('cancel_close', false);
-  });
-  await check('Exit and restart terminal', async () => {
-    await keys('exit\uE007');
-    await ended();
-    await clickText('Restart');
-    await running();
-    await marker('restart', false);
-    await keys('exit\uE007');
-    await ended();
-  });
-  await check('Keyboard search launches saved preset', async () => {
-    await click('#switch');
-    await fill('Search workspace', 'Daily shell');
-    await keys('\uE007');
-    await running();
-    await marker('search_launch', false);
-    await screenshot('preset-launch');
-    await keys('exit\uE007');
-    await ended();
-  });
-  await check('Saved workspace survives app restart without executing sessions', async () => {
-    await until('workspace saved', async () => {
-      const saved = JSON.parse(await readFile(join(support, 'workspace.json'), 'utf8'));
-      return saved.instances.length === 2 && saved.launchPresets.length === 1 && saved.canvases[0].tiles[0].size[0] === 556;
+    await keys("\uE014");
+    assert.equal(
+      await inspect("return document.querySelector('.tile').style.width"),
+      "556px",
+    );
+    const header = await find(".tile header");
+    await command("POST", "/actions", {
+      actions: [
+        {
+          type: "pointer",
+          id: "mouse",
+          parameters: { pointerType: "mouse" },
+          actions: [
+            {
+              type: "pointerMove",
+              duration: 0,
+              origin: { "element-6066-11e4-a52e-4f735466cecf": header },
+              x: 0,
+              y: 0,
+            },
+            { type: "pointerDown", button: 0 },
+            {
+              type: "pointerMove",
+              duration: 300,
+              origin: "pointer",
+              x: 64,
+              y: 40,
+            },
+            { type: "pointerUp", button: 0 },
+          ],
+        },
+      ],
     });
-    await command('DELETE', '');
-    session = undefined;
-    await openApp();
-    assert.equal(await inspect("return document.querySelectorAll('.terminal-surface').length"), 0);
-    assert.equal(await inspect("return document.querySelectorAll('.session-row[aria-label$=\"Ready to open\"]').length"), 2);
-    await screenshot('restored-workspace');
-    await clickText('Open session');
+    assert.equal(
+      await inspect("return document.querySelector('.tile').style.left"),
+      "96px",
+    );
+    await clickText("−");
+    assert.equal(
+      await inspect("return document.querySelector('.zoom').textContent"),
+      "90%",
+    );
+    assert.equal(
+      await inspect(
+        "return document.querySelectorAll('.tile .terminal-surface').length",
+      ),
+      0,
+    );
+    await clickText("100%");
+    await marker("after_zoom");
+    await screenshot("canvas");
+    await keys("exit\uE007");
+    await until("canvas reports process exit", () =>
+      inspect(
+        "return document.querySelector('.tile .session-status')?.textContent === 'ended'",
+      ),
+    );
+    await click('[aria-label="Focus QA shell"]');
+    await clickText("Restart");
     await running();
-    await marker('restored', false);
-    await keys('exit\uE007');
+  });
+  await check("Cancel close keeps terminal usable", async () => {
+    await clickText("Close");
+    await clickText("Cancel");
+    await marker("cancel_close", false);
+  });
+  await check("Exit and restart terminal", async () => {
+    await keys("exit\uE007");
+    await ended();
+    await clickText("Restart");
+    await running();
+    await marker("restart", false);
+    await keys("exit\uE007");
     await ended();
   });
-  assert.equal(await inspect("return document.querySelector('#notice').hidden"), true, 'No unexpected application errors');
+  await check("Keyboard search launches saved preset", async () => {
+    await command("POST", "/actions", {
+      actions: [
+        {
+          type: "key",
+          id: "keyboard",
+          actions: [
+            { type: "keyDown", value: "\uE009" },
+            { type: "keyDown", value: "\uE008" },
+            { type: "keyDown", value: "p" },
+            { type: "keyUp", value: "p" },
+            { type: "keyUp", value: "\uE008" },
+            { type: "keyUp", value: "\uE009" },
+          ],
+        },
+      ],
+    });
+    await fill("Search workspace", "Daily shell");
+    await keys("\uE007");
+    await running();
+    await marker("search_launch", false);
+    await screenshot("preset-launch");
+    await keys("exit\uE007");
+    await ended();
+  });
+  await check(
+    "Saved workspace survives app restart without executing sessions",
+    async () => {
+      await until("workspace saved", async () => {
+        const saved = JSON.parse(
+          await readFile(join(support, "workspace.json"), "utf8"),
+        );
+        return (
+          saved.instances.length === 2 &&
+          saved.launchPresets.length === 1 &&
+          saved.canvases[0].tiles[0].size[0] === 556
+        );
+      });
+      await command("DELETE", "");
+      session = undefined;
+      await openApp();
+      assert.equal(
+        await inspect(
+          "return document.querySelectorAll('.terminal-surface').length",
+        ),
+        0,
+      );
+      assert.equal(
+        await inspect(
+          "return document.querySelectorAll('.session-row[aria-label$=\"Ready to open\"]').length",
+        ),
+        2,
+      );
+      await screenshot("restored-workspace");
+      await clickText("Open session");
+      await running();
+      await marker("restored", false);
+      await keys("exit\uE007");
+      await ended();
+    },
+  );
+  assert.equal(
+    await inspect("return document.querySelector('#notice').hidden"),
+    true,
+    "No unexpected application errors",
+  );
   evidence.success = true;
 } catch (error) {
   evidence.error = error.stack;
   console.error(error);
+  if (!windows) {
+    // This is the isolated Xvfb desktop, including failures before WebDriver
+    // has a session. It never captures the developer's host desktop.
+    spawnSync(
+      "import",
+      ["-window", "root", join(resultDir, "startup-desktop.png")],
+      { timeout: 5_000 },
+    );
+  }
   if (session) {
-    await screenshot('failure').catch(() => {});
-    const dom = await inspect('return document.body.innerText').catch(String);
-    await writeFile(join(resultDir, 'failure-dom.txt'), String(dom));
+    await screenshot("failure").catch(() => {});
+    const dom = await inspect("return document.body.innerText").catch(String);
+    await writeFile(join(resultDir, "failure-dom.txt"), String(dom));
   }
   process.exitCode = 1;
 } finally {
-  if (session) await command('DELETE', '').catch(() => {});
-  driver.kill();
-  await writeFile(join(resultDir, 'driver.log'), driverLog);
-  await writeFile(join(resultDir, 'results.json'), JSON.stringify(evidence, null, 2));
+  if (session) await command("DELETE", "").catch(() => {});
+  // Killing only tauri-driver leaves Linux descendants holding these pipes
+  // open after startup failure, keeping Node alive until the CI timeout.
+  if (!windows && driver.pid) {
+    try {
+      process.kill(-driver.pid, "SIGTERM");
+    } catch {
+      /* Already exited. */
+    }
+  } else driver.kill();
+  driver.stdout.destroy();
+  driver.stderr.destroy();
+  driver.unref();
+  await writeFile(join(resultDir, "driver.log"), driverLog);
+  await writeFile(
+    join(resultDir, "results.json"),
+    JSON.stringify(evidence, null, 2),
+  );
 }
