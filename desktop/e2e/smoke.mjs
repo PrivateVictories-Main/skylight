@@ -129,6 +129,9 @@ async function keys(text) {
   });
 }
 async function screenshot(name) {
+  // A shell marker proves execution, not that the browser compositor has
+  // presented the next terminal frame. Give screenshot evidence a paint turn.
+  await delay(250);
   const png = await command("GET", "/screenshot");
   await writeFile(join(resultDir, `${name}.png`), Buffer.from(png, "base64"));
 }
@@ -450,6 +453,61 @@ try {
       await clickText("Open session");
       await running();
       await marker("restored", false);
+      await keys("exit\uE007");
+      await ended();
+    },
+  );
+  await check(
+    "Canvas double-click launch and detach preserve the live process",
+    async () => {
+      await click(".canvas-row");
+      const viewport = await find(".canvas-viewport");
+      const rect = await inspect(
+        "return document.querySelector('.canvas-viewport').getBoundingClientRect().toJSON()",
+      );
+      await command("POST", "/actions", {
+        actions: [
+          {
+            type: "pointer",
+            id: "mouse",
+            parameters: { pointerType: "mouse" },
+            actions: [
+              {
+                type: "pointerMove",
+                duration: 0,
+                origin: { "element-6066-11e4-a52e-4f735466cecf": viewport },
+                x: Math.round(-rect.width / 2 + 24),
+                y: Math.round(-rect.height / 2 + 24),
+              },
+              { type: "pointerDown", button: 0 },
+              { type: "pointerUp", button: 0 },
+              { type: "pointerDown", button: 0 },
+              { type: "pointerUp", button: 0 },
+            ],
+          },
+        ],
+      });
+      await click(".advanced-launch summary");
+      await fill("Name", "Canvas launch");
+      await fill(
+        "Shell executable",
+        windows ? "C:\\Windows\\System32\\cmd.exe" : "/bin/sh",
+      );
+      await fill("Working folder", project);
+      await fill("Arguments", windows ? "/Q /D" : "");
+      await clickText("Open terminal");
+      await until("new terminal placed on original canvas", () =>
+        inspect("return document.querySelectorAll('.tile').length === 2"),
+      );
+      await click('[aria-label="Remove Canvas launch from canvas"]');
+      await running();
+      await marker("detached", false);
+      assert.equal(
+        await inspect(
+          "return document.querySelector('#toolbar').getBoundingClientRect().height",
+        ),
+        0,
+      );
       await keys("exit\uE007");
       await ended();
     },

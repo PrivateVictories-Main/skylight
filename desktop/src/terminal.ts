@@ -27,7 +27,7 @@ export class TerminalSession {
     this.terminal = new Terminal({
       fontFamily:
         "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
-      fontSize: 13,
+      fontSize: 14,
       lineHeight: 1.15,
       cursorBlink: false,
       scrollback: 3000,

@@ -711,13 +711,15 @@ function moveToCanvas(instance: Instance, board: Canvas): void {
     origin: [32 + (count % 2) * 580, 32 + Math.floor(count / 2) * 400],
     size: [560, 400],
   });
-  if (count === 0) {
-    const viewport = document.querySelector("main")!;
-    board.pan = [
-      (viewport.clientWidth - 560) / 2 - 32,
-      (viewport.clientHeight - 400) / 2 - 32,
-    ];
-  }
+  // Reveal the newly placed terminal at live scale, including on a board
+  // that was panned away or already contains several tiles.
+  const tile = board.tiles[board.tiles.length - 1];
+  const viewport = document.querySelector("main")!;
+  board.zoom = 1;
+  board.pan = [
+    (viewport.clientWidth - tile.size[0]) / 2 - tile.origin[0],
+    (viewport.clientHeight - tile.size[1]) / 2 - tile.origin[1],
+  ];
 }
 function renderCanvas(board: Canvas): void {
   const zoom = (value: number) => {

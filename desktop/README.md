@@ -9,7 +9,7 @@ working foundation, not a claim of platform or feature parity.
 - Real local terminal processes: Unix PTYs and Windows ConPTY via portable-pty.
 - Normal shells or installed AI CLIs, with explicit executable, working folder,
   and argument settings. Detection is not a claim of sign-in or entitlement.
-- Named **Quick Launch** presets. Save a shell/CLI configuration, edit it, or
+- Named presets in the **New** dialog. Save a shell/CLI configuration, edit it, or
   start another independent session with one click.
 - Native file dialogs for importing/exporting workspace JSON and native macOS
   preset arrays. Plain version-2 workspace files remain readable; geometry,
@@ -28,13 +28,39 @@ working foundation, not a claim of platform or feature parity.
 - Atomic workspace saves and an exclusive workspace lock; corrupt or unsupported
   input is reported without replacing the saved file.
 
+## Same quiet workspace
+
+The native macOS app is the visual reference. Windows and Linux share its
+256-point sidebar, bottom **New** button, neutral charcoal surfaces, 8-point
+terminal inset, 16-point panel corners, 30-point canvas headers, 560 × 400
+initial tiles, and sparse 64-point canvas grid. Terminals fill their panel
+without a permanent action toolbar. System title bars and installed fonts can
+differ across operating systems; the Mac's native material is not emulated with
+a costly web blur.
+
+Right-click a terminal row, use its **⋯** button, or press **Shift+F10** while the
+row is focused for launch settings, presets, canvas placement, and close.
+Workspace-wide commands are under the small **⋯** button above the sidebar.
+Saved presets appear in **New**, and **Launch options** reveals names, executable
+paths, and arguments. Search can launch presets directly.
+
+Canvas zoom is in the workspace or canvas context menu. Double-click empty canvas
+space to create a terminal on that board. The tile's expand button fills the
+window; its **×** returns it to the sidebar without ending the process. The
+sidebar toggle makes more room for terminal output.
+
+Native WebDriver checks enforce the measured sidebar width, panel inset/corners,
+absence of a terminal toolbar, canvas header height, and grid spacing on both
+Windows and Linux, alongside real terminal input and saved-workspace checks.
+
 ## Launch presets across computers
 
 On macOS: **File → Export Launch Presets…** produces `skylight-presets.json`.
-In this preview: **Import** adds those presets to Quick Launch. Inspect the
+In this preview: **Workspace menu (⋯) → Import workspace** adds those presets to
+**New → Saved presets**. Inspect the
 executable and folder using the preset's edit button before launching locally.
 
-In this preview: **Export** produces a version-2 workspace including
+In this preview: **Workspace menu (⋯) → Export workspace** produces a version-2 workspace including
 `launchPresets`. On macOS, **File → Import Launch Presets…** reads that field.
 This transfers launch configuration. It does not read CLI credential stores or
 transfer provider subscriptions, running processes, or command history. Explicit
