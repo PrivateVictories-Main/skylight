@@ -86,7 +86,25 @@ npm run tauri -- build --bundles deb
 ```
 
 `.github/workflows/portable.yml` tests and builds these packages on Windows 2022
-and Ubuntu 24.04 runners and stores workflow artifacts. It does not publish a
+and Ubuntu 24.04 runners and stores workflow artifacts. Native WebDriver then
+drives the built app through shell creation, presets, canvas movement/resize/zoom,
+close cancellation, exit/restart, and saved-workspace recovery. Real shell commands
+must create marker files in the configured working folder. Screenshots and a JSON
+check report are uploaded as `skylight-ui-evidence-*`, including failure evidence.
+The elapsed times in that report include automation overhead; they are not
+input-to-render benchmarks. Provider sign-ins, native file dialogs, installers,
+IME, and physical hardware are outside this smoke suite.
+
+CI runs only on public repositories using standard hosted runners, which
+[GitHub provides free for public projects](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+The private source mirror skips these jobs to avoid consuming private minutes.
+For local Linux UI checks, install `webkit2gtk-driver`, `xvfb`, and
+`cargo install tauri-driver --version 2.0.6 --locked`, build the release app, then
+run `xvfb-run -a node e2e/smoke.mjs`. Windows requires a matching Microsoft
+Edge driver on PATH and uses `node e2e/smoke.mjs`. The CI setup follows
+[Tauri's native WebDriver guidance](https://v2.tauri.app/develop/tests/webdriver/ci/).
+
+The workflow does not publish a
 GitHub release. Windows signing, Linux distribution validation, update delivery,
 and hardware performance qualification are release gates, not completed features.
 
