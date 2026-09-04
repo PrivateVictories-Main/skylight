@@ -66,6 +66,10 @@ jobs:
       - name: Exercise Linux app
         if: runner.os == 'Linux'
         timeout-minutes: 6
+        env:
+          # Xvfb has no hardware buffer-sharing path. Keep this CI-only so
+          # normal Linux desktops retain their accelerated renderer.
+          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
         run: xvfb-run -a -s '-screen 0 1440x1000x24' node e2e/smoke.mjs
       - name: Exercise Windows app
         if: runner.os == 'Windows'
@@ -75,11 +79,13 @@ jobs:
         if: always()
         with:
           name: skylight-ui-evidence-${{ matrix.os }}
+          retention-days: 7
           if-no-files-found: warn
           path: desktop/e2e/results/
       - uses: actions/upload-artifact@v4
         with:
           name: skylight-preview-${{ matrix.os }}
+          retention-days: 14
           if-no-files-found: error
           path: |
             desktop/target/release/bundle/deb/*.deb

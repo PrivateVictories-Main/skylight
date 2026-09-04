@@ -16,8 +16,12 @@ working foundation, not a claim of platform or feature parity.
   edge-dock metadata, and unknown JSON fields are retained.
 - Session sidebar and keyboard search; movable/resizable canvas tiles, overview
   zoom, and full-window terminal focus. At 100% canvas tiles are live terminals.
-- WebGL rendering with xterm's built-in renderer as fallback; inactive surfaces
-  relinquish their GPU addon. Scrollback is bounded independently per terminal.
+- WebGL rendering with xterm's built-in renderer as fallback. Visible terminals
+  keep their renderer during status updates and moves; inactive surfaces release
+  it. Scrollback is bounded independently per terminal.
+- Launch settings open immediately while provider discovery refreshes in the
+  background. The first move to a canvas creates it and places the terminal in
+  one flow; live tiles update their process status while preserving typing focus.
 - Raw binary output through Tauri channels, a 128 KiB unacknowledged output window
   per session, and a separate bounded input worker. A noisy producer backpressures
   its own PTY. No terminal output is treated as HTML or used to run app commands.
@@ -91,6 +95,7 @@ drives the built app through shell creation, presets, canvas movement/resize/zoo
 close cancellation, exit/restart, and saved-workspace recovery. Real shell commands
 must create marker files in the configured working folder. Screenshots and a JSON
 check report are uploaded as `skylight-ui-evidence-*`, including failure evidence.
+UI evidence is retained for seven days and installers for fourteen days.
 The elapsed times in that report include automation overhead; they are not
 input-to-render benchmarks. Provider sign-ins, native file dialogs, installers,
 IME, and physical hardware are outside this smoke suite.
@@ -100,7 +105,9 @@ CI runs only on public repositories using standard hosted runners, which
 The private source mirror skips these jobs to avoid consuming private minutes.
 For local Linux UI checks, install `webkit2gtk-driver`, `xvfb`, and
 `cargo install tauri-driver --version 2.0.6 --locked`, build the release app, then
-run `xvfb-run -a node e2e/smoke.mjs`. Windows requires a matching Microsoft
+run `WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a node e2e/smoke.mjs` on a virtual
+display. This headless-only setting leaves normal desktop graphics settings
+unchanged. Windows requires a matching Microsoft
 Edge driver on PATH and uses `node e2e/smoke.mjs`. The CI setup follows
 [Tauri's native WebDriver guidance](https://v2.tauri.app/develop/tests/webdriver/ci/).
 
