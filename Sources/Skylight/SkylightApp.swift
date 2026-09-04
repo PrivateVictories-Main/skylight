@@ -29,6 +29,10 @@ struct SkylightApp: App {
                 Button("New Shell Terminal") { state.launch(TerminalSpec()) }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
                 Divider()
+                Button("Import Launch Presets…") { LaunchPresetTransfer.importPresets(state) }
+                Button("Export Launch Presets…") { LaunchPresetTransfer.exportPresets(state) }
+                    .disabled(state.presets.isEmpty)
+                Divider()
                 Button("New Canvas") { state.selection = .canvas(state.newCanvas().id) }
                     .keyboardShortcut("n", modifiers: [.command, .shift])
             }

@@ -103,6 +103,20 @@ process — same pid, unbroken step count — still going when the app returns.*
 - **⌘0 / ⌘+ / ⌘− / ⌘9** — 100% / zoom in / out / to fit (⌘= works too)
 - **⇧⌘A** — arrange the canvas
 
+## Windows and Linux
+
+A sibling implementation is being developed in [`desktop/`](desktop/README.md).
+It provides real PTY sessions, named Quick Launch presets, workspace search, and
+canvas navigation. The native macOS app remains SwiftUI/Ghostty.
+
+Launch presets can move between versions through **File → Import/Export Launch
+Presets…** on macOS and **Import/Export** in the portable preview. Review local
+folders and executable paths before launching on another OS.
+
+The portable app is a development preview: Windows/Linux build jobs are provided,
+but installer validation, session survival, and full feature/performance parity
+remain release gates. See its README for the exact supported scope.
+
 ## Build & run
 
 ```

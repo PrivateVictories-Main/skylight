@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main-window",
+  "description": "Local window lifecycle only. Terminal access uses app-owned Rust commands.",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-close"]
+}

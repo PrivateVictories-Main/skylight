@@ -1,0 +1,13 @@
+[
+  {"id":"claude","name":"Claude Code"},
+  {"id":"codex","name":"Codex"},
+  {"id":"gemini","name":"Gemini CLI"},
+  {"id":"copilot","name":"Copilot CLI"},
+  {"id":"cursor-agent","name":"Cursor CLI"},
+  {"id":"qwen","name":"Qwen Code"},
+  {"id":"amp","name":"Amp"},
+  {"id":"opencode","name":"OpenCode"},
+  {"id":"droid","name":"Droid"},
+  {"id":"goose","name":"Goose"},
+  {"id":"crush","name":"Crush"}
+]

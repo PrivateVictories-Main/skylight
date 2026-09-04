@@ -1,0 +1,14 @@
+[workspace]
+members = ["crates/skylight-runtime", "src-tauri"]
+default-members = ["crates/skylight-runtime"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license-file = "../LICENSE.md"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
