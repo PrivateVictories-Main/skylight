@@ -144,13 +144,13 @@ async function check(name, action) {
 const running = () =>
   until("running terminal", () =>
     inspect(
-      "return document.querySelector('#toolbar .session-status')?.textContent === 'running'",
+      "return document.querySelector('#content')?.dataset.sessionState === 'running'",
     ),
   );
 const ended = () =>
   until("ended terminal", () =>
     inspect(
-      "return document.querySelector('#toolbar .session-status')?.textContent === 'ended'",
+      "return document.querySelector('#content')?.dataset.sessionState === 'ended'",
     ),
   );
 async function marker(name, focus = true) {
@@ -189,9 +189,7 @@ async function openApp() {
   });
   session = result.sessionId;
   await until("workspace ready", () =>
-    inspect(
-      "return document.querySelector('#platform')?.textContent.includes('Local workspace')",
-    ),
+    inspect("return document.querySelector('#app')?.dataset.ready === 'true'"),
   );
 }
 try {
@@ -199,6 +197,7 @@ try {
   await check("Native app startup", openApp);
   await check("Create shell with explicit working folder", async () => {
     await click("#new-terminal");
+    await click(".advanced-launch summary");
     await fill("Name", "QA shell");
     await fill(
       "Shell executable",
@@ -215,24 +214,80 @@ try {
     await clickText("Open terminal");
     await running();
     await marker("initial", false);
+    await screenshot("terminal");
+    const visual = await inspect(`
+      const main = document.querySelector('main').getBoundingClientRect();
+      const panel = document.querySelector('#content');
+      return {
+        sidebar: document.querySelector('.sidebar').getBoundingClientRect().width,
+        panelInset: panel.getBoundingClientRect().top - main.top,
+        radius: getComputedStyle(panel).borderRadius,
+        toolbarHeight: document.querySelector('#toolbar').getBoundingClientRect().height,
+        presetsInSidebar: document.querySelectorAll('#sessions .preset-row').length,
+      };
+    `);
+    assert.deepEqual(visual, {
+      sidebar: 256,
+      panelInset: 8,
+      radius: "16px",
+      toolbarHeight: 0,
+      presetsInSidebar: 0,
+    });
+    evidence.visualContract = visual;
   });
+  await check(
+    "Sidebar collapse and menu keyboard dismissal preserve terminal input",
+    async () => {
+      await click("#sidebar-toggle");
+      assert.equal(
+        await inspect(
+          "return document.querySelector('.sidebar').getBoundingClientRect().width",
+        ),
+        0,
+      );
+      await marker("collapsed");
+      await click("#sidebar-reveal");
+      await marker("expanded");
+      await click("#workspace-menu");
+      await keys("\uE015\uE00C");
+      assert.equal(
+        await inspect("return document.querySelectorAll('[role=menu]').length"),
+        0,
+      );
+      await marker("menu_dismissed");
+    },
+  );
   await check("Save reusable launch preset", async () => {
+    await click("#workspace-menu");
     await clickText("Save preset");
     await fill("Preset name", "Daily shell");
     await clickText("Save to Quick Launch");
-    await until("preset in sidebar", () => find(".preset-launch"));
+    await until(
+      "preset saved",
+      async () =>
+        JSON.parse(await readFile(join(support, "workspace.json"), "utf8"))
+          .launchPresets.length === 1,
+    );
     await marker("after_preset", false);
+    await click("#new-terminal");
+    await until("preset in New dialog", () => find("dialog .preset-launch"));
+    await screenshot("new-terminal");
+    await keys("\uE00C");
+    await marker("after_launch_dialog", false);
   });
   await check("Create canvas and move live terminal", async () => {
     // The first move must create the canvas AND place the terminal in it.
+    await click("#workspace-menu");
     await clickText("Move to canvas");
     await fill("Canvas name", "QA canvas");
     await clickText("Create canvas");
     await until("first move completed", () => find(".tile .xterm-screen"));
+    await click("#workspace-menu");
     await click("#new-canvas");
     await fill("Canvas name", "Spare canvas");
     await clickText("Create canvas");
     await click(".session-row");
+    await click("#workspace-menu");
     await clickText("Move to canvas");
     await clickText("QA canvas");
     await until("live canvas tile", () => find(".tile .xterm-screen"));
@@ -243,7 +298,7 @@ try {
     await keys("\uE014");
     assert.equal(
       await inspect("return document.querySelector('.tile').style.width"),
-      "556px",
+      "576px",
     );
     const header = await find(".tile header");
     await command("POST", "/actions", {
@@ -277,10 +332,13 @@ try {
       await inspect("return document.querySelector('.tile').style.left"),
       "96px",
     );
-    await clickText("−");
+    await click("#workspace-menu");
+    await clickText("Zoom out");
     assert.equal(
-      await inspect("return document.querySelector('.zoom').textContent"),
-      "90%",
+      await inspect(
+        "return document.querySelector('.canvas-viewport').getAttribute('aria-label')",
+      ),
+      "QA canvas, 90%",
     );
     assert.equal(
       await inspect(
@@ -288,8 +346,27 @@ try {
       ),
       0,
     );
-    await clickText("100%");
+    await click("#workspace-menu");
+    await clickText("Actual size (100%)");
     await marker("after_zoom");
+    assert.equal(
+      await inspect(
+        "return getComputedStyle(document.querySelector('.tile header')).height",
+      ),
+      "30px",
+    );
+    assert.equal(
+      await inspect(
+        "return document.querySelector('#toolbar').getBoundingClientRect().height",
+      ),
+      0,
+    );
+    assert.equal(
+      await inspect(
+        "return getComputedStyle(document.querySelector('.canvas-viewport')).backgroundSize",
+      ),
+      "64px 64px",
+    );
     await screenshot("canvas");
     await keys("exit\uE007");
     await until("canvas reports process exit", () =>
@@ -302,6 +379,7 @@ try {
     await running();
   });
   await check("Cancel close keeps terminal usable", async () => {
+    await click("#workspace-menu");
     await clickText("Close");
     await clickText("Cancel");
     await marker("cancel_close", false);
@@ -350,7 +428,7 @@ try {
         return (
           saved.instances.length === 2 &&
           saved.launchPresets.length === 1 &&
-          saved.canvases[0].tiles[0].size[0] === 556
+          saved.canvases[0].tiles[0].size[0] === 576
         );
       });
       await command("DELETE", "");

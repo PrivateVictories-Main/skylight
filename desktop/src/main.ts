@@ -13,10 +13,11 @@ import {
   type SearchItem,
   type Workspace,
 } from "./model";
+import { showMenu, type MenuAction } from "./menu";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
-root.innerHTML = `<aside class="sidebar"><header><span class="mark" aria-hidden="true">▱</span><strong>Skylight</strong><span class="preview">PREVIEW</span></header><div class="sidebar-actions"><button id="new-terminal">＋ New terminal</button><button id="switch" aria-label="Search workspace">⌕</button></div><nav id="sessions" aria-label="Workspace"></nav><footer><button id="new-canvas">＋ Canvas</button><div><button id="import">Import</button><button id="export">Export</button></div><span id="platform"></span></footer></aside><main><header id="toolbar"></header><div id="content"></div><div id="notice" role="status" hidden></div></main>`;
+root.innerHTML = `<aside class="sidebar"><header class="sidebar-chrome"><button id="workspace-menu" class="icon-button" aria-label="Workspace menu" title="Workspace menu">…</button><span class="spacer"></span><button id="switch" class="icon-button" aria-label="Search workspace" title="Search workspace"></button><button id="sidebar-toggle" class="icon-button" aria-label="Hide sidebar" title="Hide sidebar"></button></header><nav id="sessions" aria-label="Workspace"></nav><footer><button id="new-terminal" aria-label="New Terminal">＋ New</button></footer></aside><button id="sidebar-reveal" class="icon-button" aria-label="Show sidebar" title="Show sidebar" hidden></button><main><header id="toolbar"></header><div id="content"></div><div id="notice" role="status" hidden></div></main>`;
 const nav = document.querySelector<HTMLElement>("#sessions")!;
 const toolbar = document.querySelector<HTMLElement>("#toolbar")!;
 const content = document.querySelector<HTMLElement>("#content")!;
@@ -74,9 +75,62 @@ function persist(): Promise<void> {
 function status(id: string): string {
   return sessions.get(id)?.state ?? "Ready to open";
 }
+const glyphs = {
+  terminal:
+    '<rect x="2.5" y="4" width="15" height="12" rx="2"/><path d="m6 8 2 2-2 2m5 0h3"/>',
+  canvas:
+    '<rect x="6" y="6" width="11" height="11" rx="2"/><path d="M13 4V3H3v10h1"/>',
+  search: '<circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/>',
+  sidebar:
+    '<rect x="2" y="3" width="16" height="14" rx="2"/><path d="M8 3v14M4.5 6h1m-1 3h1"/>',
+} as const;
+function icon(kind: keyof typeof glyphs): HTMLElement {
+  const node = element("span", undefined, "glyph");
+  node.setAttribute("aria-hidden", "true");
+  node.innerHTML = `<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round">${glyphs[kind]}</svg>`;
+  return node;
+}
+function menuAt(node: HTMLElement, actions: MenuAction[]): void {
+  const rect = node.getBoundingClientRect();
+  showMenu(actions, { x: rect.left, y: rect.bottom + 4 }, report);
+}
+function instanceActions(instance: Instance): MenuAction[] {
+  const actions: MenuAction[] = [
+    { label: "Save preset", run: () => savePreset(instance) },
+    { label: "Edit launch settings", run: () => editInstance(instance) },
+    { label: "Move to canvas", run: () => placeInstance(instance) },
+  ];
+  if (["ended", "error"].includes(status(instance.id)))
+    actions.push({ label: "Restart", run: () => start(instance) });
+  if (boardFor(workspace, instance.id))
+    actions.push({
+      label: "Remove from canvas",
+      run: () => detachInstance(instance),
+    });
+  actions.push({ label: "Close", run: () => removeInstance(instance) });
+  return actions;
+}
+function contextual(node: HTMLElement, actions: () => MenuAction[]): void {
+  node.oncontextmenu = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    showMenu(actions(), { x: event.clientX, y: event.clientY }, report);
+  };
+  node.onkeydown = (event) => {
+    if (
+      event.key === "ContextMenu" ||
+      (event.shiftKey && event.key === "F10")
+    ) {
+      event.preventDefault();
+      menuAt(node, actions());
+    }
+  };
+}
 function renderNav(): void {
   nav.replaceChildren();
-  const addInstance = (instance: Instance) => {
+  const addInstance = (instance: Instance, resident = false) => {
+    const wrapper = element("div", undefined, "instance-row");
+    wrapper.classList.toggle("resident", resident);
     const row = button(
       "",
       () => select({ kind: "terminal", id: instance.id }),
@@ -84,57 +138,37 @@ function renderNav(): void {
     );
     row.classList.toggle("selected", selected?.id === instance.id);
     row.setAttribute("aria-label", `${instance.name}, ${status(instance.id)}`);
-    row.append(
-      element(
-        "span",
-        "●",
-        `state-dot ${sessions.get(instance.id)?.state ?? ""}`,
-      ),
-      element("span", instance.name, "row-name"),
+    row.setAttribute("aria-current", String(selected?.id === instance.id));
+    const label = element("span", undefined, "row-label");
+    label.append(element("span", instance.name, "row-name"));
+    const caption =
+      status(instance.id) === "ended"
+        ? "Session ended"
+        : instance.spec.workingDirectory;
+    if (caption) label.append(element("span", caption, "row-caption"));
+    row.append(icon("terminal"), label);
+    const more = button(
+      "…",
+      () => menuAt(more, instanceActions(instance)),
+      "row-more",
     );
-    if (instance.spec.harness) row.append(element("span", "AI", "agent-label"));
-    nav.append(row);
+    more.setAttribute("aria-label", `Actions for ${instance.name}`);
+    more.title = "Terminal actions";
+    contextual(row, () => instanceActions(instance));
+    wrapper.append(row, more);
+    nav.append(wrapper);
   };
-  const presets = workspace.launchPresets ?? [];
-  if (presets.length) {
-    nav.append(element("h2", "QUICK LAUNCH"));
-    for (const preset of presets) {
-      const row = element("div", undefined, "preset-row");
-      row.append(
-        button(preset.name, () => launchPreset(preset), "preset-launch"),
-        button("…", () => editInstance(preset), "preset-remove"),
-        button(
-          "×",
-          async () => {
-            if (
-              await confirm(
-                "Remove preset?",
-                `Remove ${preset.name} from Quick Launch? Existing sessions stay open.`,
-                "Remove",
-              )
-            ) {
-              workspace.launchPresets = presets.filter(
-                (p) => p.id !== preset.id,
-              );
-              await persist();
-              renderNav();
-            }
-          },
-          "preset-remove",
-        ),
-      );
-      row.children[1].setAttribute("aria-label", `Edit preset ${preset.name}`);
-      row.children[2].setAttribute(
-        "aria-label",
-        `Remove preset ${preset.name}`,
-      );
-      nav.append(row);
-    }
-  }
   nav.append(element("h2", "TERMINALS"));
-  workspace.instances
-    .filter((i) => !boardFor(workspace, i.id))
-    .forEach(addInstance);
+  const free = workspace.instances.filter((i) => !boardFor(workspace, i.id));
+  free.forEach((instance) => addInstance(instance));
+  if (!free.length)
+    nav.append(
+      element(
+        "p",
+        `${data.platform === "macos" ? "⌘T" : "Ctrl+Shift+T"} new terminal`,
+        "sidebar-hint",
+      ),
+    );
   for (const board of workspace.canvases) {
     const row = button(
       "",
@@ -143,16 +177,29 @@ function renderNav(): void {
     );
     row.classList.toggle("selected", selected?.id === board.id);
     row.append(
-      element("span", "▦"),
+      icon("canvas"),
       element("span", board.name, "row-name"),
       element("span", String(residentIDs(board).length), "count"),
     );
     nav.append(row);
     residentIDs(board).forEach((id) => {
-      const i = workspace.instances.find((i) => i.id === id);
-      if (i) addInstance(i);
+      const instance = workspace.instances.find((i) => i.id === id);
+      if (instance) addInstance(instance, true);
     });
   }
+  if (!workspace.canvases.length)
+    nav.append(
+      element("p", "Right-click a terminal\nto start a canvas", "sidebar-hint"),
+    );
+}
+async function detachInstance(instance: Instance): Promise<void> {
+  for (const board of workspace.canvases) {
+    board.tiles = board.tiles.filter((tile) => tile.itemID !== instance.id);
+    for (const rail of Object.values(board.docks))
+      rail.slots = rail.slots.filter((slot) => slot.itemID !== instance.id);
+  }
+  select({ kind: "terminal", id: instance.id });
+  await persist();
 }
 function select(item: { kind: "terminal" | "canvas"; id: string }): void {
   selected = item;
@@ -189,6 +236,10 @@ function render(): void {
     if (!visibleIDs.has(id)) session.setVisible(false);
   renderNav();
   toolbar.replaceChildren();
+  toolbar.className = "";
+  content.classList.toggle("is-canvas", Boolean(board));
+  delete content.dataset.sessionState;
+  content.oncontextmenu = null;
   content.replaceChildren();
   if (!selected) {
     renderWelcome();
@@ -206,45 +257,43 @@ function render(): void {
     renderWelcome();
     return;
   }
-  if (previousBoard)
+  content.dataset.sessionState = status(instance.id);
+  // A terminal owns its full panel. Commands live on its sidebar row, keeping
+  // shell text at the top just like the native macOS TerminalPanel.
+  if (previousBoard) {
+    toolbar.className = "focus-bar";
     toolbar.append(
       button(
         "‹ Canvas",
         () => select({ kind: "canvas", id: previousBoard! }),
         "subtle",
       ),
+      element("strong", instance.name),
     );
-  toolbar.append(
-    element("strong", instance.name),
-    element("span", status(instance.id), "session-status"),
-    element("span", "", "spacer"),
-  );
-  toolbar.append(
-    button("Save preset", () => savePreset(instance), "subtle"),
-    button("Edit", () => editInstance(instance), "subtle"),
-    button("Move to canvas", () => placeInstance(instance), "subtle"),
-    button("Close", () => removeInstance(instance), "subtle"),
-  );
+  }
   const session = sessions.get(instance.id);
   if (session) {
     content.append(session.element);
     session.setVisible(true, true);
-    if (session.state === "ended" || session.state === "error")
-      toolbar.append(button("Restart", () => start(instance), "primary"));
+    if (session.state === "ended" || session.state === "error") {
+      const recovery = element("div", undefined, "session-recovery");
+      recovery.append(
+        element("span", "Session ended"),
+        button("Restart", () => start(instance), "subtle"),
+      );
+      content.append(recovery);
+    }
   } else renderReady(instance, content);
 }
 function renderWelcome(): void {
-  toolbar.append(element("strong", "Workspace"));
   const welcome = element("section", undefined, "welcome");
   welcome.append(
-    element("div", "▱", "welcome-mark"),
-    element("h1", "Make room for your work."),
+    icon("terminal"),
+    element("h1", "Nothing Selected"),
     element(
       "p",
-      "Open a shell or an installed AI CLI. Keep each project together.",
+      `Select a terminal or canvas in the sidebar, or press ${data?.platform === "macos" ? "⌘T" : "Ctrl+Shift+T"} for a new terminal.`,
     ),
-    button("New terminal", () => editInstance(), "primary"),
-    button("Import a workspace", importWorkspace, "subtle"),
   );
   content.append(welcome);
 }
@@ -360,12 +409,43 @@ function labeled(label: string, input: HTMLElement): HTMLLabelElement {
 function quoteArgument(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
 }
-async function editInstance(instance?: Instance): Promise<void> {
+async function editInstance(
+  instance?: Instance,
+  targetBoard?: Canvas,
+): Promise<void> {
   const {
     dialog: dlg,
     body,
     close,
   } = dialog(instance ? "Launch settings" : "New terminal");
+  if (!instance && workspace.launchPresets?.length) {
+    const presets = element("section", undefined, "launch-presets");
+    presets.append(element("h3", "SAVED PRESETS"));
+    for (const preset of workspace.launchPresets) {
+      const row = element("div", undefined, "preset-row");
+      row.append(
+        button(
+          preset.name,
+          () => {
+            close();
+            return launchPreset(preset);
+          },
+          "preset-launch",
+        ),
+      );
+      const edit = button(
+        "…",
+        () => {
+          void editInstance(preset).catch(report);
+        },
+        "preset-remove",
+      );
+      edit.setAttribute("aria-label", `Edit preset ${preset.name}`);
+      row.append(edit);
+      presets.append(row);
+    }
+    body.append(presets);
+  }
   const form = element("form");
   const mode = element("select");
   mode.setAttribute("aria-label", "Run");
@@ -406,13 +486,15 @@ async function editInstance(instance?: Instance): Promise<void> {
           ? "Terminal"
           : data.providers.find((p) => p.id === mode.value)!.name;
   };
-  form.append(
-    labeled("Run", mode),
+  const advanced = element("details", undefined, "advanced-launch");
+  advanced.open = Boolean(instance);
+  advanced.append(
+    element("summary", "Launch options"),
     labeled("Name", name),
     programRow,
-    labeled("Working folder", cwd),
     labeled("Arguments", args),
   );
+  form.append(labeled("Run", mode), labeled("Working folder", cwd), advanced);
   const help = element(
     "p",
     "Uses the CLI’s own sign-in and subscription. Restored or imported sessions open only when you choose.",
@@ -425,6 +507,27 @@ async function editInstance(instance?: Instance): Promise<void> {
     "primary",
   );
   submit.type = "submit";
+  if (instance && workspace.launchPresets?.some((p) => p.id === instance.id))
+    actions.append(
+      button(
+        "Remove preset",
+        async () => {
+          if (
+            await confirm(
+              "Remove preset?",
+              `Remove ${instance.name}? Existing sessions stay open.`,
+              "Remove",
+            )
+          ) {
+            workspace.launchPresets = workspace.launchPresets?.filter(
+              (p) => p.id !== instance.id,
+            );
+            await persist();
+          }
+        },
+        "subtle",
+      ),
+    );
   actions.append(button("Cancel", close, "subtle"), submit);
   form.append(help, actions);
   body.append(form);
@@ -456,6 +559,10 @@ async function editInstance(instance?: Instance): Promise<void> {
           await persist();
           close();
           await start(item);
+          if (targetBoard && workspace.canvases.includes(targetBoard)) {
+            moveToCanvas(item, targetBoard);
+            select({ kind: "canvas", id: targetBoard.id });
+          }
         }
       } catch (error) {
         report(error);
@@ -464,8 +571,10 @@ async function editInstance(instance?: Instance): Promise<void> {
     })();
   };
   dlg.showModal();
-  name.focus();
-  name.select();
+  if (instance) {
+    name.focus();
+    name.select();
+  } else mode.focus();
   // Open immediately from the last discovery result. Slow PATH locations must
   // not hold up shell editing or create a delayed dialog after another action.
   mode.setAttribute("aria-busy", "true");
@@ -600,43 +709,50 @@ function moveToCanvas(instance: Instance, board: Canvas): void {
     id: crypto.randomUUID(),
     itemID: instance.id,
     origin: [32 + (count % 2) * 580, 32 + Math.floor(count / 2) * 400],
-    size: [540, 360],
+    size: [560, 400],
   });
+  if (count === 0) {
+    const viewport = document.querySelector("main")!;
+    board.pan = [
+      (viewport.clientWidth - 560) / 2 - 32,
+      (viewport.clientHeight - 400) / 2 - 32,
+    ];
+  }
 }
 function renderCanvas(board: Canvas): void {
-  toolbar.append(
-    element("strong", board.name),
-    element("span", "", "spacer"),
-    button("−", () => zoom(0.1 * -1), "subtle"),
-    element("span", `${Math.round(board.zoom * 100)}%`, "zoom"),
-    button("+", () => zoom(0.1), "subtle"),
-    button(
-      "100%",
-      () => {
-        board.zoom = 1;
-        render();
-        void persist();
-      },
-      "subtle",
-    ),
-  );
-  function zoom(delta: number) {
-    board.zoom = Math.max(
-      0.25,
-      Math.min(2, Math.round((board.zoom + delta) * 100) / 100),
-    );
+  const zoom = (value: number) => {
+    board.zoom = Math.max(0.25, Math.min(2, Math.round(value * 100) / 100));
     render();
     void persist();
-  }
+  };
+  const canvasActions = (): MenuAction[] => [
+    { label: "New terminal", run: () => editInstance(undefined, board) },
+    { label: "Zoom out", run: () => zoom(board.zoom - 0.1) },
+    { label: "Zoom in", run: () => zoom(board.zoom + 0.1) },
+    { label: "Actual size (100%)", run: () => zoom(1) },
+  ];
   const viewport = element("div", undefined, "canvas-viewport");
   const plane = element("div", undefined, "canvas-plane");
   viewport.append(plane);
+  viewport.tabIndex = 0;
+  viewport.setAttribute(
+    "aria-label",
+    `${board.name}, ${Math.round(board.zoom * 100)}%`,
+  );
+  contextual(viewport, canvasActions);
+  viewport.ondblclick = (event) => {
+    if (event.target === viewport || event.target === plane)
+      void editInstance(undefined, board).catch(report);
+  };
   content.append(viewport);
   const transform = () => {
     plane.style.transform = `translate(${board.pan[0]}px,${board.pan[1]}px) scale(${board.zoom})`;
+    viewport.style.backgroundSize = `${64 * board.zoom}px ${64 * board.zoom}px`;
+    viewport.style.backgroundPosition = `${board.pan[0]}px ${board.pan[1]}px`;
   };
   transform();
   viewport.onpointerdown = (e) => {
+    if (e.button !== 0) return;
     if (e.target !== viewport && e.target !== plane) return;
     const start = [e.clientX, e.clientY];
     const pan = [...board.pan];
@@ -656,10 +772,10 @@ function renderCanvas(board: Canvas): void {
   if (!residentIDs(board).length) {
     const empty = element("div", undefined, "canvas-empty");
     empty.append(
-      element("h2", "Room for a project"),
+      element("h2", "Empty Canvas"),
       element(
         "p",
-        "Open a terminal, then use “Move to canvas” to place it here.",
+        "Double-click for a terminal. Right-click a terminal in the sidebar to move it here.",
       ),
     );
     viewport.append(empty);
@@ -674,6 +790,7 @@ function renderCanvas(board: Canvas): void {
     card.style.height = `${tile.size[1]}px`;
     const header = element("header");
     header.append(
+      icon("terminal"),
       element("strong", instance.name),
       element("span", status(instance.id), "session-status"),
       button(
@@ -685,7 +802,16 @@ function renderCanvas(board: Canvas): void {
     header
       .querySelector("button")
       ?.setAttribute("aria-label", `Focus ${instance.name}`);
+    const detach = button("×", () => detachInstance(instance), "icon-button");
+    detach.setAttribute("aria-label", `Remove ${instance.name} from canvas`);
+    header.append(detach);
+    contextual(header, () => instanceActions(instance));
+    header.ondblclick = (event) => {
+      if (!(event.target as HTMLElement).closest("button"))
+        select({ kind: "terminal", id: instance.id });
+    };
     header.onpointerdown = (e) => {
+      if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest("button")) return;
       const point = [e.clientX, e.clientY];
       const origin = [...tile.origin];
@@ -703,6 +829,9 @@ function renderCanvas(board: Canvas): void {
         void persist();
       };
     };
+    header
+      .querySelector(".session-status")
+      ?.classList.toggle("quiet", status(instance.id) === "running");
     const inside = element("div", undefined, "tile-content");
     card.append(header, inside);
     plane.append(card);
@@ -712,12 +841,13 @@ function renderCanvas(board: Canvas): void {
     const setSize = (width: number, height: number) => {
       tile.size = [
         Math.max(320, Math.round(width)),
-        Math.max(180, Math.round(height)),
+        Math.max(220, Math.round(height)),
       ];
       card.style.width = `${tile.size[0]}px`;
       card.style.height = `${tile.size[1]}px`;
     };
     grip.onpointerdown = (e) => {
+      if (e.button !== 0) return;
       e.preventDefault();
       grip.focus();
       const point = [e.clientX, e.clientY];
@@ -952,16 +1082,59 @@ async function closeWindow(): Promise<void> {
 document.querySelector("#new-terminal")!.addEventListener("click", () => {
   void editInstance().catch(report);
 });
-document.querySelector("#new-canvas")!.addEventListener("click", () => {
-  void newCanvas().catch(report);
-});
+document.querySelector("#switch")!.append(icon("search"));
 document.querySelector("#switch")!.addEventListener("click", palette);
-document.querySelector("#import")!.addEventListener("click", () => {
-  void importWorkspace().catch(report);
-});
-document.querySelector("#export")!.addEventListener("click", () => {
-  void invoke("export_workspace", { workspace }).catch(report);
-});
+for (const id of ["sidebar-toggle", "sidebar-reveal"]) {
+  const toggle = document.getElementById(id)!;
+  toggle.append(icon("sidebar"));
+  toggle.onclick = () => {
+    const hidden = root.classList.toggle("sidebar-hidden");
+    document.getElementById("sidebar-reveal")!.hidden = !hidden;
+    document
+      .getElementById(hidden ? "sidebar-reveal" : "sidebar-toggle")!
+      .focus();
+  };
+}
+document
+  .querySelector("#workspace-menu")!
+  .addEventListener("click", (event) => {
+    const actions: MenuAction[] = [
+      { label: "New terminal", run: () => editInstance() },
+      { label: "New canvas", id: "new-canvas", run: () => newCanvas() },
+      { label: "Search workspace", run: palette },
+      { label: "Import workspace", run: importWorkspace },
+      {
+        label: "Export workspace",
+        run: async () => {
+          await invoke("export_workspace", { workspace });
+        },
+      },
+    ];
+    if (selected?.kind === "terminal") {
+      const instance = workspace.instances.find((i) => i.id === selected!.id);
+      if (instance) actions.push(...instanceActions(instance));
+    } else if (selected?.kind === "canvas") {
+      const board = workspace.canvases.find((b) => b.id === selected!.id);
+      if (board)
+        for (const [label, value] of [
+          ["Zoom out", board.zoom - 0.1],
+          ["Zoom in", board.zoom + 0.1],
+          ["Actual size (100%)", 1],
+        ] as const)
+          actions.push({
+            label,
+            run: () => {
+              board.zoom = Math.max(
+                0.25,
+                Math.min(2, Math.round(value * 100) / 100),
+              );
+              render();
+              void persist();
+            },
+          });
+    }
+    menuAt(event.currentTarget as HTMLElement, actions);
+  });
 document.addEventListener("keydown", (e) => {
   const command =
     data?.platform === "macos" ? e.metaKey : e.ctrlKey && e.shiftKey;
@@ -989,8 +1162,7 @@ async function boot(): Promise<void> {
   }
   data = await invoke<Bootstrap>("bootstrap");
   workspace = data.workspace;
-  document.querySelector("#platform")!.textContent =
-    `${data.platform === "macos" ? "Development host" : data.platform === "windows" ? "Windows" : "Linux"} · Local workspace`;
+  root.dataset.ready = "true";
   selected = workspace.selectedInstance
     ? { kind: "terminal", id: workspace.selectedInstance }
     : workspace.selectedCanvas

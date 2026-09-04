@@ -17,7 +17,9 @@
         "width": 1180,
         "height": 780,
         "minWidth": 720,
-        "minHeight": 480
+        "minHeight": 480,
+        "backgroundColor": "#1e1e1e",
+        "theme": "Dark"
       }
     ],
     "security": {
@@ -26,7 +28,11 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "deb", "appimage"],
+    "targets": [
+      "nsis",
+      "deb",
+      "appimage"
+    ],
     "shortDescription": "A quiet workspace for powerful terminals",
     "category": "DeveloperTool",
     "icon": [
