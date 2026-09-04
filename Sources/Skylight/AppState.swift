@@ -1294,8 +1294,9 @@ final class LiveSessionStore: ObservableObject {
 
     /// Retry is available only before any surfaces have been created. Repeated
     /// clicks coalesce; a completed lane cannot be switched under live sessions.
-    func retryPreparation() {
+    func retryPreparation(focusing id: UUID? = nil) {
         guard preparationIssue != nil, !isReady, terminals.isEmpty else { return }
+        if let id { requestKeyboardFocus(id) }
         prewarmStarted = false
         prewarmDaemon()
     }

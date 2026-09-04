@@ -23,12 +23,21 @@ revealed when needed. The normal workspace should stay visually simple.
   resource verification errors. Include license notices and run packaging in CI.
 - Support an explicit isolated development workspace through SKYLIGHT_SUPPORT_DIR.
 
+## Additional reliability and launch work
+
+- Preserve incompatible/busy keepers and expose a retry action that restores typing focus.
+- Launch saved presets directly from workspace search in both desktop implementations.
+- Fix Windows ConPTY cursor negotiation and separate process exit from output draining.
+- Bound CI runtime-test duration; verify actual Windows shells and batch wrappers.
+
+See [session recovery](session-recovery.md) for scope and behavior.
+
 ## Next work, ranked by user impact
 
 | Priority | Work | Completion evidence |
 | --- | --- | --- |
 | 1 | Version-aware provider adapters: supported executable versions, status/login/resume commands, capabilities, and clear unsupported states. Keep vendor-owned login and subscriptions. | Fixtures per supported CLI version plus opt-in live checks. No guessed entitlement or quota claims. |
-| 1 | Daemon compatibility and update recovery. Current protocol mismatch handling can terminate the old keeper and its sessions. Define safe negotiation and explicit recovery. | A long-running process keeps the same PID through supported app updates; incompatible state produces a recoverable explanation. |
+| 1 | Daemon compatibility and update recovery. Protocol mismatch now preserves the old keeper and offers recovery. Next: compatible protocol negotiation and coordinated upgrades. | A long-running process keeps the same PID through supported app updates; incompatible state produces a recoverable explanation. |
 | 1 | Trustworthy agent activity. Current inference uses output/title/bell/command events; quiet decay needs another event and is not authoritative provider state. | Prefer official structured CLI events where available; label inferred activity. Test idle, waiting, cancelled, disconnected, and resumed sessions. |
 | 2 | Complete shell integration, including Bash startup semantics without replacing user configuration. | Real zsh, Bash, and fish tests for working directory, command duration, exit status, and custom startup files. |
 | 2 | Stronger custom CLI profiles and project workspace templates on top of existing launch presets. | Open a project with chosen sessions and working directories; move it to a second machine without copying credentials or breaking paths. |

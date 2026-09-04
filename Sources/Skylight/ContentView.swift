@@ -1044,7 +1044,7 @@ struct PreparedTerminalView: View {
                                        onFocusAcquired: { sessions.didAcquireKeyboardFocus(instance.id) })
             } else {
                 SessionPreparationView(issue: sessions.preparationIssue,
-                                       retry: sessions.retryPreparation)
+                                       retry: { sessions.retryPreparation(focusing: instance.id) })
             }
         }
         // Readiness is not a layout animation: replay must land at the final

@@ -47,7 +47,7 @@ process — same pid, unbroken step count — still going when the app returns.*
 - **Focus mode** — expand any tile to the full window; ⌘. puts it back with
   the canvas exactly as it was. (Escape belongs to the terminal — vim and
   TUIs need it — so the exit is a real menu command.)
-- **Workspace search** — ⌘P finds terminals, agent sessions, and canvases by
+- **Workspace search** — ⌘P finds terminals, agent sessions, canvases, and launch presets by
   name, CLI, or directory. Arrow keys and Return open a result; Escape returns
   to the terminal. Opening a canvas session in focus mode preserves its layout
   and zoom. Search appears only when invoked.
@@ -71,6 +71,8 @@ process — same pid, unbroken step count — still going when the app returns.*
   from clear to solid, and terminal text size. Every control applies
   instantly to every open terminal — live, not just future ones — and
   Reduce Transparency in System Settings outranks all of it.
+
+For session recovery and keyboard launch details, see [the recovery guide](docs/session-recovery.md).
 
 ## What it deliberately isn't
 
@@ -98,7 +100,7 @@ process — same pid, unbroken step count — still going when the app returns.*
 - **⌘T** — New Terminal… (the tiered sheet)
 - **⇧⌘T** — new shell terminal, launched instantly
 - **⇧⌘N** — new canvas
-- **⌘P** — find and switch to a terminal, agent, or canvas
+- **⌘P** — switch to a terminal or canvas, or launch a saved preset
 - **⌘.** — back to canvas (leave focus mode)
 - **⌘0 / ⌘+ / ⌘− / ⌘9** — 100% / zoom in / out / to fit (⌘= works too)
 - **⇧⌘A** — arrange the canvas

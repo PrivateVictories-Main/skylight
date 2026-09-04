@@ -97,7 +97,9 @@ can build a separate preview. This is not a replacement for the native macOS app
 
 Windows/Linux use **Ctrl+Shift+T** for New and **Ctrl+Shift+P** for workspace search,
 leaving shell Ctrl+T/Ctrl+P bindings alone. The Mac development host uses Command.
-Search uses arrows, Enter, and Escape. A tile's resize grip supports arrows too.
+Search uses arrows, Enter, and Escape. Results marked **Launch preset** open a fresh
+session from saved settings; terminal results return to an existing session.
+A tile's resize grip supports arrows too.
 
 ## Still required before parity
 
@@ -119,3 +121,6 @@ Architecture references: [Tauri webview architecture](https://v2.tauri.app/refer
 [Tauri channels](https://v2.tauri.app/develop/calling-frontend/#channels),
 [xterm flow control](https://xtermjs.org/docs/guides/flowcontrol/),
 [portable-pty](https://docs.rs/portable-pty/0.9.0/portable_pty/).
+
+Runtime lifecycle details and recovery behavior are documented in
+[the recovery guide](../docs/session-recovery.md).
