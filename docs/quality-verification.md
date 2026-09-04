@@ -1,71 +1,97 @@
-# Desktop verification — September 4, 2026
+# Desktop visual alignment and verification — September 4, 2026
 
-The Windows and Linux preview passed the same nine native app interaction checks
-on public GitHub-hosted virtual machines. The tests drive the built release app
-through native WebDriver and require actual shell commands to create files in a
-working folder containing spaces. They do not mock terminal execution or Tauri IPC.
+Windows and Linux now follow the native macOS workspace structure: a quiet sidebar,
+a bare terminal panel, and a sparse canvas. The previous preview's prominent logo,
+Quick Launch sidebar section, and permanent terminal-action toolbar were removed.
+Presets live in **New** and search; advanced commands live in contextual menus.
 
-Verified application source: [`92771bb`](https://github.com/PrivateVictories-Main/skylight/commit/92771bbf519f17964c702b9bffe665afd9c36092).
+Verified application source: [`3d1fa24`](https://github.com/PrivateVictories-Main/skylight/commit/3d1fa24f8826dab4b4e37b748e688a418db63b9d).
 
-| Check | Windows Server 2022, x64 | Ubuntu 24.04, x64 |
+## Design reference and enforced geometry
+
+The actual SwiftUI/Ghostty macOS app was opened with an isolated workspace in dark,
+solid appearance. Its terminal and canvas were inspected directly. The portable
+Mac development app was then compared against it; it was not used as the native
+reference. See [the design contract](visual-design.md) for the source components.
+
+Both target operating systems passed measured checks for a **256-pixel sidebar**,
+**8-pixel terminal inset**, **16-pixel panel corners**, **no persistent terminal
+toolbar**, **30-pixel tile headers**, and **64-pixel canvas grid** at 100%. Presets
+are absent from the sidebar. New tiles start at 560 × 400 and are brought into view.
+
+Inter UI and JetBrains Mono are bundled locally, with upstream licenses and pinned
+source hashes in [the font record](../desktop/public/fonts/README.md). The UI suite
+verifies both faces loaded. No font installation or runtime download is required.
+
+## Actual app interaction checks
+
+The same eleven checks passed on Windows Server 2022 x64 and Ubuntu 24.04 x64.
+Native WebDriver drives the built release application, and actual shell commands
+must create files inside a working folder containing spaces. Tauri calls and PTY
+execution are not mocked.
+
+| Check | Windows | Linux |
 | --- | --- | --- |
 | Native app startup | Passed | Passed |
-| Shell launch with explicit working folder | Passed | Passed |
-| Save a reusable launch preset | Passed | Passed |
-| Create a canvas and move a live terminal | Passed | Passed |
-| Resize, move, zoom, and observe process exit in a canvas | Passed | Passed |
+| Shell launch, working folder, measured visual layout, bundled fonts | Passed | Passed |
+| Sidebar collapse/expand and menu keyboard dismissal, then shell input | Passed | Passed |
+| Save preset, find it in New, dismiss dialog, continue typing | Passed | Passed |
+| Create canvas and move a live terminal | Passed | Passed |
+| Resize, move, zoom, and observe process exit on a canvas | Passed | Passed |
 | Cancel close and continue typing | Passed | Passed |
 | Exit and restart a terminal | Passed | Passed |
 | Ctrl+Shift+P search and preset launch | Passed | Passed |
-| Reopen saved workspace, keep restored sessions stopped, then launch explicitly | Passed | Passed |
+| Restore saved workspace without automatically executing sessions | Passed | Passed |
+| Double-click canvas to launch, detach tile, keep shell running | Passed | Passed |
 
-[Windows/Linux run and artifacts](https://github.com/PrivateVictories-Main/skylight/actions/runs/33925062274).
+[Windows/Linux run and downloadable artifacts](https://github.com/PrivateVictories-Main/skylight/actions/runs/33927556953).
 Both platforms also passed seven frontend tests, thirteen Rust runtime tests,
-type checking, formatting, and Clippy. The workflow built an NSIS installer and
-a Debian package. The UI suite used `cmd.exe` on Windows and `/bin/sh` on Linux.
+type checking, formatting, and Clippy. NSIS and Debian packages were built. The UI
+suite exercised `cmd.exe` on Windows and `/bin/sh` on Linux.
 
-The native SwiftUI/Ghostty macOS app separately passed **419 tests** and its
-packaged-release verification. [macOS run](https://github.com/PrivateVictories-Main/skylight/actions/runs/33925062232).
-A local Mac development build of the portable app also completed a live first-canvas
-move, shell command, exit-status update, saved-layout check, and normal quit.
+The native macOS app separately passed **419 tests** and packaged-release verification.
+[macOS run](https://github.com/PrivateVictories-Main/skylight/actions/runs/33927556980).
+A local Mac development build of the portable application was also checked with a
+live shell, the simplified launch dialog, contextual actions, canvas creation,
+and removing a tile without ending its process.
 
-## Improvements covered by this pass
+## Captured previews
 
-- Launch settings open immediately while CLI discovery refreshes in the background.
-- Visible terminal renderers survive routine redraws and moves. Hidden terminals
-  still release their GPU resources.
-- Moving to the first canvas creates it and places the terminal in one flow.
-- Canvas tiles update process status while preserving typing focus.
-- Terminal overlay layers stay below canvas resize controls.
-- The output-backpressure regression waits for real saturation, including delayed
-  startup, before proving another terminal can continue independently.
+Native macOS reference (dark, solid appearance; the system capture indicator covers
+the window controls):
 
-## Actual preview screenshots
+![Native macOS canvas reference](images/native-macos-canvas-reference.png)
 
-Windows:
+Windows release application:
 
 ![Verified Windows canvas](images/verified-windows-canvas.png)
 
-Linux:
+Linux release application:
 
 ![Verified Linux canvas](images/verified-linux-canvas.png)
 
-## Test environment and limits
+The target-OS screenshots capture app content through native WebDriver, excluding
+the host window decorations. Test window dimensions and shell prompts differ.
+They are real running applications, not design mockups. Terminal and New-dialog
+screenshots are also [preserved in Git](images/):
+[Windows terminal](images/verified-windows-terminal.png),
+[Linux terminal](images/verified-linux-terminal.png),
+[Windows New dialog](images/verified-windows-new-terminal.png), and
+[Linux New dialog](images/verified-linux-new-terminal.png).
+
+## Environment and limits
 
 Standard public GitHub-hosted runners are
 [free for public repositories](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
-These workflows skip private repositories. Linux uses Xvfb, Openbox, and an isolated
-session bus; there is no graphics override in the app or final CI configuration.
-The harness waits for terminal layout before pointer actions and cleans up its
-own native driver and application processes.
+The workflows skip private repositories. Linux runs with Xvfb, Openbox, and an
+isolated session bus; no application graphics override is used.
 
-These results establish tested preview workflows, not feature parity or device
-certification. The installer wizards, provider sign-ins, paid API requests,
-PowerShell interaction, native import/export dialogs, clipboard, IME, accessibility,
-Windows 11 client hardware, and physical GPU/input latency were not exercised by
-this suite. Reported elapsed times include automation overhead and are not product
-performance benchmarks. Portable session survival after app exit, full native
-canvas parity, and per-platform preset overrides remain separate work.
+The default portable appearance is opaque dark; native Mac glass, theme controls,
+OS window decorations, and rasterization are not pixel-identical. These results
+establish the measured design and tested interactions. They do not establish full
+feature parity, physical input latency, GPU performance, complete accessibility,
+IME, clipboard, installer-wizard, provider sign-in, paid API, or native file-dialog
+validation. Portable session survival after app exit remains separate work.
 
-UI artifacts are retained for seven days and installer artifacts for fourteen days.
-The screenshots and verification record above are preserved in Git history.
+UI artifacts are retained for seven days and installers for fourteen days.
+The screenshots and this record are preserved in Git history.

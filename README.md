@@ -108,11 +108,16 @@ For session recovery and keyboard launch details, see [the recovery guide](docs/
 ## Windows and Linux
 
 A sibling implementation is being developed in [`desktop/`](desktop/README.md).
-It provides real PTY sessions, named Quick Launch presets, workspace search, and
+It provides real PTY sessions, named launch presets, workspace search, and
 canvas navigation. The native macOS app remains SwiftUI/Ghostty.
 
+The portable workspace follows the [native macOS visual contract](docs/visual-design.md):
+a quiet sidebar, a bare terminal panel, sparse canvas chrome, and presets inside
+**New**. Windows and Linux bundle the same fonts and run real native UI checks.
+See the [actual screenshots and verification record](docs/quality-verification.md).
+
 Launch presets can move between versions through **File → Import/Export Launch
-Presets…** on macOS and **Import/Export** in the portable preview. Review local
+Presets…** on macOS and **Workspace menu (⋯) → Import/Export workspace** in the portable preview. Review local
 folders and executable paths before launching on another OS.
 
 The portable app is a development preview: Windows/Linux build jobs are provided,
