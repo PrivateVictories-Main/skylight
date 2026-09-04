@@ -1043,14 +1043,8 @@ struct PreparedTerminalView: View {
                                        focusRequested: sessions.requestedFocusID == instance.id,
                                        onFocusAcquired: { sessions.didAcquireKeyboardFocus(instance.id) })
             } else {
-                VStack(spacing: 10) {
-                    ProgressView().controlSize(.small)
-                    Text("Opening session…")
-                        .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .accessibilityElement(children: .combine)
+                SessionPreparationView(issue: sessions.preparationIssue,
+                                       retry: sessions.retryPreparation)
             }
         }
         // Readiness is not a layout animation: replay must land at the final

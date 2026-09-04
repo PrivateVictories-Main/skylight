@@ -12,7 +12,7 @@ final class SessionPreparationTests: XCTestCase {
         let store = LiveSessionStore(bootstrap: {
             started.fulfill()
             _ = release.wait(timeout: .now() + 5)
-            return nil
+            return .unavailable
         })
         let observation = store.$isReady.filter { $0 }.sink { _ in ready.fulfill() }
         store.prewarmDaemon()

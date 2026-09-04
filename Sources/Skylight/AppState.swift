@@ -1237,9 +1237,10 @@ final class LiveSessionStore: ObservableObject {
     /// The sidebar, window and launcher remain interactive during connection.
     @Published private(set) var isReady = false
     private var prewarmStarted = false
-    private let bootstrap: @Sendable () -> DaemonClient?
+    @Published private(set) var preparationIssue: SessionKeeperIssue?
+    private let bootstrap: @Sendable () -> DaemonClient.BootstrapResult
 
-    init(bootstrap: @escaping @Sendable () -> DaemonClient? = { DaemonClient.bootstrap() }) {
+    init(bootstrap: @escaping @Sendable () -> DaemonClient.BootstrapResult = { DaemonClient.bootstrap() }) {
         self.bootstrap = bootstrap
     }
 
@@ -1255,22 +1256,39 @@ final class LiveSessionStore: ObservableObject {
     func flushDaemon() { daemonClient?.flush() }
 
     /// Connect once on a worker, then publish readiness on the main actor.
-    /// A failed connection still completes preparation and enables the exec
-    /// fallback. No surface is created until the lane is decided, so a slow
+    /// An unavailable keeper enables the exec fallback. An existing keeper
+    /// that cannot attach blocks surface creation. No surface is created until
+    /// the lane is decided, so a slow
     /// reconnect cannot accidentally replace a surviving session with a shell.
     func prewarmDaemon() {
         guard !prewarmStarted else { return }
         prewarmStarted = true
+        preparationIssue = nil
         let bootstrap = bootstrap
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let client = bootstrap()
+            let result = bootstrap()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
-                self.daemonClient = client
-                self.configureDaemonClient()
-                self.isReady = true
+                switch result {
+                case let .connected(client):
+                    self.daemonClient = client
+                    self.configureDaemonClient()
+                    self.isReady = true
+                case .unavailable:
+                    self.isReady = true
+                case let .blocked(issue):
+                    self.preparationIssue = issue
+                }
             }
         }
+    }
+
+    /// Retry is available only before any surfaces have been created. Repeated
+    /// clicks coalesce; a completed lane cannot be switched under live sessions.
+    func retryPreparation() {
+        guard preparationIssue != nil, !isReady, terminals.isEmpty else { return }
+        prewarmStarted = false
+        prewarmDaemon()
     }
 
     private func configureDaemonClient() {

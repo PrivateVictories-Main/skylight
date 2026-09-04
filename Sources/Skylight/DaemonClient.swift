@@ -94,34 +94,47 @@ final class DaemonClient: @unchecked Sendable {
 
     // MARK: - Bootstrap
 
-    /// Connect to a live daemon or start one, then handshake. Runs on the
-    /// caller's thread (once, at first terminal creation) and gives up fast:
-    /// a nil return means the exec lane carries this app run.
-    static func bootstrap() -> DaemonClient? {
+    enum BootstrapResult: Sendable {
+        case connected(DaemonClient)
+        case unavailable
+        case blocked(SessionKeeperIssue)
+    }
+
+    /// Existing keepers are never replaced implicitly. A blocked connection
+    /// leaves their processes alone and lets the user recover before retrying.
+    static func bootstrap() -> BootstrapResult {
         guard ProcessInfo.processInfo.environment["SKYLIGHT_NO_DAEMON"] == nil else {
-            return nil
+            return .unavailable
         }
-        let socketPath = WorkspacePaths.supportDirectory.appendingPathComponent("daemon.sock").path
+        let path = WorkspacePaths.supportDirectory.appendingPathComponent("daemon.sock").path
+        return bootstrap(connect: { connectSocket(path: path, retries: $0) },
+                         start: spawnDaemon)
+    }
+
+    /// Transport injection keeps the real handshake and recovery paths testable.
+    static func bootstrap(connect: (Int) -> Int32?, start: () -> Bool) -> BootstrapResult {
         for attempt in 0..<2 {
-            if let fd = connectSocket(path: socketPath, retries: attempt == 0 ? 1 : 20) {
+            if let fd = connect(attempt == 0 ? 1 : 20) {
                 switch handshake(fd: fd) {
                 case let .compatible(sessions, leftover):
-                    return DaemonClient(fd: fd, inherited: sessions, leftover: leftover)
-                case let .stale(pid):
-                    // A daemon from an older build: it dies (HUPping its
-                    // children — they were that build's sessions), and a
-                    // fresh one takes the socket.
+                    return .connected(DaemonClient(fd: fd, inherited: sessions, leftover: leftover))
+                case let .blocked(issue):
                     close(fd)
-                    Darwin.kill(pid, SIGTERM)
-                    usleep(300_000)
+                    return .blocked(issue)
                 case .failed:
                     close(fd)
-                    return nil
+                    return .blocked(.unresponsive)
                 }
             }
-            guard spawnDaemon() else { return nil }
+            // At most one start. A successful connection is required before
+            // permitting surfaces to attach or create a replacement process.
+            if attempt == 0 {
+                guard start() else { return .unavailable }
+                continue
+            }
+            return .blocked(.unresponsive)
         }
-        return nil
+        return .unavailable
     }
 
     private static func spawnDaemon() -> Bool {
@@ -171,15 +184,16 @@ final class DaemonClient: @unchecked Sendable {
 
     private enum HandshakeResult {
         case compatible([SessionInfo], leftover: Data)
-        case stale(pid_t)
+        case blocked(SessionKeeperIssue)
         case failed
     }
 
     private static func handshake(fd: Int32) -> HandshakeResult {
-        // Bounded tightly: this runs before the first terminal can render,
-        // and every worst case here is main-thread stall.
+        // Bound both directions on the background preparation worker.
         var timeout = timeval(tv_sec: 1, tv_usec: 0)
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
+                   &timeout, socklen_t(MemoryLayout<timeval>.size))
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
                    &timeout, socklen_t(MemoryLayout<timeval>.size))
         let hello = Wire.encode(WireFrame(type: .hello))
         let sent = hello.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
@@ -202,9 +216,9 @@ final class DaemonClient: @unchecked Sendable {
             guard let decoded = try? JSONDecoder().decode(HelloReply.self,
                                                           from: reply.payload)
             else { return .failed }
-            guard decoded.busy != true else { return .failed }   // one app at a time
+            guard decoded.busy != true else { return .blocked(.busy) }
             guard decoded.protocolVersion == Wire.protocolVersion else {
-                return .stale(decoded.daemonPID)
+                return .blocked(.incompatible(found: decoded.protocolVersion, expected: Wire.protocolVersion))
             }
             return .compatible(decoded.sessions, leftover: buffer)
         }
