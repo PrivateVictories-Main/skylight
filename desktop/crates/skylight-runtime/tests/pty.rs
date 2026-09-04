@@ -16,6 +16,7 @@ fn real_pty_accepts_input_resizes_and_reports_exit() {
     let directory = tempfile::tempdir().unwrap();
     let (sender, receiver) = mpsc::channel();
     let (program, arguments) = shell();
+    eprintln!("Starting test PTY");
     let session = Session::spawn(
         LaunchRequest {
             program,
@@ -27,7 +28,9 @@ fn real_pty_accepts_input_resizes_and_reports_exit() {
         Arc::new(move |e| sender.send(e).map_err(|e| e.to_string())),
     )
     .unwrap();
+    eprintln!("Test PTY started; requesting resize");
     session.resize(100, 32).unwrap();
+    eprintln!("Resize complete; sending input");
     let command = if cfg!(windows) {
         "echo SKYLIGHT_PTY_OK>proof.txt\r\nexit 7\r\n"
     } else {
@@ -35,6 +38,7 @@ fn real_pty_accepts_input_resizes_and_reports_exit() {
     };
     session.write(command.as_bytes().to_vec()).unwrap();
     let deadline = Instant::now() + Duration::from_secs(10);
+    eprintln!("Waiting for output and exit");
     let mut through = 0;
     loop {
         let remaining = deadline
@@ -87,6 +91,7 @@ fn windows_batch_wrapper_preserves_a_spaced_argument() {
     )
     .unwrap();
     let (sender, receiver) = mpsc::channel();
+    eprintln!("Starting test PTY");
     let session = Session::spawn(
         LaunchRequest {
             program: launcher.to_string_lossy().into_owned(),
@@ -98,6 +103,7 @@ fn windows_batch_wrapper_preserves_a_spaced_argument() {
         Arc::new(move |e| sender.send(e).map_err(|e| e.to_string())),
     )
     .unwrap();
+    eprintln!("Waiting for output and exit");
     let mut through = 0;
     loop {
         match receiver.recv_timeout(Duration::from_secs(15)).unwrap() {
@@ -153,6 +159,7 @@ fn output_flood_is_bounded_and_does_not_block_another_session() {
 #[test]
 fn explicit_close_stops_a_quiet_process_that_ignores_hangup() {
     let (sender, receiver) = mpsc::channel();
+    eprintln!("Starting test PTY");
     let session = Session::spawn(
         LaunchRequest {
             program: "/bin/sh".into(),

@@ -13,6 +13,7 @@ permissions:
 
 jobs:
   verify:
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
@@ -39,10 +40,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+      - name: Real PTY and shared-format tests
+        timeout-minutes: 3
+        run: cargo test --locked -p skylight-runtime -- --nocapture
       - run: cargo fmt --all -- --check
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Real PTY and shared-format tests
-        run: cargo test --locked -p skylight-runtime
       - name: Package Linux preview
         if: runner.os == 'Linux'
         run: npm run tauri -- build --bundles deb

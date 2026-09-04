@@ -1,5 +1,6 @@
 [workspace]
 members = ["crates/skylight-runtime", "src-tauri"]
+exclude = ["vendor/portable-pty"]
 default-members = ["crates/skylight-runtime"]
 resolver = "2"
 
@@ -12,3 +13,6 @@ license-file = "../LICENSE.md"
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[patch.crates-io]
+portable-pty = { path = "vendor/portable-pty" }
