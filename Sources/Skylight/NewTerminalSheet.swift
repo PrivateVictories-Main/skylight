@@ -15,6 +15,7 @@ struct NewTerminalSheet: View {
     @State private var arguments = ""
     @State private var workingDirectory: String?
     @State private var shellsExpanded = false
+    @State private var editingPreset: LaunchPreset?
     @State private var savingPreset = false
     @State private var presetName = ""
     @FocusState private var presetFieldFocused: Bool
@@ -70,6 +71,9 @@ struct NewTerminalSheet: View {
         }
         .padding(22)
         .frame(width: 460)
+        .sheet(item: $editingPreset) { preset in
+            PresetSettingsSheet(preset: preset) { state.updatePreset($0) }
+        }
         .onAppear {
             load()
             // Consumed, not just read: the debug hook targets ONE opening,
@@ -195,19 +199,20 @@ struct NewTerminalSheet: View {
     private var presetRows: some View {
         VStack(spacing: 4) {
             ForEach(state.presets) { preset in
-                let ready = isReady(preset.spec)
-                Button { if ready { launch(preset.spec, name: preset.name) } } label: {
+                let resolved = preset.resolvedSpec(for: .macos)
+                let ready = isReady(resolved)
+                Button { if ready { launch(resolved, name: preset.name) } } label: {
                     HStack(spacing: 10) {
-                        harnessIcon(for: preset.spec.harness, size: 20)
+                        harnessIcon(for: resolved.harness, size: 20)
                         Text(preset.name)
                             .font(.system(size: 13, weight: .medium))
                         Spacer()
                         if ready {
-                            Text(subtitle(for: preset.spec))
+                            Text(subtitle(for: resolved))
                                 .font(.system(size: 11))
                                 .foregroundStyle(.tertiary)
                         } else {
-                            Text(installCommand(for: preset.spec.harness) ?? "")
+                            Text(installCommand(for: resolved.harness) ?? "")
                                 .font(.system(size: 10.5, design: .monospaced))
                                 .foregroundStyle(.tertiary)
                         }
@@ -219,6 +224,7 @@ struct NewTerminalSheet: View {
                 .buttonStyle(.plain)
                 .hoverHighlight(cornerRadius: 10)
                 .contextMenu {
+                    Button("Edit Preset…") { editingPreset = preset }
                     Button("Delete Preset", role: .destructive) {
                         state.deletePreset(preset.id)
                     }

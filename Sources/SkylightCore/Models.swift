@@ -150,15 +150,29 @@ public struct CanvasBoard: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// Stable interchange keys, independent of how a platform names itself in UI.
+public enum LaunchPlatform: String, Codable, CaseIterable, Sendable {
+    case macos, windows, linux
+}
+
 public struct LaunchPreset: Identifiable, Codable, Equatable, Sendable {
     public let id: UUID
     public var name: String
     public var spec: TerminalSpec
+    /// A complete launch configuration for a platform. Missing entry inherits
+    /// `spec`; empty arguments and nil paths deliberately reset those values.
+    public var platformSpecs: [String: TerminalSpec]?
 
-    public init(id: UUID = UUID(), name: String, spec: TerminalSpec) {
+    public init(id: UUID = UUID(), name: String, spec: TerminalSpec,
+                platformSpecs: [String: TerminalSpec]? = nil) {
         self.id = id
         self.name = name
         self.spec = spec
+        self.platformSpecs = platformSpecs
+    }
+
+    public func resolvedSpec(for platform: LaunchPlatform) -> TerminalSpec {
+        platformSpecs?[platform.rawValue] ?? spec
     }
 }
 

@@ -30,6 +30,8 @@ public enum LaunchPresetInterchange {
     public static func encode(_ presets: [LaunchPreset]) throws -> Data {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        return try encoder.encode(presets)
+        let data = try encoder.encode(presets)
+        guard data.count <= 4 * 1024 * 1024 else { throw ImportError.tooLarge }
+        return data
     }
 }

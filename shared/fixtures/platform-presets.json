@@ -1,0 +1,12 @@
+[
+  {
+    "id": "A1000000-0000-4000-8000-000000000001",
+    "name": "Portable workspace",
+    "spec": {"shellPath": null, "harness": "codex", "arguments": ["--default-only"], "workingDirectory": "/default/project"},
+    "platformSpecs": {
+      "macos": {"shellPath": "/bin/sh", "harness": null, "arguments": [], "workingDirectory": "/tmp/mac project"},
+      "windows": {"shellPath": "C:\\Windows\\System32\\cmd.exe", "harness": null, "arguments": ["/Q", "/D"], "workingDirectory": "C:\\Projects\\My Project"},
+      "linux": {"shellPath": "/bin/sh", "harness": null, "arguments": [], "workingDirectory": "/tmp/linux project"}
+    }
+  }
+]

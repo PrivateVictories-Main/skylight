@@ -140,12 +140,13 @@ final class AppState: ObservableObject {
                 sessions.requestKeyboardFocus(item.id)
             case .preset:
                 guard let preset = presets.first(where: { $0.id == item.id }) else { return }
-                if let harness = preset.spec.harness,
+                let spec = preset.resolvedSpec(for: .macos)
+                if let harness = spec.harness,
                    sessions.cachedResolveHarness(harness) == nil {
                     newSheetShown = true
                     return
                 }
-                launch(preset.spec, name: preset.name)
+                launch(spec, name: preset.name)
                 if case let .item(id) = selection { sessions.requestKeyboardFocus(id) }
             case .canvas:
                 guard canvases.contains(where: { $0.id == item.id }) else { return }
@@ -386,9 +387,18 @@ final class AppState: ObservableObject {
         }
     }
 
-    private func persistPresets() {
-        if let data = try? JSONEncoder().encode(presets) {
-            try? data.write(to: Self.presetsURL, options: .atomic)
+    @discardableResult
+    private func persistPresets(_ updated: [LaunchPreset]) -> Bool {
+        do {
+            let data = try LaunchPresetInterchange.encode(updated)
+            try data.write(to: Self.presetsURL, options: .atomic)
+            presets = updated
+            return true
+        } catch {
+            // Publish state only after the durable write. A failed save must
+            // not look successful or discard the previous preset collection.
+            NSAlert(error: error).runModal()
+            return false
         }
     }
 
@@ -1181,13 +1191,22 @@ final class AppState: ObservableObject {
     func savePreset(named name: String, spec: TerminalSpec) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        presets.append(LaunchPreset(name: trimmed, spec: spec))
-        persistPresets()
+        persistPresets(presets + [LaunchPreset(name: trimmed, spec: spec)])
+    }
+
+    func updatePreset(_ preset: LaunchPreset) -> Bool {
+        guard presets.contains(where: { $0.id == preset.id }) else { return false }
+        return persistPresets(presets.map { $0.id == preset.id ? preset : $0 })
+    }
+
+    func importPresets(_ incoming: [LaunchPreset]) {
+        persistPresets(presets + incoming.map {
+            LaunchPreset(name: $0.name, spec: $0.spec, platformSpecs: $0.platformSpecs)
+        })
     }
 
     func deletePreset(_ id: UUID) {
-        presets.removeAll { $0.id == id }
-        persistPresets()
+        persistPresets(presets.filter { $0.id != id })
     }
 
     // MARK: - Sidebar drag session

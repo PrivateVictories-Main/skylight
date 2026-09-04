@@ -399,9 +399,11 @@ struct CanvasView: View {
            usual.harness.map({ state.sessions.cachedResolveHarness($0) != nil }) ?? true {
             add("Your Usual — \(AppState.defaultName(for: usual))") { spawn(usual, nil) }
         }
-        for preset in state.presets where preset.spec.harness
-            .map({ state.sessions.cachedResolveHarness($0) != nil }) ?? true {
-            add(preset.name) { spawn(preset.spec, preset.name) }
+        for preset in state.presets {
+            let spec = preset.resolvedSpec(for: .macos)
+            if spec.harness.map({ state.sessions.cachedResolveHarness($0) != nil }) ?? true {
+                add(preset.name) { spawn(spec, preset.name) }
+            }
         }
         if !menu.items.isEmpty { menu.addItem(.separator()) }
         add("Terminal") { spawn(TerminalSpec(), nil) }

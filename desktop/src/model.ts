@@ -9,7 +9,11 @@ export interface Instance {
   id: string;
   name: string;
   spec: Spec;
+  platformSpecs?: Record<string, Spec> | null;
   [key: string]: unknown;
+}
+export function presetSpec(preset: Instance, platform: string): Spec {
+  return preset.platformSpecs?.[platform] ?? preset.spec;
 }
 export interface Tile {
   id: string;
@@ -69,6 +73,7 @@ export function boardFor(workspace: Workspace, id: string): Canvas | undefined {
 export function searchItems(
   workspace: Workspace,
   providers: Provider[],
+  platform = "",
 ): SearchItem[] {
   return [
     ...workspace.instances.map((i) => ({
@@ -91,20 +96,23 @@ export function searchItems(
       name: b.name,
       detail: `Canvas · ${residentIDs(b).length} sessions`,
     })),
-    ...(workspace.launchPresets ?? []).map((p) => ({
-      id: p.id,
-      kind: "preset" as const,
-      name: p.name,
-      detail: [
-        "Launch preset",
-        providers.find((provider) => provider.id === p.spec.harness)?.name ??
-          p.spec.harness ??
-          "Terminal",
-        p.spec.workingDirectory,
-      ]
-        .filter(Boolean)
-        .join(" · "),
-    })),
+    ...(workspace.launchPresets ?? []).map((p) => {
+      const spec = presetSpec(p, platform);
+      return {
+        id: p.id,
+        kind: "preset" as const,
+        name: p.name,
+        detail: [
+          "Launch preset",
+          providers.find((provider) => provider.id === spec.harness)?.name ??
+            spec.harness ??
+            "Terminal",
+          spec.workingDirectory,
+        ]
+          .filter(Boolean)
+          .join(" · "),
+      };
+    }),
   ];
 }
 const normalized = (s: string) =>

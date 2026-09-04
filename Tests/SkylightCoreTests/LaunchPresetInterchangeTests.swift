@@ -18,6 +18,41 @@ final class LaunchPresetInterchangeTests: XCTestCase {
         let original = [LaunchPreset(name: "Shell", spec: TerminalSpec(shellPath: "/bin/zsh", arguments: ["-l"]))]
         XCTAssertEqual(try LaunchPresetInterchange.decode(LaunchPresetInterchange.encode(original)), original)
     }
+    func testPlatformPresetsRoundTripAndReplaceDefaultsCompletely() throws {
+        let data = try Data(contentsOf: root.appendingPathComponent("shared/fixtures/platform-presets.json"))
+        let original = try LaunchPresetInterchange.decode(data)
+        let preset = try XCTUnwrap(original.first)
+        let mac = preset.resolvedSpec(for: .macos)
+        XCTAssertNil(mac.harness)
+        XCTAssertEqual(mac.arguments, [])
+        XCTAssertEqual(mac.shellPath, "/bin/sh")
+        XCTAssertEqual(preset.resolvedSpec(for: .windows).arguments, ["/Q", "/D"])
+        XCTAssertEqual(preset.resolvedSpec(for: .linux).workingDirectory, "/tmp/linux project")
+        XCTAssertEqual(try LaunchPresetInterchange.decode(LaunchPresetInterchange.encode(original)), original)
+        let search = WorkspaceSearch.presetItem(preset)
+        XCTAssertTrue(search.detail.contains("/tmp/mac project"))
+        XCTAssertFalse(search.detail.contains("codex"))
+        XCTAssertFalse(search.detail.contains("--default-only"))
+    }
+
+    func testMissingPlatformUsesDefaultsAndOtherPlatformEditsStayIndependent() throws {
+        var preset = LaunchPreset(name: "Portable", spec: TerminalSpec(harness: "codex", arguments: ["--model", "a"]))
+        XCTAssertEqual(preset.resolvedSpec(for: .windows), preset.spec)
+        preset.platformSpecs = ["windows": TerminalSpec(shellPath: "cmd.exe", arguments: [])]
+        XCTAssertEqual(preset.resolvedSpec(for: .macos), preset.spec)
+        XCTAssertNil(preset.resolvedSpec(for: .windows).harness)
+        let original = preset
+        var local = preset.resolvedSpec(for: .windows)
+        local.arguments.append("/Q")
+        XCTAssertEqual(preset, original)
+        XCTAssertEqual(try LaunchPresetInterchange.decode(LaunchPresetInterchange.encode([preset])), [preset])
+    }
+
+    func testExportRejectsFilesItCannotImport() {
+        let oversized = LaunchPreset(name: "Large", spec: TerminalSpec(arguments: [String(repeating: "x", count: 4 * 1024 * 1024)]))
+        XCTAssertThrowsError(try LaunchPresetInterchange.encode([oversized]))
+    }
+
     func testUnsupportedOrCorruptDocumentIsRejected() {
         for text in ["broken", "{\"version\":3,\"launchPresets\":[]}", "{}"] {
             XCTAssertThrowsError(try LaunchPresetInterchange.decode(Data(text.utf8)))

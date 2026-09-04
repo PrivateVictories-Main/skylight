@@ -65,8 +65,9 @@ In this preview: **Workspace menu (⋯) → Export workspace** produces a versio
 `launchPresets`. On macOS, **File → Import Launch Presets…** reads that field.
 This transfers launch configuration. It does not read CLI credential stores or
 transfer provider subscriptions, running processes, or command history. Explicit
-argument values are included, so secrets should stay in the CLI’s own credential store. Filesystem paths
-may need changing on each machine. There is no automatic cloud sync or remote
+argument values are included, so secrets should stay in the CLI’s own credential store. Use [per-OS preset settings](../docs/platform-presets.md) for different Windows,
+Linux, and macOS paths and commands. Paths may still need changing between machines
+running the same OS. There is no automatic cloud sync or remote
 terminal service in this implementation.
 
 ## Develop
@@ -152,6 +153,9 @@ Search uses arrows, Enter, and Escape. Results marked **Launch preset** open a f
 session from saved settings; terminal results return to an existing session.
 A tile's resize grip supports arrows too.
 
+For the cross-platform priorities and concrete acceptance gates, see
+[the development roadmap](../docs/development-roadmap.md).
+
 ## Still required before parity
 
 1. A separate portable session keeper with authenticated local IPC, reconnect,
@@ -160,7 +164,8 @@ A tile's resize grip supports arrows too.
 2. Windows/Linux live tests for each provider version, account detection, resume,
    cancellation, Unicode/IME, clipboard, accessibility, and interactive TUIs.
 3. Full edge-rail docking, canvas snapping/arrangement, theme parity, shell
-   integration, and platform-specific default overrides for shared presets.
+   integration. Per-OS default overrides are now implemented; machine-specific
+   folder mappings remain future work.
 4. A native-OS input-to-render benchmark matrix. No performance equivalence to
    the SwiftUI/Ghostty version is claimed from compilation or host-only tests.
 

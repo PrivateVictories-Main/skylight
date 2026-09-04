@@ -4,6 +4,7 @@ import { TerminalSession } from "./terminal";
 import {
   boardFor,
   parseArguments,
+  presetSpec,
   residentIDs,
   search,
   searchItems,
@@ -14,6 +15,7 @@ import {
   type Workspace,
 } from "./model";
 import { showMenu, type MenuAction } from "./menu";
+import { presetEditor } from "./preset-editor";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -449,7 +451,7 @@ async function editInstance(
       const edit = button(
         "…",
         () => {
-          void editInstance(preset).catch(report);
+          editPreset(preset);
         },
         "preset-remove",
       );
@@ -945,7 +947,10 @@ function palette(): void {
     }
   };
   const update = () => {
-    matches = search(input.value, searchItems(workspace, data.providers));
+    matches = search(
+      input.value,
+      searchItems(workspace, data.providers, data.platform),
+    );
     index = Math.min(index, Math.max(0, matches.length - 1));
     list.replaceChildren();
     matches.forEach((item, i) => {
@@ -1033,11 +1038,55 @@ async function importWorkspace(): Promise<void> {
   await persist();
   render();
 }
+function editPreset(preset: Instance): void {
+  const { dialog: dlg, body, close } = dialog("Edit preset");
+  const form = presetEditor(
+    preset,
+    data.platform,
+    data.providers,
+    async (updated) => {
+      const previous = workspace.launchPresets;
+      workspace.launchPresets = previous?.map((p) =>
+        p.id === updated.id ? updated : p,
+      );
+      try {
+        await persist();
+      } catch (error) {
+        workspace.launchPresets = previous;
+        throw error;
+      }
+      close();
+      renderNav();
+    },
+    close,
+  );
+  const remove = button(
+    "Remove preset",
+    async () => {
+      if (
+        await confirm(
+          "Remove preset?",
+          `Remove ${preset.name}? Existing sessions stay open.`,
+          "Remove",
+        )
+      ) {
+        workspace.launchPresets = workspace.launchPresets?.filter(
+          (p) => p.id !== preset.id,
+        );
+        await persist();
+      }
+    },
+    "subtle",
+  );
+  form.querySelector(".dialog-actions")!.prepend(remove);
+  body.append(form);
+  dlg.showModal();
+}
 async function launchPreset(preset: Instance): Promise<void> {
   const instance: Instance = {
     id: crypto.randomUUID(),
     name: preset.name,
-    spec: structuredClone(preset.spec),
+    spec: structuredClone(presetSpec(preset, data.platform)),
   };
   workspace.instances.push(instance);
   await persist();

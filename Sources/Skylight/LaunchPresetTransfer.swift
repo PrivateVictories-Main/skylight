@@ -35,7 +35,7 @@ enum LaunchPresetTransfer {
                 alert.addButton(withTitle: "Import Presets")
                 alert.addButton(withTitle: "Cancel")
                 guard alert.runModal() == .alertFirstButtonReturn else { return }
-                for preset in presets { state.savePreset(named: preset.name, spec: preset.spec) }
+                state.importPresets(presets)
             } catch { NSAlert(error: error).runModal() }
         }
     }

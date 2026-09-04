@@ -18,10 +18,11 @@ public enum WorkspaceSearch {
     }
 
     public static func presetItem(_ preset: LaunchPreset) -> Item {
-        let tool = preset.spec.harness.flatMap { Catalog.harness($0)?.displayName }
-            ?? preset.spec.harness ?? "Terminal"
+        let spec = preset.resolvedSpec(for: .macos)
+        let tool = spec.harness.flatMap { Catalog.harness($0)?.displayName }
+            ?? spec.harness ?? "Terminal"
         return Item(id: preset.id, kind: .preset, title: preset.name,
-                    detail: ["Launch preset", tool, preset.spec.workingDirectory]
+                    detail: ["Launch preset", tool, spec.workingDirectory]
                         .compactMap { $0 }.joined(separator: " · "))
     }
 

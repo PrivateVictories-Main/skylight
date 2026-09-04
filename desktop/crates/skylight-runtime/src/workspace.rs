@@ -2,7 +2,7 @@ use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::{
-    collections::HashSet,
+    collections::{BTreeMap, HashSet},
     fs,
     io::{Read, Write},
     path::Path,
@@ -26,6 +26,12 @@ pub struct Instance {
     pub id: Uuid,
     pub name: String,
     pub spec: TerminalSpec,
+    #[serde(
+        rename = "platformSpecs",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub platform_specs: Option<BTreeMap<String, TerminalSpec>>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -235,6 +241,41 @@ mod tests {
         value["canvases"][0]["tiles"][0]["itemID"] = value["instances"][1]["id"].clone();
         assert!(Workspace::decode(value.to_string().as_bytes()).is_err());
     }
+    #[test]
+    fn platform_presets_survive_native_import_and_atomic_workspace_save() {
+        let presets: Vec<Instance> = serde_json::from_str(include_str!(
+            "../../../../shared/fixtures/platform-presets.json"
+        ))
+        .unwrap();
+        let windows = &presets[0].platform_specs.as_ref().unwrap()["windows"];
+        assert_eq!(windows.arguments, vec!["/Q", "/D"]);
+        assert!(windows.harness.is_none());
+        let original = serde_json::to_value(&presets).unwrap();
+        let workspace = Workspace {
+            launch_presets: presets,
+            ..Workspace::default()
+        };
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("workspace.json");
+        workspace.save(&file).unwrap();
+        let restored = Workspace::load(&file).unwrap();
+        assert_eq!(
+            serde_json::to_value(restored.launch_presets).unwrap(),
+            original
+        );
+    }
+
+    #[test]
+    fn malformed_platform_spec_is_rejected_instead_of_ignored() {
+        let mut value: Value = serde_json::from_str(include_str!(
+            "../../../../shared/fixtures/platform-presets.json"
+        ))
+        .unwrap();
+        value[0]["platformSpecs"]["windows"]["arguments"] =
+            Value::String("not an argument array".into());
+        assert!(serde_json::from_value::<Vec<Instance>>(value).is_err());
+    }
+
     #[test]
     fn failed_save_preserves_previous_workspace() {
         let temp = tempfile::tempdir().unwrap();

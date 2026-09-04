@@ -1,11 +1,13 @@
 import { describe, it, expect } from "vitest";
 import {
   parseArguments,
+  presetSpec,
   search,
   searchItems,
   residentIDs,
   type Workspace,
 } from "../src/model";
+import platforms from "../../shared/fixtures/platform-presets.json";
 import fixture from "../../shared/fixtures/workspace-v2.json";
 
 describe("workspace compatibility", () => {
@@ -66,5 +68,31 @@ describe("literal argument grouping", () => {
   });
   it("refuses an unterminated quote instead of launching a different command", () => {
     expect(() => parseArguments('"unfinished')).toThrow("Close the quote");
+  });
+});
+
+describe("platform launch presets", () => {
+  it("selects complete platform settings without mixing defaults or arguments", () => {
+    const preset = platforms[0];
+    expect(presetSpec(preset, "macos")).toEqual(preset.platformSpecs.macos);
+    expect(presetSpec(preset, "windows").arguments).toEqual(["/Q", "/D"]);
+    expect(presetSpec(preset, "linux").harness).toBeNull();
+    expect(presetSpec(preset, "linux").arguments).toEqual([]);
+    expect(presetSpec(preset, "unknown")).toEqual(preset.spec);
+    expect(presetSpec({ ...preset, platformSpecs: null }, "macos")).toEqual(
+      preset.spec,
+    );
+  });
+  it("searches only the current platform folder and CLI, never another platform's arguments", () => {
+    const workspace = {
+      ...fixture,
+      launchPresets: platforms,
+    } as unknown as Workspace;
+    const items = searchItems(workspace, [], "windows");
+    const preset = items.find((i) => i.kind === "preset")!;
+    expect(preset.detail).toContain("C:\\Projects\\My Project");
+    expect(preset.detail).not.toContain("/tmp/mac");
+    expect(preset.detail).not.toContain("codex");
+    expect(search("--default-only", items)).toEqual([]);
   });
 });

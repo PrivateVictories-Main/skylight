@@ -289,6 +289,53 @@ try {
     await keys("\uE00C");
     await marker("after_launch_dialog", false);
   });
+  await check(
+    "Platform preset editor isolates local defaults and preserves other systems",
+    async () => {
+      await click("#new-terminal");
+      await click('[aria-label="Edit preset Daily shell"]');
+      await click('select[aria-label="Settings for"] option[value="default"]');
+      await fill("Working folder", join(support, "missing default folder"));
+      await fill("Arguments", "--default-only");
+      const other = windows ? "linux" : "windows";
+      await click(`select[aria-label="Settings for"] option[value="${other}"]`);
+      await click('input[aria-label="Use custom settings"]');
+      await fill("Shell executable", "/foreign/shell");
+      await fill("Working folder", "/foreign/project");
+      await fill("Arguments", "--foreign-only");
+      const local = windows ? "windows" : "linux";
+      await click(`select[aria-label="Settings for"] option[value="${local}"]`);
+      await click('input[aria-label="Use custom settings"]');
+      await fill(
+        "Shell executable",
+        windows ? "C:\\Windows\\System32\\cmd.exe" : "/bin/sh",
+      );
+      await fill("Working folder", project);
+      await fill("Arguments", windows ? "/Q /D" : "");
+      await screenshot("platform-preset");
+      await clickText("Save preset");
+      await until("platform settings durably saved", async () => {
+        const preset = JSON.parse(
+          await readFile(join(support, "workspace.json"), "utf8"),
+        ).launchPresets[0];
+        return (
+          preset.platformSpecs?.[local]?.workingDirectory === project &&
+          preset.platformSpecs?.[other]?.arguments[0] === "--foreign-only" &&
+          preset.spec.arguments[0] === "--default-only"
+        );
+      });
+      // Cancel a second edit. Neither defaults nor another OS may be overwritten.
+      await click("#new-terminal");
+      await click('[aria-label="Edit preset Daily shell"]');
+      await fill("Working folder", "/cancelled/edit");
+      await clickText("Cancel");
+      await marker("after_preset_edit", false);
+      const preset = JSON.parse(
+        await readFile(join(support, "workspace.json"), "utf8"),
+      ).launchPresets[0];
+      assert.equal(preset.platformSpecs[local].workingDirectory, project);
+    },
+  );
   await check("Create canvas and move live terminal", async () => {
     // The first move must create the canvas AND place the terminal in it.
     await click("#workspace-menu");
