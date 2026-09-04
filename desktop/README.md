@@ -34,7 +34,8 @@ The native macOS app is the visual reference. Windows and Linux share its
 256-point sidebar, bottom **New** button, neutral charcoal surfaces, 8-point
 terminal inset, 16-point panel corners, 30-point canvas headers, 560 × 400
 initial tiles, and sparse 64-point canvas grid. Terminals fill their panel
-without a permanent action toolbar. System title bars and installed fonts can
+without a permanent action toolbar. Inter UI and JetBrains Mono are bundled locally so Windows and Linux use the
+same typography even on clean machines. System title bars and font rasterization can
 differ across operating systems; the Mac's native material is not emulated with
 a costly web blur.
 

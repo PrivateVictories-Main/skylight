@@ -31,6 +31,7 @@ let saving = Promise.resolve();
 let allowClose = false;
 let providerRefresh: Promise<void> | undefined;
 const sessions = new Map<string, TerminalSession>();
+const starting = new Map<string, Promise<void>>();
 
 function element<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -318,12 +319,24 @@ function renderReady(instance: Instance, parent: HTMLElement): void {
   );
   parent.append(box);
 }
-async function start(instance: Instance): Promise<void> {
+function start(instance: Instance): Promise<void> {
+  const pending = starting.get(instance.id);
+  if (pending) return pending;
+  const opening = startSession(instance).finally(() =>
+    starting.delete(instance.id),
+  );
+  starting.set(instance.id, opening);
+  return opening;
+}
+async function startSession(instance: Instance): Promise<void> {
   const existing = sessions.get(instance.id);
   if (existing?.state === "running" || existing?.state === "opening") {
     select({ kind: "terminal", id: instance.id });
     return;
   }
+  // Font files are bundled and preloaded. Wait for their metrics before xterm
+  // constructs its canvas, avoiding platform fallback fonts and later reflow.
+  await document.fonts.load('14px "Skylight Mono"');
   if (existing) {
     await existing.close();
     sessions.delete(instance.id);

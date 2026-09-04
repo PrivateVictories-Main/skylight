@@ -25,8 +25,7 @@ export class TerminalSession {
   ) {
     this.element.className = "terminal-surface";
     this.terminal = new Terminal({
-      fontFamily:
-        "'Cascadia Code', 'Cascadia Mono', 'JetBrains Mono', 'SFMono-Regular', Consolas, monospace",
+      fontFamily: "'Skylight Mono', monospace",
       fontSize: 14,
       lineHeight: 1.15,
       cursorBlink: false,

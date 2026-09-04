@@ -237,6 +237,17 @@ try {
       presetsInSidebar: 0,
     });
     evidence.visualContract = visual;
+    assert.equal(
+      await inspect(
+        `return document.fonts.check('14px "Skylight Mono"') && document.fonts.check('13px "Skylight UI"')`,
+      ),
+      true,
+    );
+    const fonts = await inspect(
+      `return [...document.fonts].filter(font => font.status === 'loaded').map(font => font.family.replaceAll('"', '')).sort()`,
+    );
+    assert.deepEqual(fonts, ["Skylight Mono", "Skylight UI"]);
+    evidence.bundledFonts = fonts;
   });
   await check(
     "Sidebar collapse and menu keyboard dismissal preserve terminal input",
