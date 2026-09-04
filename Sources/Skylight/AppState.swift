@@ -675,6 +675,7 @@ final class AppState: ObservableObject {
         instances.append(instance)
         selection = .item(instance.id)
         focusedInstance = nil
+        sessions.requestKeyboardFocus(instance.id)
         usage.record(spec)
         persistUsage()
         persist()
@@ -694,6 +695,7 @@ final class AppState: ObservableObject {
         signInInstances[instance.id] = harness.id
         selection = .item(instance.id)
         focusedInstance = nil
+        sessions.requestKeyboardFocus(instance.id)
         // Deliberately NOT recorded in usage: signing in is a chore, not a
         // habit, and it must never become somebody's "your usual".
         persist()
@@ -743,6 +745,7 @@ final class AppState: ObservableObject {
         canvases[index].tiles.append(
             CanvasTile(itemID: instance.id, origin: origin, size: size))
         selection = .canvas(canvasID)
+        sessions.requestKeyboardFocus(instance.id)
         persist()
     }
 
