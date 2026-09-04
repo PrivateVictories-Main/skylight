@@ -31,6 +31,29 @@ describe("workspace compatibility", () => {
     ];
     expect(search("RESUME", items)).toEqual(items);
   });
+  it("finds launch presets without indexing arguments or replacing active sessions", () => {
+    const workspace = structuredClone(fixture) as unknown as Workspace;
+    workspace.launchPresets = [
+      {
+        id: "preset",
+        name: "Assistant",
+        spec: {
+          harness: "codex",
+          arguments: ["PRIVATE_ARGUMENT"],
+          workingDirectory: "/projects/api",
+        },
+      },
+    ];
+    const items = searchItems(workspace, []);
+    expect(search("Assistant", items).map((i) => i.kind)).toEqual([
+      "terminal",
+      "preset",
+    ]);
+    expect(search("launch codex api", items).map((i) => i.id)).toEqual([
+      "preset",
+    ]);
+    expect(search("PRIVATE_ARGUMENT", items)).toEqual([]);
+  });
 });
 describe("literal argument grouping", () => {
   it("preserves quoted paths, empty arguments and Windows paths", () => {

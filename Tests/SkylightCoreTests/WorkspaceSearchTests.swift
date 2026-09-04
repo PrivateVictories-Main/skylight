@@ -37,4 +37,17 @@ final class WorkspaceSearchTests: XCTestCase {
         let items = [item("Shell"), item("Shell")]
         XCTAssertEqual(WorkspaceSearch.results(for: "shell", in: items), items)
     }
+
+    func testPresetSearchDistinguishesLaunchFromExistingSessionAndOmitsArguments() {
+        let preset = LaunchPreset(name: "Project assistant", spec: TerminalSpec(
+            harness: "claude", arguments: ["PRIVATE_ARGUMENT"], workingDirectory: "/projects/api"))
+        let launch = WorkspaceSearch.presetItem(preset)
+        let existing = item("Project assistant", "Claude Code")
+        XCTAssertEqual(WorkspaceSearch.results(for: "Project assistant", in: [existing, launch]),
+                       [existing, launch])
+        XCTAssertEqual(WorkspaceSearch.results(for: "launch claude api", in: [existing, launch]),
+                       [launch])
+        XCTAssertEqual(launch.kind, .preset)
+        XCTAssertTrue(WorkspaceSearch.results(for: "PRIVATE_ARGUMENT", in: [launch]).isEmpty)
+    }
 }

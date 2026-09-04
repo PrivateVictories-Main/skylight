@@ -20,7 +20,7 @@ struct WorkspaceSwitcher: View {
         } + state.canvases.map {
             WorkspaceSearch.Item(id: $0.id, kind: .canvas, title: $0.name,
                                  detail: "Canvas · \(state.residents(of: $0).count) sessions")
-        }
+        } + state.presets.map(WorkspaceSearch.presetItem)
     }
 
     private var results: [WorkspaceSearch.Item] {
@@ -47,7 +47,7 @@ struct WorkspaceSwitcher: View {
                 ContentUnavailableView(
                     query.isEmpty ? "Your workspace is empty" : "No matches",
                     systemImage: query.isEmpty ? "terminal" : "magnifyingglass",
-                    description: Text(query.isEmpty ? "Press ⌘T to create a terminal." : "Try a name, agent, folder, or canvas."))
+                    description: Text(query.isEmpty ? "Press ⌘T to create a terminal." : "Try a name, agent, folder, canvas, or preset."))
                     .frame(height: 220)
             } else {
                 ScrollViewReader { proxy in
@@ -91,7 +91,7 @@ struct WorkspaceSwitcher: View {
 
     private func row(_ item: WorkspaceSearch.Item) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: item.kind == .canvas ? "square.grid.2x2" : "terminal")
+            Image(systemName: item.kind == .preset ? "play.circle" : item.kind == .canvas ? "square.grid.2x2" : "terminal")
                 .font(.system(size: 15))
                 .foregroundStyle(.secondary)
                 .frame(width: 22)

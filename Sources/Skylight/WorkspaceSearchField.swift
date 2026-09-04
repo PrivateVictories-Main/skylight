@@ -13,7 +13,7 @@ struct WorkspaceSearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> Field {
         let field = Field()
-        field.placeholderString = "Find a terminal, agent, or canvas"
+        field.placeholderString = "Find a terminal, canvas, or launch preset"
         field.font = .systemFont(ofSize: 16)
         field.isBordered = false
         field.drawsBackground = false

@@ -53,7 +53,7 @@ export interface Bootstrap {
 }
 export interface SearchItem {
   id: string;
-  kind: "terminal" | "canvas";
+  kind: "terminal" | "canvas" | "preset";
   name: string;
   detail: string;
 }
@@ -90,6 +90,20 @@ export function searchItems(
       kind: "canvas" as const,
       name: b.name,
       detail: `Canvas · ${residentIDs(b).length} sessions`,
+    })),
+    ...(workspace.launchPresets ?? []).map((p) => ({
+      id: p.id,
+      kind: "preset" as const,
+      name: p.name,
+      detail: [
+        "Launch preset",
+        providers.find((provider) => provider.id === p.spec.harness)?.name ??
+          p.spec.harness ??
+          "Terminal",
+        p.spec.workingDirectory,
+      ]
+        .filter(Boolean)
+        .join(" · "),
     })),
   ];
 }

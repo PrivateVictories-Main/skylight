@@ -3,7 +3,7 @@ import Foundation
 /// Search metadata only. Terminal output and command input never enter the index.
 public enum WorkspaceSearch {
     public struct Item: Identifiable, Equatable, Sendable {
-        public enum Kind: Sendable { case terminal, canvas }
+        public enum Kind: Sendable { case terminal, canvas, preset }
         public let id: UUID
         public let kind: Kind
         public let title: String
@@ -15,6 +15,14 @@ public enum WorkspaceSearch {
             self.title = title
             self.detail = detail
         }
+    }
+
+    public static func presetItem(_ preset: LaunchPreset) -> Item {
+        let tool = preset.spec.harness.flatMap { Catalog.harness($0)?.displayName }
+            ?? preset.spec.harness ?? "Terminal"
+        return Item(id: preset.id, kind: .preset, title: preset.name,
+                    detail: ["Launch preset", tool, preset.spec.workingDirectory]
+                        .compactMap { $0 }.joined(separator: " · "))
     }
 
     public static func results(for query: String, in items: [Item]) -> [Item] {

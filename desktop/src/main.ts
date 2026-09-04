@@ -736,7 +736,7 @@ function palette(): void {
   const input = field(
     "Search workspace",
     "",
-    "Find a terminal, agent, folder, or canvas",
+    "Find a terminal, canvas, or launch preset",
   );
   const list = element("div", undefined, "search-results");
   list.setAttribute("role", "listbox");
@@ -744,7 +744,12 @@ function palette(): void {
   let matches: SearchItem[] = [];
   const choose = (item: SearchItem) => {
     close();
-    select(item);
+    if (item.kind === "preset") {
+      const preset = workspace.launchPresets?.find((p) => p.id === item.id);
+      if (preset) void launchPreset(preset).catch(report);
+    } else {
+      select({ kind: item.kind, id: item.id });
+    }
   };
   const update = () => {
     matches = search(input.value, searchItems(workspace, data.providers));
@@ -761,7 +766,7 @@ function palette(): void {
       list.append(
         element(
           "p",
-          "No matches. Try a name, CLI, folder, or canvas.",
+          "No matches. Try a name, CLI, folder, canvas, or preset.",
           "no-results",
         ),
       );

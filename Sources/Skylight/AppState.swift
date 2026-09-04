@@ -138,6 +138,15 @@ final class AppState: ObservableObject {
                     selection = .item(item.id)
                 }
                 sessions.requestKeyboardFocus(item.id)
+            case .preset:
+                guard let preset = presets.first(where: { $0.id == item.id }) else { return }
+                if let harness = preset.spec.harness,
+                   sessions.cachedResolveHarness(harness) == nil {
+                    newSheetShown = true
+                    return
+                }
+                launch(preset.spec, name: preset.name)
+                if case let .item(id) = selection { sessions.requestKeyboardFocus(id) }
             case .canvas:
                 guard canvases.contains(where: { $0.id == item.id }) else { return }
                 selection = .canvas(item.id)
