@@ -80,6 +80,13 @@ struct ChildGuard {
     reaped: bool,
 }
 impl ChildGuard {
+    #[cfg(windows)]
+    fn wait(&mut self) -> std::io::Result<portable_pty::ExitStatus> {
+        let status = self.process.wait()?;
+        self.reaped = true;
+        Ok(status)
+    }
+    #[cfg(unix)]
     fn try_wait(&mut self) -> std::io::Result<Option<portable_pty::ExitStatus>> {
         let result = self.process.try_wait()?;
         if result.is_some() {
@@ -102,9 +109,9 @@ impl Drop for ChildGuard {
 /// IPC queue. Input has a separate worker and bounded queue so it can interrupt
 /// a producer whose output is backpressured.
 pub struct Session {
-    master: Mutex<Box<dyn MasterPty + Send>>,
+    master: Arc<Mutex<Option<Box<dyn MasterPty + Send>>>>,
     #[cfg(windows)]
-    killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    killer: Arc<Mutex<Box<dyn ChildKiller + Send + Sync>>>,
     input: Arc<Mutex<Option<SyncSender<Vec<u8>>>>>,
     budget: Arc<OutputBudget>,
     ended: Arc<Mutex<bool>>,
@@ -147,8 +154,9 @@ impl Session {
         };
         let process_id = child.process.process_id();
         #[cfg(windows)]
-        let killer = child.process.clone_killer();
+        let killer = Arc::new(Mutex::new(child.process.clone_killer()));
         drop(pair.slave);
+        let master = Arc::new(Mutex::new(Some(pair.master)));
         let budget = Arc::new(OutputBudget::default());
         let ended = Arc::new(Mutex::new(false));
         let (input, incoming) = mpsc::sync_channel::<Vec<u8>>(64);
@@ -167,7 +175,12 @@ impl Session {
                 }
             })?;
         let reader_budget = budget.clone();
+        #[cfg(unix)]
         let reader_ended = ended.clone();
+        #[cfg(windows)]
+        let reader_killer = killer.clone();
+        #[cfg(windows)]
+        let (exit_sender, exit_receiver) = mpsc::channel();
         let reader_input = input.clone();
         thread::Builder::new()
             .name("skylight-output".into())
@@ -184,7 +197,10 @@ impl Session {
                                 continue;
                             }
                             if sink(SessionEvent::Output(buffer[..count].to_vec())).is_err() {
+                                #[cfg(unix)]
                                 let _ = child.process.kill();
+                                #[cfg(windows)]
+                                let _ = reader_killer.lock().unwrap().kill();
                                 reader_budget.close();
                                 continue;
                             }
@@ -206,6 +222,7 @@ impl Session {
                 // Reaping and the liveness flag share a lock with close().
                 // A late close can never signal a PID that has been reaped and
                 // reused. This short exit-only wait does not poll live PTYs.
+                #[cfg(unix)]
                 let exit = loop {
                     let mut ended = reader_ended.lock().unwrap();
                     match child.try_wait() {
@@ -222,14 +239,36 @@ impl Session {
                     drop(ended);
                     thread::sleep(std::time::Duration::from_millis(20));
                 };
+                #[cfg(windows)]
+                let exit = exit_receiver.recv().ok().flatten();
                 reader_input.lock().unwrap().take();
                 reader_budget.close();
                 let _ = sink(SessionEvent::Exited(exit));
             })?;
+        #[cfg(windows)]
+        {
+            let exit_master = master.clone();
+            let exit_ended = ended.clone();
+            let exit_input = input.clone();
+            // ConPTY retains the output pipe until its master is closed. Waiting
+            // for output EOF before waiting for the process creates a cycle.
+            // Wait on the process on a separate thread, then close the console
+            // while the output worker continues draining its final bytes.
+            thread::Builder::new()
+                .name("skylight-exit".into())
+                .spawn(move || {
+                    let code = child.wait().ok().map(|status| status.exit_code());
+                    *exit_ended.lock().unwrap() = true;
+                    exit_input.lock().unwrap().take();
+                    let _ = exit_sender.send(code);
+                    let master = exit_master.lock().unwrap().take();
+                    drop(master);
+                })?;
+        }
         Ok(Self {
-            master: Mutex::new(pair.master),
+            master,
             #[cfg(windows)]
-            killer: Mutex::new(killer),
+            killer,
             input,
             budget,
             ended,
@@ -248,7 +287,12 @@ impl Session {
     }
     pub fn resize(&self, columns: u16, rows: u16) -> Result<()> {
         validate_size(columns, rows)?;
-        self.master.lock().unwrap().resize(size(columns, rows))
+        self.master
+            .lock()
+            .unwrap()
+            .as_ref()
+            .ok_or_else(|| anyhow!("Session is closed"))?
+            .resize(size(columns, rows))
     }
     pub fn acknowledge(&self, through: u64) -> Result<()> {
         self.budget.acknowledge(through)

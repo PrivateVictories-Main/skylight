@@ -155,6 +155,35 @@ fn output_flood_is_bounded_and_does_not_block_another_session() {
     }
 }
 
+#[cfg(windows)]
+#[test]
+fn windows_close_reports_exit_for_a_quiet_shell() {
+    let (sender, receiver) = mpsc::channel();
+    let session = Session::spawn(
+        LaunchRequest {
+            program: "cmd.exe".into(),
+            arguments: vec!["/Q".into()],
+            cwd: None,
+            columns: 80,
+            rows: 24,
+        },
+        Arc::new(move |event| sender.send(event).map_err(|e| e.to_string())),
+    )
+    .unwrap();
+    session.close();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let SessionEvent::Exited(_) = receiver
+            .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+            .unwrap()
+        {
+            break;
+        }
+    }
+    assert!(!session.is_alive());
+    session.close();
+}
+
 #[cfg(unix)]
 #[test]
 fn explicit_close_stops_a_quiet_process_that_ignores_hangup() {
