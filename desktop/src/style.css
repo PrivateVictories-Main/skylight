@@ -463,6 +463,9 @@ main {
   flex: 1;
 }
 .tile-content {
+  /* Contain xterm's scrollbar/IME overlay layers beneath the canvas controls. */
+  position: relative;
+  z-index: 0;
   flex: 1;
   min-height: 0;
   display: flex;

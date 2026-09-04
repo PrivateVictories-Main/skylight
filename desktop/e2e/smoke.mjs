@@ -90,7 +90,17 @@ async function find(value, using = "css selector") {
 }
 async function click(selector) {
   const id = await until(selector, () => find(selector));
-  await command("POST", `/element/${id}/click`, {});
+  try {
+    await command("POST", `/element/${id}/click`, {});
+  } catch (error) {
+    const hit =
+      await inspect(`const target = document.querySelector(${JSON.stringify(selector)});
+      const rect = target?.getBoundingClientRect();
+      return rect ? {rect: rect.toJSON(), hit: document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)?.outerHTML.slice(0, 500)} : null;`).catch(
+        () => null,
+      );
+    throw new Error(`${error.message}; hit test: ${JSON.stringify(hit)}`);
+  }
 }
 async function clickText(text) {
   const id = await until(text, () =>
