@@ -154,7 +154,20 @@ const ended = () =>
     ),
   );
 async function marker(name, focus = true) {
-  if (focus) await click(".xterm-screen");
+  // Moving a terminal schedules its fit for the next animation frame. The
+  // backing grid can still have full-window dimensions inside a smaller tile.
+  // Wait for that real layout, then click the visible host, not a clipped grid.
+  await until("terminal fitted to its visible surface", () =>
+    inspect(`
+    const host = document.querySelector('.terminal-surface');
+    const screen = host?.querySelector('.xterm-screen');
+    if (!host || !screen) return false;
+    const bounds = screen.getBoundingClientRect();
+    return bounds.width > 0 && bounds.height > 0 &&
+      bounds.width <= host.clientWidth + 1 && bounds.height <= host.clientHeight + 1;
+  `),
+  );
+  if (focus) await click(".terminal-surface");
   await until("terminal keyboard focus", () =>
     inspect(
       "return document.activeElement?.classList.contains('xterm-helper-textarea')",
