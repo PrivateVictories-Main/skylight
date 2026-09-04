@@ -43,6 +43,24 @@ final class CatalogTests: XCTestCase {
                             home: "/Users/x", isExecutable: { exists.contains($0) }))
     }
 
+    func testVersionManagerInstallationsAreDiscoverableFromFinderPath() {
+        for directory in [".volta/bin", ".asdf/shims", ".local/share/mise/shims", ".bun/bin", ".cargo/bin"] {
+            let binary = "/Users/test/\(directory)/codex"
+            XCTAssertEqual(Catalog.resolve("codex", pathVariable: "/usr/bin:/bin",
+                home: "/Users/test", isExecutable: { $0 == binary }), binary)
+        }
+    }
+
+    func testDiscoveryAndAgentExecutionUseTheSameOrderedPath() {
+        let path = "/custom/tools:/usr/bin:/custom/tools:/opt/homebrew/bin"
+        let directories = Catalog.searchDirectories(pathVariable: path, home: "/Users/test")
+        XCTAssertEqual(Array(directories.prefix(3)), ["/custom/tools", "/usr/bin", "/opt/homebrew/bin"])
+        XCTAssertEqual(Set(directories).count, directories.count)
+        let additions = Launch.agentEnvironment(base: ["PATH": path, "PRIVATE_TEST_VALUE": "never-copy"],
+                                               home: "/Users/test")
+        XCTAssertEqual(additions, ["PATH": directories.joined(separator: ":")])
+    }
+
     func testHarnessCatalogShape() {
         XCTAssertEqual(Catalog.harnesses.map(\.id),
                        ["claude", "codex", "gemini", "copilot", "cursor-agent",

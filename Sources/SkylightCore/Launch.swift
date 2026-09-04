@@ -23,6 +23,13 @@ public enum Launch {
 }
 
 public extension Launch {
+    /// Only the PATH addition is returned. Credentials and other inherited
+    /// environment values stay in the process and are never persisted.
+    static func agentEnvironment(base: [String: String], home: String) -> [String: String] {
+        ["PATH": Catalog.searchDirectories(pathVariable: base["PATH"], home: home)
+            .joined(separator: ":")]
+    }
+
     /// The environment additions that switch ghostty's shell integration on
     /// for a session.
     ///

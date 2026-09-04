@@ -156,11 +156,25 @@ public enum Catalog {
     /// Resolve a binary name against PATH plus the usual user-install dirs.
     public static func resolve(_ name: String, pathVariable: String?, home: String,
                                isExecutable: (String) -> Bool) -> String? {
-        var dirs = (pathVariable ?? "").split(separator: ":").map(String.init)
-        dirs += ["\(home)/.local/bin", "/usr/local/bin", "/opt/homebrew/bin"]
-        var seen = Set<String>()
-        return dirs.filter { !$0.isEmpty && seen.insert($0).inserted }
+        searchDirectories(pathVariable: pathVariable, home: home)
             .map { "\($0)/\(name)" }
             .first(where: isExecutable)
+    }
+
+    /// Shared by discovery, status checks, and agent launches. A Finder-launched
+    /// app often has only the system PATH; finding a CLI alone is not enough
+    /// when its shebang or tools need Node, Bun, Rust, or a version-manager shim.
+    /// Explicit PATH entries retain precedence. No login shell or config file
+    /// is executed merely to discover an installation.
+    public static func searchDirectories(pathVariable: String?, home: String) -> [String] {
+        var dirs = (pathVariable ?? "").split(separator: ":").map(String.init)
+        dirs += ["\(home)/.local/bin", "/usr/local/bin", "/opt/homebrew/bin",
+                 "\(home)/.volta/bin", "\(home)/.asdf/shims",
+                 "\(home)/.local/share/mise/shims", "\(home)/.bun/bin",
+                 "\(home)/.cargo/bin", "\(home)/.npm-global/bin",
+                 "\(home)/go/bin", "\(home)/.nvm/current/bin",
+                 "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
+        var seen = Set<String>()
+        return dirs.filter { !$0.isEmpty && seen.insert($0).inserted }
     }
 }

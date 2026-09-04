@@ -7,7 +7,7 @@ let package = Package(
         .macOS(.v14),
     ],
     dependencies: [
-        .package(url: "https://github.com/Lakr233/libghostty-spm.git", from: "1.2.0"),
+        .package(path: "Vendor/GhosttyKit"),
     ],
     targets: [
         .target(
@@ -28,12 +28,12 @@ let package = Package(
             dependencies: [
                 "SkylightCore",
                 "SkylightDaemonCore",
-                .product(name: "GhosttyTerminal", package: "libghostty-spm"),
+                .product(name: "GhosttyTerminal", package: "GhosttyKit"),
                 // 485 bundled themes, already on disk in the engine package:
                 // a real choice on day one with nothing to parse. Depended on
                 // by the APP, never by SkylightCore — Core stays engine-free
                 // so its theme logic can be tested without a surface.
-                .product(name: "GhosttyTheme", package: "libghostty-spm"),
+                .product(name: "GhosttyTheme", package: "GhosttyKit"),
             ],
             path: "Sources/Skylight",
             resources: [.process("Resources")]
@@ -42,6 +42,11 @@ let package = Package(
             name: "SkylightCoreTests",
             dependencies: ["SkylightCore", "SkylightDaemonCore"],
             path: "Tests/SkylightCoreTests"
+        ),
+        .testTarget(
+            name: "SkylightAppTests",
+            dependencies: ["Skylight"],
+            path: "Tests/SkylightAppTests"
         ),
     ]
 )

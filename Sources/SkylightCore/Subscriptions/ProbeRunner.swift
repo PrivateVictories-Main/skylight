@@ -49,8 +49,11 @@ public enum ProbeRunner {
             return Outcome(state: .unknown, checkedAt: Date())
         }
 
+        let base = ProcessInfo.processInfo.environment
+        let environment = base.merging(Launch.agentEnvironment(
+            base: base, home: FileManager.default.homeDirectoryForCurrentUser.path)) { _, new in new }
         let (stdout, stderr, exitCode) = run(binaryPath, arguments,
-                                             timeout: defaultTimeout)
+                                             timeout: defaultTimeout, environment: environment)
         return Outcome(state: AuthProbe.state(stdout: stdout, stderr: stderr,
                                               exitCode: exitCode, probe: probe),
                        checkedAt: Date())
@@ -66,12 +69,14 @@ public enum ProbeRunner {
     /// answer arriving on stderr — lived in here, the one part that had no
     /// tests at all.
     public static func run(_ binary: String, _ arguments: [String],
-                           timeout: TimeInterval) -> (stdout: String?,
+                           timeout: TimeInterval,
+                           environment: [String: String]? = nil) -> (stdout: String?,
                                                       stderr: String?,
                                                       exitCode: Int32?) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: binary)
         process.arguments = arguments
+        process.environment = environment
         process.qualityOfService = .utility
         let outPipe = Pipe()
         let errPipe = Pipe()

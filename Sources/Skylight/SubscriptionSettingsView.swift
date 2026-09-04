@@ -6,7 +6,7 @@ import SkylightCore
 ///
 /// The honest posture is the whole feature. This pane never shows a token,
 /// never asks for one, and cannot: the only things it knows are what each CLI
-/// printed about itself and whether a credential file exists on disk.
+/// printed about itself and whether its executable is installed.
 struct SubscriptionSettingsView: View {
     @EnvironmentObject private var state: AppState
 
@@ -43,6 +43,10 @@ struct SubscriptionSettingsView: View {
         .padding(18)
         // One of the three declared triggers. Not a timer.
         .task { state.refreshSubscriptions() }
+        .onReceive(NotificationCenter.default.publisher(
+            for: NSApplication.didBecomeActiveNotification)) { _ in
+                state.refreshSubscriptions()
+            }
     }
 
     private var header: some View {
@@ -76,6 +80,11 @@ struct SubscriptionSettingsView: View {
                         .font(.system(size: 10.5))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
+                } else if state.unverifiedSubscriptions.contains(harness.id) {
+                    Text("Couldn’t verify sign-in. You can still open the CLI.")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 } else if harness.authProbe?.statusCommand == nil {
                     // Say why it is blank rather than leaving a gap that reads
                     // as a bug. This is the same "we will not guess" rule the
@@ -99,6 +108,7 @@ struct SubscriptionSettingsView: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.green)
                     .help(lastCheckedText(harness) ?? "Signed in")
+                    .accessibilityLabel("Signed in")
             }
         }
         .padding(.horizontal, 8)

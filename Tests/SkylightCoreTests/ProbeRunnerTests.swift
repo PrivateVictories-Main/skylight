@@ -130,6 +130,26 @@ final class ProbeRunnerTests: XCTestCase {
         XCTAssertNil(result.stdout)
     }
 
+    func testDiscoveredCLIAlsoFindsItsShebangRuntime() throws {
+        let bin = directory.appendingPathComponent(".volta/bin")
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let runtime = bin.appendingPathComponent("skylight-test-runtime")
+        try "#!/bin/sh\necho RUNTIME_FOUND\n".write(to: runtime, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: runtime.path)
+        let cli = bin.appendingPathComponent("test-agent")
+        try "#!/usr/bin/env skylight-test-runtime\n".write(to: cli, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: cli.path)
+        let finder = ["PATH": "/usr/bin:/bin"]
+        let binary = try XCTUnwrap(Catalog.resolve("test-agent", pathVariable: finder["PATH"],
+            home: directory.path, isExecutable: { FileManager.default.isExecutableFile(atPath: $0) }))
+        let withoutRuntime = ProbeRunner.run(binary, [], timeout: 2, environment: finder)
+        XCTAssertNotEqual(withoutRuntime.exitCode, 0)
+        let environment = finder.merging(Launch.agentEnvironment(base: finder, home: directory.path)) { _, new in new }
+        let result = ProbeRunner.run(binary, [], timeout: 2, environment: environment)
+        XCTAssertEqual(result.exitCode, 0)
+        XCTAssertTrue(result.stdout?.contains("RUNTIME_FOUND") == true)
+    }
+
     /// End to end through the real decision, on the exact shapes the two live
     /// CLIs produce.
     func testEndToEndAgainstTheShapesTheRealCLIsProduce() throws {

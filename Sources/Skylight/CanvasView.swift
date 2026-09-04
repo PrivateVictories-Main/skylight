@@ -827,7 +827,7 @@ struct TileView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+            PreparedTerminalView(sessions: state.sessions, instance: instance,
                                    cornerRadius: 16,
                                    maskedCorners: [.layerMinXMinYCorner, .layerMaxXMinYCorner])
         }
@@ -1579,7 +1579,7 @@ struct DockedTileView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+            PreparedTerminalView(sessions: state.sessions, instance: instance,
                                    cornerRadius: 12,
                                    maskedCorners: [.layerMinXMinYCorner,
                                                    .layerMaxXMinYCorner])

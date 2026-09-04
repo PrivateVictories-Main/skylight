@@ -32,6 +32,8 @@ struct ContentView: View {
         } detail: {
             DetailView()
         }
+        .allowsHitTesting(!state.switcherShown)
+        .accessibilityHidden(state.switcherShown)
         .environment(\.sidebarCollapsed, columnVisibility == .detailOnly)
         .frame(minWidth: 1080, minHeight: 700)
         .background(WindowBlur(glass: windowBackground == "glass" && !reduceTransparency)
@@ -50,8 +52,37 @@ struct ContentView: View {
         }
         // Owned by the split view, not the sidebar: a collapsed sidebar must
         // never strand ⌘T with nowhere to present.
+        .onChange(of: state.newSheetShown) { _, shown in
+            if shown && state.switcherShown { state.cancelWorkspaceSwitch() }
+        }
         .sheet(isPresented: $state.newSheetShown) {
             NewTerminalSheet().environmentObject(state)
+        }
+        .overlay {
+            if state.switcherShown {
+                ZStack(alignment: .top) {
+                    Color.black.opacity(0.18)
+                        .ignoresSafeArea()
+                        .onTapGesture { state.cancelWorkspaceSwitch() }
+                    WorkspaceSwitcher()
+                        .environmentObject(state)
+                        .onDisappear {
+                            // Finish after the native field editor has detached;
+                            // its teardown would otherwise clear terminal focus.
+                            DispatchQueue.main.async { state.completeWorkspaceSwitch() }
+                        }
+                        .background(.regularMaterial,
+                                    in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16)
+                            .strokeBorder(.white.opacity(0.08), lineWidth: 0.5))
+                        .shadow(color: .black.opacity(0.25), radius: 24, y: 10)
+                        .padding(.top, 72)
+                }
+                // Search opens and closes in the same window without a sheet
+                // animation swallowing the first keystrokes of the next command.
+                .transaction { $0.disablesAnimations = true }
+            }
         }
         // ⌘= is what a US keyboard produces without reaching for shift, and it
         // is what hands expect for Zoom In. The menu keeps ⌘+ as its label;
@@ -705,7 +736,7 @@ struct FullInstanceView: View {
     let instance: TerminalInstance
 
     var body: some View {
-        PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+        PreparedTerminalView(sessions: state.sessions, instance: instance,
                                cornerRadius: 16)
             .terminalPanel(for: instance)
     }
@@ -726,7 +757,7 @@ struct FocusView: View {
             // cornerRadius 0: the VStack is clipped as one shape by the panel,
             // and a second rounding on the terminal's own layer would
             // double-round the bottom corners.
-            PersistentTerminalView(view: state.sessions.terminalHostView(for: instance),
+            PreparedTerminalView(sessions: state.sessions, instance: instance,
                                    cornerRadius: 0)
         }
         // Header and terminal wear ONE panel — clipped, stroked, and inset as
@@ -996,6 +1027,38 @@ struct CommandResultBadge: View {
 /// `claim()` re-parents the shared view into whichever container needs it,
 /// dismantle removes only the dying container, and the reclaim notification
 /// wakes the survivor to take the view back. Self-healing by construction.
+struct PreparedTerminalView: View {
+    @ObservedObject var sessions: LiveSessionStore
+    let instance: TerminalInstance
+    var cornerRadius: CGFloat = 0
+    var maskedCorners: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
+                                       .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
+
+    var body: some View {
+        Group {
+            if sessions.isReady {
+                PersistentTerminalView(view: sessions.terminalHostView(for: instance),
+                                       cornerRadius: cornerRadius,
+                                       maskedCorners: maskedCorners,
+                                       focusRequested: sessions.requestedFocusID == instance.id,
+                                       onFocusAcquired: { sessions.didAcquireKeyboardFocus(instance.id) })
+            } else {
+                VStack(spacing: 10) {
+                    ProgressView().controlSize(.small)
+                    Text("Opening session…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityElement(children: .combine)
+            }
+        }
+        // Readiness is not a layout animation: replay must land at the final
+        // grid size, including when a parent is animating a navigation change.
+        .transaction { $0.animation = nil }
+    }
+}
+
 struct PersistentTerminalView: NSViewRepresentable {
     let view: TerminalView
     /// Rounding lives on the terminal's OWN layer, not a SwiftUI clip: a
@@ -1005,9 +1068,14 @@ struct PersistentTerminalView: NSViewRepresentable {
     var maskedCorners: CACornerMask = [.layerMinXMinYCorner, .layerMaxXMinYCorner,
                                        .layerMinXMaxYCorner, .layerMaxXMaxYCorner]
 
+    var focusRequested = false
+    var onFocusAcquired: () -> Void = {}
+
     func makeNSView(context: Context) -> TerminalHostContainer {
         let container = TerminalHostContainer()
         container.hosted = view
+        container.focusRequested = focusRequested
+        container.onFocusAcquired = onFocusAcquired
         applyRounding(view)
         container.claim()
         return container
@@ -1015,6 +1083,8 @@ struct PersistentTerminalView: NSViewRepresentable {
 
     func updateNSView(_ container: TerminalHostContainer, context: Context) {
         container.hosted = view
+        container.focusRequested = focusRequested
+        container.onFocusAcquired = onFocusAcquired
         applyRounding(view)
         container.claim()
     }
@@ -1044,6 +1114,8 @@ final class TerminalHostContainer: NSView {
     static let reclaim = Notification.Name("SkylightReclaimTerminalHosts")
 
     weak var hosted: NSView?
+    var focusRequested = false
+    var onFocusAcquired: () -> Void = {}
     private let observer = ObserverBox()
 
     /// Nonisolated, Sendable storage for the notification token — a deinit
@@ -1051,6 +1123,7 @@ final class TerminalHostContainer: NSView {
     /// MonitorBox).
     private final class ObserverBox: @unchecked Sendable {
         var token: (any NSObjectProtocol)?
+        var sheetToken: (any NSObjectProtocol)?
     }
 
     override init(frame frameRect: NSRect) {
@@ -1060,12 +1133,22 @@ final class TerminalHostContainer: NSView {
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.claim() }
         }
+        observer.sheetToken = NotificationCenter.default.addObserver(
+            forName: NSWindow.didEndSheetNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            // SwiftUI's onDismiss can precede AppKit clearing attachedSheet.
+            // Retry on that lifecycle event instead of guessing a delay.
+            DispatchQueue.main.async { self?.claim() }
+        }
     }
 
     required init?(coder: NSCoder) { nil }
 
     deinit {
         if let token = observer.token {
+            NotificationCenter.default.removeObserver(token)
+        }
+        if let token = observer.sheetToken {
             NotificationCenter.default.removeObserver(token)
         }
     }
@@ -1082,6 +1165,12 @@ final class TerminalHostContainer: NSView {
             addSubview(hosted)
         } else {
             hosted.frame = bounds
+        }
+        if focusRequested, let window, window.attachedSheet == nil,
+           window.makeFirstResponder(hosted) {
+            focusRequested = false
+            let acquired = onFocusAcquired
+            DispatchQueue.main.async { acquired() }
         }
     }
 

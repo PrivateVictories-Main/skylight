@@ -95,6 +95,55 @@ final class AppState: ObservableObject {
     /// Harnesses with a probe in flight, so the UI can say "checking…" and so
     /// two triggers landing together do not run the CLI twice.
     @Published private(set) var probing: Set<String> = []
+    @Published private(set) var unverifiedSubscriptions: Set<String> = []
+    private var probeRefreshes = ProbeRefreshQueue()
+
+    @Published var switcherShown = false {
+        willSet {
+            if newValue && !switcherShown { switcherReturnFocus = commandTargetInstance }
+        }
+    }
+    private var switcherReturnFocus: UUID?
+
+    func cancelWorkspaceSwitch() {
+        switcherShown = false
+    }
+
+    var pendingWorkspaceSwitch: WorkspaceSearch.Item?
+
+    /// Remove the search overlay before moving focus, so its field editor cannot
+    /// reclaim the keystrokes intended for the chosen terminal.
+    func completeWorkspaceSwitch() {
+        guard !switcherShown else { return }
+        guard let item = pendingWorkspaceSwitch else {
+            if let id = switcherReturnFocus { sessions.requestKeyboardFocus(id) }
+            switcherReturnFocus = nil
+            return
+        }
+        pendingWorkspaceSwitch = nil
+        switcherReturnFocus = nil
+        // A keyboard switch is immediate. An animated double-hosted surface
+        // can lose first responder when its outgoing container is dismantled.
+        var transaction = Transaction()
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            endFocus()
+            switch item.kind {
+            case .terminal:
+                guard instance(item.id) != nil else { return }
+                if let board = Residency.board(of: item.id, in: canvases) {
+                    selection = .canvas(board)
+                    focusedInstance = item.id
+                } else {
+                    selection = .item(item.id)
+                }
+                sessions.requestKeyboardFocus(item.id)
+            case .canvas:
+                guard canvases.contains(where: { $0.id == item.id }) else { return }
+                selection = .canvas(item.id)
+            }
+        }
+    }
 
     let sessions = LiveSessionStore()
 
@@ -106,8 +155,7 @@ final class AppState: ObservableObject {
     private let persistRequests = PassthroughSubject<Void, Never>()
 
     private static let supportDir: URL = {
-        let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Skylight", isDirectory: true)
+        let dir = WorkspacePaths.supportDirectory
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()
@@ -365,36 +413,55 @@ final class AppState: ObservableObject {
     /// button, and a login terminal exiting. No timer, no polling, nothing at
     /// render — the idle-CPU promise is a feature, not an aspiration.
     func refreshSubscriptions(force: Bool = false) {
+        sessions.invalidateHarnessCache()
         pruneSubscriptions()
         for harness in Catalog.harnesses {
-            guard harness.authProbe != nil,
-                  let binary = sessions.cachedResolveHarness(harness.id),
-                  !probing.contains(harness.id) else { continue }
-            if force { subscriptions.invalidate(harness.id) }
-            guard subscriptions.needsProbe(harness.id) else { continue }
+            refreshSubscription(harness, force: force)
+        }
+    }
 
-            probing.insert(harness.id)
-            let id = harness.id
-            // A real background queue, not a detached Task: the probe blocks
-            // on a subprocess, and blocking one of the cooperative pool's few
-            // threads for up to the timeout starves unrelated async work.
-            DispatchQueue.global(qos: .utility).async {
-                let outcome = ProbeRunner.probe(harness: harness, binaryPath: binary)
-                DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+    private func refreshSubscription(_ harness: Harness, force: Bool = false) {
+        let id = harness.id
+        // A login command alone is not a status probe. Unsupported CLIs
+        // should never flash a spinner or launch a no-op background task.
+        guard harness.authProbe?.statusCommand != nil,
+              let binary = sessions.cachedResolveHarness(id) else { return }
+        if force {
+            subscriptions.invalidate(id)
+            persistSubscriptions()
+        }
+        guard subscriptions.needsProbe(id),
+              let ticket = probeRefreshes.request(id, force: force) else { return }
+        probing.insert(id)
+        unverifiedSubscriptions.remove(id)
+        DispatchQueue.global(qos: .utility).async {
+            let outcome = ProbeRunner.probe(harness: harness, binaryPath: binary)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                switch self.probeRefreshes.complete(id, ticket: ticket) {
+                case .ignore:
+                    return
+                case .retry:
+                    self.probing.remove(id)
+                    self.refreshSubscription(harness)
+                case .accept:
                     self.probing.remove(id)
                     self.subscriptions.record(id, outcome.state, at: outcome.checkedAt)
+                    if outcome.state == .unknown { self.unverifiedSubscriptions.insert(id) }
                     self.persistSubscriptions()
                 }
             }
         }
     }
 
-    /// A sign-in terminal just ended: whatever we believed is now stale.
+    /// Invalidate even an in-flight answer; the replacement check starts
+    /// after it finishes, so login never races a pre-login status result.
     func invalidateSubscription(_ harnessID: String) {
         subscriptions.invalidate(harnessID)
         persistSubscriptions()
-        refreshSubscriptions()
+        if let harness = Catalog.harness(harnessID) {
+            refreshSubscription(harness, force: true)
+        }
     }
 
     private func persistSubscriptions() {
@@ -1141,8 +1208,15 @@ final class AppState: ObservableObject {
 /// running session shows full-window, on a canvas, and after navigating
 /// away and back. SwiftUI only ever reparents these views.
 @MainActor
-final class LiveSessionStore {
+final class LiveSessionStore: ObservableObject {
     private var terminals: [UUID: TerminalViewState] = [:]
+    @Published private(set) var requestedFocusID: UUID?
+
+    func requestKeyboardFocus(_ id: UUID) { requestedFocusID = id }
+
+    func didAcquireKeyboardFocus(_ id: UUID) {
+        if requestedFocusID == id { requestedFocusID = nil }
+    }
     private var terminalNSViews: [UUID: TerminalView] = [:]
     private var bellObservers: [UUID: AnyCancellable] = [:]
     private var cwdObservers: [UUID: AnyCancellable] = [:]
@@ -1159,18 +1233,15 @@ final class LiveSessionStore {
     /// was lost mid-run) — the app then behaves exactly as it did before
     /// sessions could survive, truthful quit dialog included.
     private var daemonClient: DaemonClient?
-    private var daemonBootstrapped = false
-    /// Prewarm rendezvous: bootstrap runs on a background queue starting at
-    /// app init so the first terminal's render doesn't pay for the connect;
-    /// the semaphore covers the race where the render wins anyway. The box
-    /// is the cross-isolation handoff slot (lock-guarded, like MonitorBox).
-    private final class PrewarmBox: @unchecked Sendable {
-        let lock = NSLock()
-        let done = DispatchSemaphore(value: 0)
-        var result: DaemonClient?
-    }
+    /// Surface creation waits for this published result, never for a semaphore.
+    /// The sidebar, window and launcher remain interactive during connection.
+    @Published private(set) var isReady = false
     private var prewarmStarted = false
-    private let prewarm = PrewarmBox()
+    private let bootstrap: @Sendable () -> DaemonClient?
+
+    init(bootstrap: @escaping @Sendable () -> DaemonClient? = { DaemonClient.bootstrap() }) {
+        self.bootstrap = bootstrap
+    }
 
     /// The workspace's instance ids, so bootstrap can kill daemon sessions
     /// whose instance no longer exists (reachable: a delete raced by an
@@ -1183,38 +1254,23 @@ final class LiveSessionStore {
     /// Let queued daemon frames (a just-sent kill) drain before process exit.
     func flushDaemon() { daemonClient?.flush() }
 
-    /// Start connecting to the keeper now, off the main thread — by the time
-    /// the first surface asks, the answer is usually already here.
+    /// Connect once on a worker, then publish readiness on the main actor.
+    /// A failed connection still completes preparation and enables the exec
+    /// fallback. No surface is created until the lane is decided, so a slow
+    /// reconnect cannot accidentally replace a surviving session with a shell.
     func prewarmDaemon() {
         guard !prewarmStarted else { return }
         prewarmStarted = true
-        let box = prewarm
-        DispatchQueue.global(qos: .userInitiated).async {
-            let client = DaemonClient.bootstrap()
-            box.lock.lock()
-            box.result = client
-            box.lock.unlock()
-            box.done.signal()
-        }
-    }
-
-    private func daemon() -> DaemonClient? {
-        if !daemonBootstrapped {
-            daemonBootstrapped = true
-            if prewarmStarted {
-                // Bounded wait: covers a first render that beats the
-                // background connect by a few hundred ms; a wedged daemon
-                // already gave up inside bootstrap's own short deadlines.
-                _ = prewarm.done.wait(timeout: .now() + 6)
-                prewarm.lock.lock()
-                daemonClient = prewarm.result
-                prewarm.lock.unlock()
-            } else {
-                daemonClient = DaemonClient.bootstrap()
+        let bootstrap = bootstrap
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let client = bootstrap()
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.daemonClient = client
+                self.configureDaemonClient()
+                self.isReady = true
             }
-            configureDaemonClient()
         }
-        return daemonClient
     }
 
     private func configureDaemonClient() {
@@ -1438,7 +1494,11 @@ final class LiveSessionStore {
     /// only supplies the live bundle path and the real environment.
     static func shellIntegrationEnvironment(
         for instance: TerminalInstance) -> [String: String] {
-        Launch.environment(
+        if instance.spec.kind.isAgent {
+            return Launch.agentEnvironment(base: ProcessInfo.processInfo.environment,
+                home: FileManager.default.homeDirectoryForCurrentUser.path)
+        }
+        return Launch.environment(
             kind: instance.spec.kind,
             shellPath: instance.spec.shellPath,
             resourcesPath: GhosttyRuntimeResources.directoryURL?.path,
@@ -1548,6 +1608,7 @@ final class LiveSessionStore {
     }
 
     func terminal(for instance: TerminalInstance) -> TerminalViewState {
+        precondition(isReady, "Wait for session preparation before creating a surface")
         if let existing = terminals[instance.id] { return existing }
         let config = Self.surfaceConfig()
         // Record what this surface ACTUALLY gets — the banner's source of
@@ -1568,7 +1629,7 @@ final class LiveSessionStore {
         let state = TerminalViewState(configSource: .generated(config),
                                       theme: ThemeStore.shared.terminalTheme(),
                                       terminalConfiguration: Self.surfaceConfiguration())
-        if let daemon = daemon() {
+        if let daemon = daemonClient {
             // The survival lane: the daemon owns the pty; this surface is a
             // renderer attached over the socket. Keystrokes and resizes go
             // out through the session's closures; output lands via receive
@@ -1620,6 +1681,7 @@ final class LiveSessionStore {
             state.configuration = TerminalSurfaceOptions(
                 backend: .exec,
                 workingDirectory: Self.spawnableDirectory(instance.spec.workingDirectory),
+                envVars: instance.spec.kind.isAgent ? Self.shellIntegrationEnvironment(for: instance) : [:],
                 command: command
             )
         }
@@ -1671,6 +1733,7 @@ final class LiveSessionStore {
     /// FRESH session as ended. Detaching makes the race unlosable instead of
     /// merely unlikely.
     func discard(_ id: UUID) {
+        if requestedFocusID == id { requestedFocusID = nil }
         terminals[id]?.onClose = nil
         terminals.removeValue(forKey: id)
         terminalNSViews.removeValue(forKey: id)

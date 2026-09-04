@@ -2,6 +2,7 @@ import Darwin
 import Foundation
 import GhosttyTerminal
 import SkylightDaemonCore
+import SkylightCore
 
 /// The app's side of the session keeper. One socket to skylightd, frames
 /// multiplexed by session id: terminal keystrokes and resizes go out, output
@@ -100,9 +101,7 @@ final class DaemonClient: @unchecked Sendable {
         guard ProcessInfo.processInfo.environment["SKYLIGHT_NO_DAEMON"] == nil else {
             return nil
         }
-        let socketPath = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Skylight/daemon.sock").path
+        let socketPath = WorkspacePaths.supportDirectory.appendingPathComponent("daemon.sock").path
         for attempt in 0..<2 {
             if let fd = connectSocket(path: socketPath, retries: attempt == 0 ? 1 : 20) {
                 switch handshake(fd: fd) {
@@ -133,6 +132,10 @@ final class DaemonClient: @unchecked Sendable {
         guard FileManager.default.isExecutableFile(atPath: binary.path) else { return false }
         let process = Process()
         process.executableURL = binary
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "SKYLIGHTD_SOCKET": WorkspacePaths.supportDirectory.appendingPathComponent("daemon.sock").path,
+            "SKYLIGHTD_LOG": WorkspacePaths.supportDirectory.appendingPathComponent("daemon.log").path,
+        ]) { _, value in value }
         return (try? process.run()) != nil
     }
 

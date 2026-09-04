@@ -76,9 +76,7 @@ final class ThemeStore: ObservableObject {
     // MARK: - Imported themes on disk
 
     private static let supportDir: URL = {
-        let dir = FileManager.default
-            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Skylight/themes", isDirectory: true)
+        let dir = WorkspacePaths.supportDirectory.appendingPathComponent("themes", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir
     }()

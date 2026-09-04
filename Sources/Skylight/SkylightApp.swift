@@ -7,6 +7,12 @@ struct SkylightApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var state = AppState()
 
+    init() {
+        if CommandLine.arguments.contains("--verify-bundle-resources") {
+            exit(BundleVerification.run() ? 0 : 1)
+        }
+    }
+
     var body: some Scene {
         // Single-window app: a live terminal NSView cannot render in two
         // window hierarchies at once.
@@ -28,6 +34,9 @@ struct SkylightApp: App {
             }
             // View: where a Mac hand reaches for zoom and navigation.
             CommandGroup(after: .sidebar) {
+                Button("Switch to…") { state.switcherShown = true }
+                    .keyboardShortcut("p", modifiers: [.command])
+                    .disabled(state.newSheetShown)
                 Divider()
                 Button("Back to Canvas") { state.endFocus() }
                     .keyboardShortcut(".", modifiers: [.command])

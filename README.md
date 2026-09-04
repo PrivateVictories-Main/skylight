@@ -47,6 +47,10 @@ process — same pid, unbroken step count — still going when the app returns.*
 - **Focus mode** — expand any tile to the full window; ⌘. puts it back with
   the canvas exactly as it was. (Escape belongs to the terminal — vim and
   TUIs need it — so the exit is a real menu command.)
+- **Workspace search** — ⌘P finds terminals, agent sessions, and canvases by
+  name, CLI, or directory. Arrow keys and Return open a result; Escape returns
+  to the terminal. Opening a canvas session in focus mode preserves its layout
+  and zoom. Search appears only when invoked.
 - **Agent terminals** — a terminal can launch an agent CLI (Claude Code,
   Codex, Gemini CLI, Copilot CLI, Cursor CLI, Qwen Code, Amp, OpenCode,
   Droid, Goose, Crush) on your existing subscription, each row wearing its
@@ -94,6 +98,7 @@ process — same pid, unbroken step count — still going when the app returns.*
 - **⌘T** — New Terminal… (the tiered sheet)
 - **⇧⌘T** — new shell terminal, launched instantly
 - **⇧⌘N** — new canvas
+- **⌘P** — find and switch to a terminal, agent, or canvas
 - **⌘.** — back to canvas (leave focus mode)
 - **⌘0 / ⌘+ / ⌘− / ⌘9** — 100% / zoom in / out / to fit (⌘= works too)
 - **⇧⌘A** — arrange the canvas
@@ -106,6 +111,22 @@ process — same pid, unbroken step count — still going when the app returns.*
 
 macOS 14+, Swift 6 toolchain. Debug appearance override:
 `SKYLIGHT_APPEARANCE=dark ./build/Skylight.app/Contents/MacOS/Skylight`
+
+The packaging script checks the app's signature and verifies that terminal
+resources resolve inside the app. CI runs this check too. For an isolated build
+directory and an explicit ad-hoc signature:
+
+```
+SKYLIGHT_BUILD_DIR=build/clean-verification SKYLIGHT_SIGN_IDENTITY=- ./scripts/make-app.sh release
+```
+
+GhosttyKit's Swift wrapper is preserved in `Vendor/GhosttyKit`; see its
+`PROVENANCE.md` for origin and update constraints. Its compiled XCFramework is
+still a remote, checksum-pinned dependency. An ad-hoc local build is not a
+Developer ID signed or notarized public release.
+
+For development fixtures, `SKYLIGHT_SUPPORT_DIR=/absolute/path` isolates workspace
+files, imported themes, and the session keeper from the normal app workspace.
 
 ## Grant access once
 
@@ -142,7 +163,7 @@ Skylight.app ── unix socket ──▶ skylightd ── pty ──▶ zsh · 
  (a renderer)                 (owns the sessions)
 ```
 
-Two targets, tests on the pure part:
+The app and its session keeper share two core libraries:
 
 - **SkylightCore** — models, layout math, shell/harness detection,
   recommendations, persistence + migration. No UI imports; unit-tested
@@ -154,6 +175,10 @@ Two targets, tests on the pure part:
 - **Skylight** — the SwiftUI app: `AppState` + `LiveSessionStore` (sessions
   outlive view churn), `DaemonClient` (sessions outlive the app), sidebar /
   canvas / sheet views.
+
+`swift test` covers core behavior, daemon integration, and native session
+preparation and focus handoff. Preparation runs away from the main actor; views
+show a small opening state until the daemon or fallback is ready.
 
 The invariant everything obeys: **a running session survives every
 transition** — full-window ↔ canvas ↔ other canvas ↔ focus.

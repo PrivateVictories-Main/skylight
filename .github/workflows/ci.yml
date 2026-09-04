@@ -16,5 +16,7 @@ jobs:
         run: swift build
       - name: Test
         run: swift test
-      - name: Release build
-        run: swift build -c release
+      - name: Build and verify packaged release
+        env:
+          SKYLIGHT_SIGN_IDENTITY: "-"
+        run: ./scripts/make-app.sh release

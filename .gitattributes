@@ -1,0 +1,2 @@
+# Patch context and blank lines are part of the preserved upstream patch format.
+Vendor/GhosttyKit/Patches/**/*.patch -whitespace
