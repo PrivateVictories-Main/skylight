@@ -1,7 +1,14 @@
 // Real native WebDriver input and real PTYs. No mocked Tauri commands or providers.
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  readdir,
+  writeFile,
+} from "node:fs/promises";
 import { homedir, platform, release, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -363,6 +370,43 @@ try {
       ["-window", "root", join(resultDir, "startup-desktop.png")],
       { timeout: 5_000 },
     );
+    const windows = spawnSync("xwininfo", ["-root", "-tree"], {
+      timeout: 5_000,
+      encoding: "utf8",
+    });
+    await writeFile(join(resultDir, "x11-windows.txt"), windows.stdout ?? "");
+    if (!session && process.env.GITHUB_ACTIONS === "true") {
+      for (const pid of await readdir("/proc")) {
+        if (!/^\d+$/.test(pid)) continue;
+        if (
+          (await readlink(`/proc/${pid}/exe`).catch(() => "")) !== application
+        )
+          continue;
+        // Stack only, from our test app on the disposable runner. Never dump
+        // memory, locals, or credentials, and never request a password.
+        const trace = spawnSync(
+          "sudo",
+          [
+            "-n",
+            "gdb",
+            "--batch",
+            "-ex",
+            "set pagination off",
+            "-ex",
+            "thread 1",
+            "-ex",
+            "bt 20",
+            "-p",
+            pid,
+          ],
+          { timeout: 10_000, encoding: "utf8" },
+        );
+        await writeFile(
+          join(resultDir, "startup-stack.txt"),
+          (trace.stdout ?? "") + (trace.stderr ?? ""),
+        );
+      }
+    }
   }
   if (session) {
     await screenshot("failure").catch(() => {});

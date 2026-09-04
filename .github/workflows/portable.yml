@@ -42,7 +42,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb imagemagick
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf webkit2gtk-driver xvfb imagemagick openbox dbus-x11 x11-utils gdb
       - run: npm ci
       - run: npm test
       - run: npm run build
@@ -66,11 +66,7 @@ jobs:
       - name: Exercise Linux app
         if: runner.os == 'Linux'
         timeout-minutes: 6
-        env:
-          # Xvfb has no hardware buffer-sharing path. Keep this CI-only so
-          # normal Linux desktops retain their accelerated renderer.
-          WEBKIT_DISABLE_DMABUF_RENDERER: '1'
-        run: xvfb-run -a -s '-screen 0 1440x1000x24' node e2e/smoke.mjs
+        run: dbus-run-session -- xvfb-run -a -s '-screen 0 1440x1000x24' sh e2e/linux-desktop.sh
       - name: Exercise Windows app
         if: runner.os == 'Windows'
         timeout-minutes: 6

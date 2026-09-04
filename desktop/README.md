@@ -105,9 +105,8 @@ CI runs only on public repositories using standard hosted runners, which
 The private source mirror skips these jobs to avoid consuming private minutes.
 For local Linux UI checks, install `webkit2gtk-driver`, `xvfb`, and
 `cargo install tauri-driver --version 2.0.6 --locked`, build the release app, then
-run `WEBKIT_DISABLE_DMABUF_RENDERER=1 xvfb-run -a node e2e/smoke.mjs` on a virtual
-display. This headless-only setting leaves normal desktop graphics settings
-unchanged. Windows requires a matching Microsoft
+run `dbus-run-session -- xvfb-run -a sh e2e/linux-desktop.sh` on a virtual
+display with Openbox installed. Windows requires a matching Microsoft
 Edge driver on PATH and uses `node e2e/smoke.mjs`. The CI setup follows
 [Tauri's native WebDriver guidance](https://v2.tauri.app/develop/tests/webdriver/ci/).
 
