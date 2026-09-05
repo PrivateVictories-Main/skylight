@@ -3,6 +3,9 @@
 For the subsequent platform-preset pass, including 12 target-OS workflows and
 422 native tests, see [platform preset verification](platform-preset-verification.md).
 This page preserves the earlier visual-alignment baseline.
+The latest [rounded-interface refinement](rounded-interface-verification.md)
+adds native-style sidebar framing, softer tiles, consistent controls, and clean
+Windows/Linux previews.
 
 Windows and Linux now follow the native macOS workspace structure: a quiet sidebar,
 a bare terminal panel, and a sparse canvas. The previous preview's prominent logo,

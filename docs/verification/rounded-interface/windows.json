@@ -1,0 +1,74 @@
+{
+  "platform": "win32",
+  "release": "10.0.20348",
+  "application": "D:\\a\\skylight\\skylight\\desktop\\target\\release\\skylight-desktop.exe",
+  "checks": [
+    {
+      "name": "Native app startup",
+      "elapsedMs": 8516
+    },
+    {
+      "name": "Create shell with explicit working folder",
+      "elapsedMs": 3545
+    },
+    {
+      "name": "Sidebar collapse and menu keyboard dismissal preserve terminal input",
+      "elapsedMs": 1880
+    },
+    {
+      "name": "Save reusable launch preset",
+      "elapsedMs": 1957
+    },
+    {
+      "name": "Platform preset editor isolates local defaults and preserves other systems",
+      "elapsedMs": 2639
+    },
+    {
+      "name": "Create canvas and move live terminal",
+      "elapsedMs": 1677
+    },
+    {
+      "name": "Resize, move, and zoom canvas",
+      "elapsedMs": 3665
+    },
+    {
+      "name": "Cancel close keeps terminal usable",
+      "elapsedMs": 702
+    },
+    {
+      "name": "Exit and restart terminal",
+      "elapsedMs": 949
+    },
+    {
+      "name": "Keyboard search launches saved preset",
+      "elapsedMs": 1453
+    },
+    {
+      "name": "Saved workspace survives app restart without executing sessions",
+      "elapsedMs": 3070
+    },
+    {
+      "name": "Canvas double-click launch and detach preserve the live process",
+      "elapsedMs": 1774
+    }
+  ],
+  "success": true,
+  "visualContract": {
+    "folderCaption": "project with spaces",
+    "newButtonBottom": 17,
+    "panelInset": 8,
+    "presetsInSidebar": 0,
+    "radius": "16px",
+    "scrollThumbClip": "padding-box",
+    "scrollThumbInset": "4px",
+    "scrollThumbRadius": "999px",
+    "sidebar": 256,
+    "sidebarInset": "8px",
+    "sidebarRadius": "16px",
+    "toolbarHeight": 0
+  },
+  "bundledFonts": [
+    "Skylight Mono",
+    "Skylight UI"
+  ]
+}

@@ -22,16 +22,26 @@ build as the macOS design reference.
 
 | Surface | Contract |
 | --- | --- |
-| Sidebar | 256 logical pixels, quiet section captions, neutral selection, New at bottom |
+| Sidebar | 256 logical pixels; frame inset 8 pixels with 16-pixel corners; blue active selection, neutral inactive selection |
+| Bottom New | 30-pixel height, 10-pixel corners, 17 pixels above the window bottom |
 | Full terminal | 8-pixel inset, 16-pixel corners, no permanent action toolbar |
 | Focused canvas terminal | A 28-pixel back bar, integrated into the panel |
 | Canvas | Full-height field, 64-pixel dots at 100%, grid follows pan and zoom |
 | New tile | 560 × 400, centered/revealed at live scale |
-| Tile header | 30 pixels, small terminal glyph, title, focus and remove controls |
+| Tile header | 30 pixels, 12-pixel terminal glyph, 10-pixel SVG focus/remove controls |
+| Tile edge | 16-pixel corners, fading top highlight, quiet 5-pixel-offset shadow |
+| Terminal scrollbar | Rounded inset thumb; existing full-width pointer target retained |
 | Actions | Context menu / row overflow; keyboard reachable with Shift+F10 |
 | Presets | In New and workspace search; no separate permanent sidebar section |
 | Launch configuration | Run and folder first; executable/name/arguments under Launch options |
 | Typography | Locally bundled Inter UI and JetBrains Mono; no runtime font downloads |
+| Forms | 16-pixel dialog corners, 8-pixel field corners, shared select appearance and chevron |
+
+Folder captions show the final directory component; hovering reveals the complete
+launch path. Search and execution retain the full path. Line icons replace
+font-dependent arrow and close characters, so control shapes are consistent across
+the Windows and Linux renderers. Blue primary buttons and active selection follow
+the default native macOS accent; inactive window selection stays neutral.
 
 System window decorations, rasterization, and the Mac's native materials can differ.
 The portable default uses an opaque dark backing rather than emulating native glass
@@ -46,6 +56,8 @@ height and grid spacing, and verifies both bundled fonts loaded. It also runs
 actual shell commands after menu/dialog transitions, sidebar collapse, canvas
 movement, and session restoration. Screenshot evidence is captured on both target
 operating systems. See [the verification record](quality-verification.md).
+The [rounded-surface refinement](rounded-interface-verification.md) records the
+follow-up comparison and clean, real-shell previews.
 
 The native app was compared through its actual macOS interface. Automated VM
 checks establish the listed interactions and layout geometry; they are not
