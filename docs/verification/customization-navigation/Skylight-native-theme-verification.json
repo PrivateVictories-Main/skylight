@@ -1,0 +1,229 @@
+{
+  "platform": "macOS native",
+  "appBundle": "com.skylight.theme-verification-20260905",
+  "scope": "isolated copied app and fresh support directory; user workspace untouched",
+  "workflow": [
+    {
+      "step": "Import standalone Windows Terminal scheme through native file picker",
+      "result": "passed",
+      "name": "Skylight Theme Proof",
+      "background": "#102030",
+      "source": "windowsTerminal"
+    },
+    {
+      "step": "Import a second standalone scheme with the same name",
+      "result": "passed",
+      "background": "#241830",
+      "themeCount": 1,
+      "previousPaletteStoredInUndo": true
+    },
+    {
+      "step": "Restart before reverting",
+      "result": "passed",
+      "replacementStillSelected": true,
+      "undoStillAvailable": true,
+      "restartMethod": "SIGTERM isolated application process then normal app launch; native main-window clicks were unavailable through the automation adapter"
+    },
+    {
+      "step": "Click Revert to before import after restart",
+      "result": "passed",
+      "background": "#102030",
+      "red": "#CC3322",
+      "snapshotConsumed": true,
+      "revertButtonRemoved": true
+    },
+    {
+      "step": "Inspect actual native terminal rendering",
+      "result": "passed",
+      "beforeScreenshot": "Skylight-macOS-imported-theme.png",
+      "restoredScreenshot": "Skylight-macOS-theme-restored.png"
+    }
+  ],
+  "firstLibrary": {
+    "themes": {
+      "Skylight Theme Proof": {
+        "source": "windowsTerminal",
+        "background": {
+          "b": 48,
+          "r": 16,
+          "g": 32
+        },
+        "palette": {
+          "1": {
+            "g": 51,
+            "r": 204,
+            "b": 34
+          },
+          "5": {
+            "g": 68,
+            "r": 170,
+            "b": 187
+          }
+        },
+        "foreground": {
+          "b": 226,
+          "r": 224,
+          "g": 225
+        },
+        "skipped": [],
+        "name": "Skylight Theme Proof",
+        "stated": {
+          "foreground": true,
+          "name": true,
+          "background": true
+        },
+        "cursor": {
+          "b": 239,
+          "r": 171,
+          "g": 205
+        }
+      }
+    },
+    "snapshot": {
+      "windowBackground": null,
+      "appearance": "dark",
+      "terminalOpacity": null,
+      "fontFamily": null,
+      "lightTheme": null,
+      "terminalFontSize": null,
+      "darkTheme": null
+    },
+    "version": 1
+  },
+  "replacementLibrary": {
+    "version": 1,
+    "themes": {
+      "Skylight Theme Proof": {
+        "name": "Skylight Theme Proof",
+        "source": "windowsTerminal",
+        "palette": {
+          "1": {
+            "b": 120,
+            "g": 86,
+            "r": 233
+          },
+          "5": {
+            "b": 187,
+            "g": 68,
+            "r": 170
+          }
+        },
+        "cursor": {
+          "g": 205,
+          "r": 171,
+          "b": 239
+        },
+        "background": {
+          "g": 24,
+          "r": 36,
+          "b": 48
+        },
+        "foreground": {
+          "g": 233,
+          "r": 244,
+          "b": 255
+        },
+        "stated": {
+          "name": true,
+          "foreground": true,
+          "background": true
+        },
+        "skipped": []
+      }
+    },
+    "snapshot": {
+      "terminalFontSize": null,
+      "terminalOpacity": null,
+      "lightTheme": null,
+      "appearance": "dark",
+      "windowBackground": null,
+      "fontFamily": null,
+      "darkThemeValues": {
+        "palette": {
+          "1": {
+            "g": 51,
+            "r": 204,
+            "b": 34
+          },
+          "5": {
+            "g": 68,
+            "r": 170,
+            "b": 187
+          }
+        },
+        "skipped": [],
+        "cursor": {
+          "g": 205,
+          "r": 171,
+          "b": 239
+        },
+        "background": {
+          "g": 32,
+          "r": 16,
+          "b": 48
+        },
+        "name": "Skylight Theme Proof",
+        "stated": {
+          "background": true,
+          "foreground": true,
+          "name": true
+        },
+        "source": "windowsTerminal",
+        "foreground": {
+          "g": 225,
+          "r": 224,
+          "b": 226
+        }
+      },
+      "darkTheme": "Skylight Theme Proof"
+    }
+  },
+  "restoredLibrary": {
+    "themes": {
+      "Skylight Theme Proof": {
+        "source": "windowsTerminal",
+        "foreground": {
+          "b": 226,
+          "g": 225,
+          "r": 224
+        },
+        "palette": {
+          "1": {
+            "r": 204,
+            "b": 34,
+            "g": 51
+          },
+          "5": {
+            "r": 170,
+            "b": 187,
+            "g": 68
+          }
+        },
+        "stated": {
+          "foreground": true,
+          "name": true,
+          "background": true
+        },
+        "name": "Skylight Theme Proof",
+        "skipped": [],
+        "cursor": {
+          "b": 239,
+          "g": 205,
+          "r": 171
+        },
+        "background": {
+          "b": 48,
+          "g": 32,
+          "r": 16
+        }
+      }
+    },
+    "version": 1
+  },
+  "limits": [
+    "This pass did not verify custom background images or dynamic light/dark theme-pair imports.",
+    "No shell-input claim is made for this theme pass; the automation adapter rejected main-window clicks after Settings closed."
+  ],
+  "selectedThemePreferenceAfterRevert": "Skylight Theme Proof",
+  "cleanup": "Isolated app, keeper, and shell terminated; normal app untouched."
+}

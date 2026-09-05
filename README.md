@@ -78,6 +78,8 @@ Launch presets can carry separate macOS, Windows, and Linux shell or AI CLI
 settings behind the same launch button. See [platform presets](docs/platform-presets.md),
 [verified app checks](docs/platform-preset-verification.md), and the
 [development direction](docs/development-roadmap.md).
+The [customization and navigation guide](docs/customization-navigation.md) covers
+shared theme browsing, live appearance controls, canvas behavior, and verified gaps.
 
 ## What it deliberately isn't
 

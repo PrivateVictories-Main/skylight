@@ -1,0 +1,26 @@
+{
+  "platform": "macOS native",
+  "scope": "isolated bundle and two-shell fixture; user workspace untouched",
+  "checks": {
+    "collapsedCanvasChrome": "pass: no painted full-width toolbar or hairline; native traffic-light clearance retained",
+    "tileMoveMagnet": "pass: saved origin aligned to neighbor at x=91.92452830188677",
+    "tileResize": "pass: saved size changed from 366.0377358490566 x 274.52830188679246 to 452.07547169811323 x 336",
+    "shellInputAfterResize": "pass: canvas-proof.txt contained SKYLIGHT_CANVAS_RESIZE_OK",
+    "canvasShortcutWithTerminalFocused": "pass: Command-minus changed board zoom from 1 to 0.75",
+    "actualSizeShortcut": "pass: Command-zero restored zoom to 1",
+    "overviewScrollOverTile": "pass: pan changed from [117,90.25] to [117,-59.75]",
+    "liveTerminalScroll": "pass: pan remained [82.03773584905662,112] at zoom 1",
+    "focusModeShortcutScope": "pass: Command-minus left board zoom at 1 in full terminal focus",
+    "instanceCount": "pass: two fixture instances retained"
+  },
+  "unitTests": {
+    "command": "swift test --filter 'CanvasZoomTests|LayoutTests|DockLayoutTests'",
+    "passed": 69,
+    "failed": 0
+  },
+  "limits": [
+    "Physical trackpad pinch smoothness was not measured; anchor math is regression-tested.",
+    "Automatic reflow still resizes tiles when the viewport shrinks.",
+    "Right/top/bottom sidebar placement remains a separate feature."
+  ]
+}

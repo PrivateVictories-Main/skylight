@@ -1472,6 +1472,8 @@ document.addEventListener(
     } else if (command && selected?.kind === "canvas" && !modal) {
       const board = workspace.canvases.find((b) => b.id === selected!.id);
       if (!board) return;
+      // Plain Cmd+A remains text selection in the Mac development build.
+      if (e.key.toLowerCase() === "a" && !e.shiftKey) return;
       if (["+", "=", "-", "_", "0", ")", "9", "(", "a", "A"].includes(e.key)) {
         e.preventDefault();
         e.stopPropagation();

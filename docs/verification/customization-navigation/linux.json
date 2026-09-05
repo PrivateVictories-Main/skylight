@@ -1,0 +1,136 @@
+{
+  "platform": "linux",
+  "release": "6.17.0-1022-azure",
+  "application": "/home/runner/work/skylight/skylight/desktop/target/release/skylight-desktop",
+  "checks": [
+    {
+      "name": "Native app startup",
+      "elapsedMs": 2359
+    },
+    {
+      "name": "Create shell with explicit working folder",
+      "elapsedMs": 2646
+    },
+    {
+      "name": "Sidebar collapse and menu keyboard dismissal preserve terminal input",
+      "elapsedMs": 1192
+    },
+    {
+      "name": "Save reusable launch preset",
+      "elapsedMs": 1244
+    },
+    {
+      "name": "Platform preset editor isolates local defaults and preserves other systems",
+      "elapsedMs": 1764
+    },
+    {
+      "name": "Discovered theme import reports errors and Cancel restores the live appearance",
+      "elapsedMs": 1794
+    },
+    {
+      "name": "Create canvas and move live terminal",
+      "elapsedMs": 1153
+    },
+    {
+      "name": "Resize, move, and zoom canvas",
+      "elapsedMs": 3148
+    },
+    {
+      "name": "Cancel close keeps terminal usable",
+      "elapsedMs": 331
+    },
+    {
+      "name": "Exit and restart terminal",
+      "elapsedMs": 591
+    },
+    {
+      "name": "Keyboard search launches saved preset",
+      "elapsedMs": 837
+    },
+    {
+      "name": "Save imported appearance updates the existing terminal and keeps undo history",
+      "elapsedMs": 1753
+    },
+    {
+      "name": "Saved workspace and appearance survive app restart without executing sessions",
+      "elapsedMs": 3393
+    },
+    {
+      "name": "Canvas double-click launch and detach preserve the live process",
+      "elapsedMs": 912
+    },
+    {
+      "name": "Launching a saved preset from the canvas keeps its destination",
+      "elapsedMs": 1540
+    }
+  ],
+  "success": true,
+  "visualContract": {
+    "panelInset": 8,
+    "folderCaption": "project with spaces",
+    "sidebarRadius": "16px",
+    "radius": "16px",
+    "newButtonBottom": 17,
+    "sidebarInset": "8px",
+    "scrollThumbClip": "padding-box",
+    "presetsInSidebar": 0,
+    "toolbarHeight": 0,
+    "scrollThumbRadius": "999px",
+    "sidebar": 256,
+    "scrollThumbInset": "4px"
+  },
+  "bundledFonts": [
+    "Skylight Mono",
+    "Skylight UI"
+  ],
+  "appearancePreview": {
+    "panel": "#102030",
+    "padding": "10px 16px",
+    "terminalBackground": "rgba(16, 32, 48, 0.9)"
+  },
+  "savedAppearance": {
+    "current": {
+      "version": 1,
+      "theme": {
+        "name": "config",
+        "source": "ghostty",
+        "background": "#102030",
+        "foreground": "#e0e1e2",
+        "cursor": "#abcdef",
+        "selectionBackground": "#304050",
+        "palette": {
+          "1": "#cc3322",
+          "5": "#aa44bb",
+          "13": "#ff88ee"
+        },
+        "fontFamily": "JetBrains Mono",
+        "fontSize": 15,
+        "backgroundOpacity": 0.9,
+        "cursorStyle": "bar",
+        "cursorBlink": false,
+        "paddingX": 16,
+        "paddingY": 10,
+        "skipped": [
+          "command",
+          "config-file",
+          "font-family (additional fallback)",
+          "keybind"
+        ]
+      },
+      "backgroundImage": null,
+      "fontSize": 15,
+      "opacity": 0.9,
+      "paddingX": 16,
+      "paddingY": 10
+    },
+    "previous": {
+      "version": 1,
+      "theme": null,
+      "backgroundImage": null,
+      "fontSize": 14,
+      "opacity": 1,
+      "paddingX": 11,
+      "paddingY": 12
+    }
+  }
+}

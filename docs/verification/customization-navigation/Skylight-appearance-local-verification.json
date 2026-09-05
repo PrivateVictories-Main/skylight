@@ -1,0 +1,12 @@
+{
+  "success": true,
+  "method": "Actual portable Mac development app with isolated support directory",
+  "checks": [
+    "Import Ghostty fixture previews live terminal",
+    "Cancel restores default without creating settings file",
+    "Save preserves shell variable and writes atomic history",
+    "485-theme catalog loads on demand and keyboard search selects Catppuccin Mocha",
+    "Revert returns saved imported theme and preserves prior theme in history"
+  ],
+  "imagePicker": "Native chooser opened; automated selection completion unverified"
+}
