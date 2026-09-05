@@ -205,3 +205,27 @@ export function zoomAround(
     ],
   };
 }
+
+/** Continuous wheel/pinch updates keep every small delta. Apply normalizeZoom
+ * only when the gesture settles; per-event rounding would stall slow pinches.
+ */
+export function zoomAroundContinuous(
+  pan: Point,
+  current: number,
+  target: number,
+  pivot: Point,
+): CanvasView {
+  const safeCurrent = Number.isFinite(current) && current > 0 ? current : 1;
+  const zoom = Math.max(
+    MIN_ZOOM,
+    Math.min(MAX_ZOOM, Number.isNaN(target) ? safeCurrent : target),
+  );
+  const scale = zoom / safeCurrent;
+  return {
+    zoom,
+    pan: [
+      pivot[0] - (pivot[0] - pan[0]) * scale,
+      pivot[1] - (pivot[1] - pan[1]) * scale,
+    ],
+  };
+}

@@ -141,6 +141,24 @@ async function keys(text) {
     ],
   });
 }
+async function canvasShortcut(key) {
+  await command("POST", "/actions", {
+    actions: [
+      {
+        type: "key",
+        id: "keyboard",
+        actions: [
+          { type: "keyDown", value: "\uE009" },
+          { type: "keyDown", value: "\uE008" },
+          { type: "keyDown", value: key },
+          { type: "keyUp", value: key },
+          { type: "keyUp", value: "\uE008" },
+          { type: "keyUp", value: "\uE009" },
+        ],
+      },
+    ],
+  });
+}
 async function screenshot(name) {
   // A shell marker proves execution, not that the browser compositor has
   // presented the next terminal frame. Give screenshot evidence a paint turn.
@@ -241,14 +259,14 @@ async function importGhosttyPreview() {
   assert.deepEqual(
     await inspect(`return {
       fontSize: getComputedStyle(document.querySelector('.appearance-sample')).fontSize,
-      background: getComputedStyle(document.querySelector('.appearance-sample')).backgroundColor,
+      background: getComputedStyle(document.querySelector('.appearance-sample-surface')).backgroundColor,
       opacity: document.querySelector('input[aria-label="Background opacity"]').value,
       paddingX: document.querySelector('input[aria-label="Horizontal padding"]').value,
       paddingY: document.querySelector('input[aria-label="Vertical padding"]').value,
     }`),
     {
       fontSize: "15px",
-      background: "rgb(16, 32, 48)",
+      background: "rgba(16, 32, 48, 0.9)",
       opacity: "0.9",
       paddingX: "16",
       paddingY: "10",
@@ -627,7 +645,23 @@ try {
     await screenshot("canvas-overview");
     await click("#workspace-menu");
     await clickText("Actual size (100%)");
-    await marker("after_zoom");
+    await marker("after_zoom", false);
+    await canvasShortcut("-");
+    assert.equal(
+      await inspect(
+        "return document.querySelector('.canvas-viewport').getAttribute('aria-label')",
+      ),
+      "QA canvas, 90%",
+    );
+    await canvasShortcut("0");
+    await marker("after_keyboard_zoom", false);
+    await click("#workspace-menu");
+    await clickText("Arrange terminals");
+    await click("#workspace-menu");
+    await clickText("Fit canvas");
+    await click("#workspace-menu");
+    await clickText("Actual size (100%)");
+    await marker("after_arrange", false);
     assert.equal(
       await inspect(
         "return getComputedStyle(document.querySelector('.tile header')).height",

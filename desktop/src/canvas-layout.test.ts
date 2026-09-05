@@ -7,6 +7,7 @@ import {
   snapPoint,
   snapSize,
   zoomAround,
+  zoomAroundContinuous,
   type Frame,
   type PositionedTile,
 } from "./canvas-layout";
@@ -171,5 +172,62 @@ describe("canvas zoom navigation", () => {
         expect(content * next.zoom + next.pan[axis]).toBeCloseTo(pivot[axis]);
       }
     }
+  });
+
+  it("accumulates small pinch impulses through 100% instead of rounding each one away", () => {
+    let view = { zoom: 1, pan: [-230, 92] as [number, number] };
+    const pivot = [704, 380] as const;
+    for (let step = 0; step < 60; step++) {
+      view = zoomAroundContinuous(
+        view.pan,
+        view.zoom,
+        view.zoom * Math.exp(-0.5 * 0.008),
+        pivot,
+      );
+    }
+    expect(view.zoom).toBeCloseTo(Math.exp(-0.24), 12);
+    expect(view.zoom).toBeLessThan(0.8);
+    for (let step = 0; step < 120; step++) {
+      view = zoomAroundContinuous(
+        view.pan,
+        view.zoom,
+        view.zoom * Math.exp(0.5 * 0.008),
+        pivot,
+      );
+    }
+    expect(view.zoom).toBeCloseTo(Math.exp(0.24), 12);
+    expect(view.zoom).toBeGreaterThan(1.2);
+  });
+
+  it("preserves positive and negative content anchors for continuous zoom in either direction", () => {
+    for (const pan of [
+      [-230, 92],
+      [920, -640],
+    ] as const) {
+      for (const pivot of [
+        [704, 380],
+        [-50, -30],
+      ] as const) {
+        for (const target of [0.6, 0.996, 1.004, 1.4]) {
+          const next = zoomAroundContinuous(pan, 1, target, pivot);
+          expect(next.zoom).toBe(target);
+          for (const axis of [0, 1] as const) {
+            const content = pivot[axis] - pan[axis];
+            expect(content * next.zoom + next.pan[axis]).toBeCloseTo(
+              pivot[axis],
+            );
+          }
+        }
+      }
+    }
+  });
+
+  it("clamps continuous zoom at its limits without a jump from invalid gesture data", () => {
+    expect(zoomAroundContinuous([0, 0], 1, 0.01, [100, 100]).zoom).toBe(0.25);
+    expect(zoomAroundContinuous([0, 0], 1, Infinity, [100, 100]).zoom).toBe(2);
+    expect(zoomAroundContinuous([0, 0], 1.2, NaN, [100, 100])).toEqual({
+      zoom: 1.2,
+      pan: [0, 0],
+    });
   });
 });

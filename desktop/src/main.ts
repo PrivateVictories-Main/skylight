@@ -28,6 +28,7 @@ import {
   fitToView,
   arrangeTiles,
   zoomAround,
+  zoomAroundContinuous,
 } from "./canvas-layout";
 import "./style.css";
 
@@ -864,10 +865,11 @@ function canvasZoom(
   board: Canvas,
   value: number,
   pivot?: readonly [number, number],
+  continuous = false,
 ): void {
   const viewport = document.querySelector<HTMLElement>(".canvas-viewport");
   if (!viewport || viewport.dataset.dragging) return;
-  const next = zoomAround(
+  const next = (continuous ? zoomAroundContinuous : zoomAround)(
     board.pan,
     board.zoom,
     value,
@@ -876,6 +878,7 @@ function canvasZoom(
   board.zoom = next.zoom;
   board.pan = next.pan;
   canvasRefresh?.();
+  if (board.zoom === 1) restoreFocus();
   queueNavigationSave();
 }
 function canvasFit(board: Canvas, arrange = false): void {
@@ -935,6 +938,7 @@ function renderCanvas(board: Canvas): void {
     }
   };
   canvasRefresh = transform;
+  let pinchEnd: ReturnType<typeof setTimeout> | undefined;
   viewport.addEventListener(
     "wheel",
     (event) => {
@@ -946,6 +950,7 @@ function renderCanvas(board: Canvas): void {
       )
         return;
       event.preventDefault();
+      event.stopPropagation();
       const unit =
         event.deltaMode === 1
           ? 16
@@ -954,10 +959,21 @@ function renderCanvas(board: Canvas): void {
             : 1;
       if (event.ctrlKey) {
         const rect = viewport.getBoundingClientRect();
-        canvasZoom(board, board.zoom * Math.exp(-event.deltaY * unit * 0.008), [
+        const pivot = [
           event.clientX - rect.left,
           event.clientY - rect.top,
-        ]);
+        ] as const;
+        canvasZoom(
+          board,
+          board.zoom * Math.exp(-event.deltaY * unit * 0.008),
+          pivot,
+          true,
+        );
+        clearTimeout(pinchEnd);
+        pinchEnd = setTimeout(() => {
+          if (viewport.isConnected && Math.abs(board.zoom - 1) < 0.035)
+            canvasZoom(board, 1, pivot);
+        }, 120);
       } else {
         board.pan = [
           board.pan[0] - event.deltaX * unit,
@@ -967,7 +983,7 @@ function renderCanvas(board: Canvas): void {
         queueNavigationSave();
       }
     },
-    { passive: false },
+    { passive: false, capture: true },
   );
   transform();
   viewport.onpointerdown = (e) => {
@@ -1431,34 +1447,44 @@ document
     }
     menuAt(event.currentTarget as HTMLElement, actions);
   });
-document.addEventListener("keydown", (e) => {
-  if (modal?.dataset.busy === "true") return;
-  const command =
-    data?.platform === "macos" ? e.metaKey : e.ctrlKey && e.shiftKey;
-  if (command && e.key === "," && !modal) {
-    e.preventDefault();
-    void openAppearance().catch(report);
-  } else if (command && e.key.toLowerCase() === "p") {
-    e.preventDefault();
-    palette();
-  } else if (command && e.key.toLowerCase() === "t" && !modal) {
-    e.preventDefault();
-    void editInstance().catch(report);
-  } else if (command && e.key === "." && previousBoard && !modal) {
-    e.preventDefault();
-    select({ kind: "canvas", id: previousBoard });
-  } else if (command && selected?.kind === "canvas" && !modal) {
-    const board = workspace.canvases.find((b) => b.id === selected!.id);
-    if (!board) return;
-    if (["+", "=", "-", "_", "0", ")", "9", "(", "a", "A"].includes(e.key)) {
+document.addEventListener(
+  "keydown",
+  (e) => {
+    if (modal?.dataset.busy === "true") return;
+    const command =
+      data?.platform === "macos" ? e.metaKey : e.ctrlKey && e.shiftKey;
+    if (command && e.key === "," && !modal) {
       e.preventDefault();
-      if (["+", "="].includes(e.key)) canvasZoom(board, board.zoom + 0.1);
-      else if (["-", "_"].includes(e.key)) canvasZoom(board, board.zoom - 0.1);
-      else if (["0", ")"].includes(e.key)) canvasZoom(board, 1);
-      else canvasFit(board, e.key.toLowerCase() === "a");
+      e.stopPropagation();
+      void openAppearance().catch(report);
+    } else if (command && e.key.toLowerCase() === "p") {
+      e.preventDefault();
+      e.stopPropagation();
+      palette();
+    } else if (command && e.key.toLowerCase() === "t" && !modal) {
+      e.preventDefault();
+      e.stopPropagation();
+      void editInstance().catch(report);
+    } else if (command && e.key === "." && previousBoard && !modal) {
+      e.preventDefault();
+      e.stopPropagation();
+      select({ kind: "canvas", id: previousBoard });
+    } else if (command && selected?.kind === "canvas" && !modal) {
+      const board = workspace.canvases.find((b) => b.id === selected!.id);
+      if (!board) return;
+      if (["+", "=", "-", "_", "0", ")", "9", "(", "a", "A"].includes(e.key)) {
+        e.preventDefault();
+        e.stopPropagation();
+        if (["+", "="].includes(e.key)) canvasZoom(board, board.zoom + 0.1);
+        else if (["-", "_"].includes(e.key))
+          canvasZoom(board, board.zoom - 0.1);
+        else if (["0", ")"].includes(e.key)) canvasZoom(board, 1);
+        else canvasFit(board, e.key.toLowerCase() === "a");
+      }
     }
-  }
-});
+  },
+  { capture: true },
+);
 async function boot(): Promise<void> {
   if (!isTauri()) {
     content.append(
