@@ -20,10 +20,15 @@ public struct ThemeSnapshot: Codable, Equatable, Sendable {
     public var fontFamily: String?
     public var lightTheme: String?
     public var darkTheme: String?
+    /// Preserve the actual palettes when importing another theme with the
+    /// same name. Older snapshots have only names and remain readable.
+    public var lightThemeValues: SkylightTheme?
+    public var darkThemeValues: SkylightTheme?
 
     public init(appearance: String?, windowBackground: String?,
                 terminalOpacity: Double?, terminalFontSize: Int?,
-                fontFamily: String?, lightTheme: String?, darkTheme: String?) {
+                fontFamily: String?, lightTheme: String?, darkTheme: String?,
+                lightThemeValues: SkylightTheme? = nil, darkThemeValues: SkylightTheme? = nil) {
         self.appearance = appearance
         self.windowBackground = windowBackground
         self.terminalOpacity = terminalOpacity
@@ -31,11 +36,14 @@ public struct ThemeSnapshot: Codable, Equatable, Sendable {
         self.fontFamily = fontFamily
         self.lightTheme = lightTheme
         self.darkTheme = darkTheme
+        self.lightThemeValues = lightThemeValues
+        self.darkThemeValues = darkThemeValues
     }
 
     enum CodingKeys: String, CodingKey {
         case appearance, windowBackground, terminalOpacity, terminalFontSize
         case fontFamily, lightTheme, darkTheme
+        case lightThemeValues, darkThemeValues
     }
 
     /// Nils are written EXPLICITLY, which the synthesized encoder would not do.
@@ -53,15 +61,15 @@ public struct ThemeSnapshot: Codable, Equatable, Sendable {
         try container.encode(fontFamily, forKey: .fontFamily)
         try container.encode(lightTheme, forKey: .lightTheme)
         try container.encode(darkTheme, forKey: .darkTheme)
+        try container.encodeIfPresent(lightThemeValues, forKey: .lightThemeValues)
+        try container.encodeIfPresent(darkThemeValues, forKey: .darkThemeValues)
     }
 }
 
 /// One slot, and the rules around it.
 ///
-/// Deliberately NOT an undo stack: revert undoes the last import, and a person
-/// who has imported three themes wants "put it back how it was before I
-/// started fiddling", not a history to walk. One slot says that honestly; a
-/// stack would invite expectations it could not keep.
+/// Revert undoes the latest successful import. Later hand edits retain that
+/// undo point; another import replaces it. This is one slot, not an undo stack.
 public struct ThemeSnapshotStore: Equatable, Sendable {
     private var snapshot: ThemeSnapshot?
 

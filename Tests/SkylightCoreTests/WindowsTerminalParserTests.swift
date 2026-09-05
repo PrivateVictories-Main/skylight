@@ -69,15 +69,25 @@ final class WindowsTerminalParserTests: XCTestCase {
         XCTAssertEqual(campbell.fontSize, 12)
     }
 
-    func testFractionalOpacityIsAlsoAccepted() throws {
-        // Older settings write 0.8; newer ones write 80.
+    func testLegacyAcrylicOpacityIsAlsoAccepted() throws {
         let json = """
-        { "profiles": { "defaults": { "opacity": 0.5 } },
+        { "profiles": { "defaults": { "acrylicOpacity": 0.5 } },
           "schemes": [ { "name": "X", "background": "#000000", "foreground": "#ffffff" } ] }
         """
         let theme = try XCTUnwrap(
             WindowsTerminalParser.parse(Data(json.utf8), name: "s").first)
         XCTAssertEqual(theme.backgroundOpacity ?? -1, 0.5, accuracy: 0.001)
+    }
+
+    func testModernOpacityIsAlwaysPercentAndOverridesLegacyValue() throws {
+        for (raw, expected) in [(0, 0.0), (1, 0.01), (50, 0.5), (100, 1.0)] {
+            let json = """
+            { "profiles": { "defaults": { "opacity": \(raw), "acrylicOpacity": 0.7 } },
+              "schemes": [ { "name": "X", "background": "#000", "foreground": "#fff" } ] }
+            """
+            let theme = try XCTUnwrap(WindowsTerminalParser.parse(Data(json.utf8), name: "s").first)
+            XCTAssertEqual(theme.backgroundOpacity ?? -1, expected, accuracy: 0.001)
+        }
     }
 
     /// The reachable-today vector: font.face is a JSON string, and JSON is

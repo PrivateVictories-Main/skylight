@@ -94,4 +94,49 @@ final class ThemeImportTests: XCTestCase {
         """
         XCTAssertEqual(try themes(many, "settings.json").map(\.name), ["A", "B"])
     }
+
+    func testStandaloneWindowsSchemeKeepsItsPaletteAndSource() throws {
+        let single = """
+        { // A scheme copied from a theme gallery
+          "name": "Personal Windows theme", "background": "#123", "foreground": "#def",
+          "purple": "#a0b1c2", "brightPurple": "#d3e4f5", "cursorColor": "#f00",
+        }
+        """
+        let theme = try XCTUnwrap(try themes(single, "theme.json").first)
+        XCTAssertEqual(theme.source, .windowsTerminal)
+        XCTAssertEqual(theme.name, "Personal Windows theme")
+        XCTAssertEqual(theme.background, Color8("#112233"))
+        XCTAssertEqual(theme.palette[5], Color8("#a0b1c2"))
+        XCTAssertEqual(theme.palette[13], Color8("#d3e4f5"))
+        XCTAssertEqual(theme.cursor, Color8("#ff0000"))
+        XCTAssertEqual(try themes(single, "theme.txt"), [theme])
+    }
+
+    func testVSCodeWrapperWinsOverUnrelatedTopLevelColorMetadata() throws {
+        let json = """
+        { "background": "#fff", "foreground": "#000",
+          "colors": { "terminal.background": "#123456", "terminal.foreground": "#abcdef" } }
+        """
+        let theme = try XCTUnwrap(try themes(json, "theme.json").first)
+        XCTAssertEqual(theme.source, .vscode)
+        XCTAssertEqual(theme.background, Color8("#123456"))
+    }
+
+    func testSharedPortableFixturesKeepTheSameCorePaletteOnMacOS() throws {
+        let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent()
+        for filename in ["theme-ghostty.conf", "theme-windows.jsonc", "theme-vscode.jsonc"] {
+            let data = try Data(contentsOf: root.appendingPathComponent("shared/fixtures/\(filename)"))
+            let theme = try XCTUnwrap(try ThemeImport.parse(data: data, filename: filename).get().first)
+            XCTAssertEqual(theme.background, Color8("#102030"), filename)
+            XCTAssertEqual(theme.foreground, Color8("#e0e1e2"), filename)
+            XCTAssertEqual(theme.cursor, Color8("#abcdef"), filename)
+            XCTAssertEqual(theme.selectionBackground, Color8("#304050"), filename)
+            XCTAssertEqual(theme.palette[1], Color8("#cc3322"), filename)
+            XCTAssertEqual(theme.palette[5], Color8("#aa44bb"), filename)
+            XCTAssertEqual(theme.palette[13], Color8("#ff88ee"), filename)
+            XCTAssertEqual(theme.backgroundOpacity ?? -1, filename == "theme-vscode.jsonc" ? 0.8 : 0.9,
+                           accuracy: 0.001, filename)
+        }
+    }
 }

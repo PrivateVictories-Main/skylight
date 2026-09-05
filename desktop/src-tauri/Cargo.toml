@@ -8,6 +8,7 @@ license-file = "../../LICENSE.md"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+base64 = "0.22"
 tauri = { version = "2", features = [] }
 skylight-runtime = { path = "../crates/skylight-runtime" }
 serde = { version = "1", features = ["derive"] }

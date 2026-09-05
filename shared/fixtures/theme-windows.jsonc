@@ -1,0 +1,29 @@
+{
+  // A whole settings file, with profile defaults and multiple color schemes.
+  "$schema": "https://aka.ms/terminal-profiles-schema",
+  "profiles": {
+    "defaults": {
+      "font": { "face": "JetBrains Mono", "size": 15 },
+      "opacity": 90,
+      "commandline": "ignored-program",
+    },
+    "list": [],
+  },
+  "schemes": [
+    {
+      "name": "Parity Night",
+      "background": "#102030",
+      "foreground": "#e0e1e2",
+      "cursorColor": "#abcdef",
+      "selectionBackground": "#304050",
+      "red": "#cc3322",
+      "purple": "#aa44bb",
+      "brightPurple": "#ff88ee",
+    },
+    {
+      "name": "Parity Day",
+      "background": "#f0f0f0",
+      "foreground": "#202020",
+    },
+  ],
+}

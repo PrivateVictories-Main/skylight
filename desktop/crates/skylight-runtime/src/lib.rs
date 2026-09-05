@@ -1,3 +1,4 @@
+pub mod appearance;
 pub mod catalog;
 pub mod session;
 #[cfg(any(windows, test))]

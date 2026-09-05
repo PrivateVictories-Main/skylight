@@ -1,0 +1,14 @@
+{
+  "name": "Parity Code",
+  "colors": {
+    "editor.background": "#102030cc",
+    "editor.foreground": "#e0e1e2",
+    "terminalCursor.foreground": "#abcdef",
+    "terminal.selectionBackground": "#304050",
+    "terminal.ansiRed": "#cc3322",
+    "terminal.ansiMagenta": "#aa44bb",
+    "terminal.ansiBrightMagenta": "#ff88ee",
+  },
+  "terminal.integrated.fontFamily": "JetBrains Mono",
+  "terminal.integrated.fontSize": 15,
+}

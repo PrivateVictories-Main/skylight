@@ -25,13 +25,21 @@
   font-synthesis: none;
   font-size: 13px;
   color-scheme: dark;
-  color: #e5e5e5;
-  background: #1e1e1e;
+  color: var(--ink);
+  background: var(--workspace);
   --muted: #a0a0a0;
   --faint: #828282;
   --panel: #212121;
   --hairline: #ffffff26;
   --accent: #0a64d8;
+  --workspace: #1e1e1e;
+  --ink: #e5e5e5;
+  --surface: #282828;
+  --field: #202020;
+  --menu: #303030;
+  --control: #ffffff0b;
+  --hover: #ffffff14;
+  --terminal-image: none;
 }
 * {
   box-sizing: border-box;
@@ -47,7 +55,7 @@ select {
 }
 button {
   border: 1px solid var(--hairline);
-  background: #ffffff0b;
+  background: var(--control);
   color: inherit;
   border-radius: 7px;
   padding: 6px 11px;
@@ -55,7 +63,7 @@ button {
   transition: background 100ms ease;
 }
 button:hover {
-  background: #ffffff14;
+  background: var(--hover);
 }
 button:focus-visible,
 input:focus-visible,
@@ -320,9 +328,12 @@ main {
   margin: -8px;
   border: 0;
   border-radius: 16px;
-  background: #1e1e1e;
+  background: var(--workspace);
 }
 .terminal-surface {
+  background-image: var(--terminal-image);
+  background-size: cover;
+  background-position: center;
   width: 100%;
   height: 100%;
   padding: 12px 11px 8px;
@@ -400,8 +411,8 @@ main {
   color: var(--muted);
 }
 .dialog {
-  background: #282828;
-  color: #e5e5e5;
+  background: var(--surface);
+  color: var(--ink);
   border: 1px solid var(--hairline);
   border-radius: 16px;
   width: 460px;
@@ -443,9 +454,9 @@ main {
 .dialog input,
 .dialog select {
   width: 100%;
-  background: #202020;
+  background: var(--field);
   border: 1px solid var(--hairline);
-  color: #e5e5e5;
+  color: var(--ink);
   border-radius: 8px;
   padding: 8px;
 }
@@ -544,7 +555,7 @@ main {
   padding: 12px;
 }
 .search-row[aria-selected="true"] {
-  background: #ffffff14;
+  background: var(--hover);
 }
 .search-row strong {
   font-size: 12px;
@@ -571,7 +582,7 @@ main {
   min-width: 200px;
   max-height: calc(100vh - 16px);
   overflow: auto;
-  background: #303030;
+  background: var(--menu);
   border: 0.5px solid #ffffff30;
   border-radius: 9px;
   padding: 5px;
@@ -597,7 +608,7 @@ main {
   bottom: 22px;
   left: 24px;
   right: 24px;
-  background: #303030;
+  background: var(--menu);
   border: 1px solid var(--hairline);
   border-radius: 8px;
   padding: 10px 12px;
@@ -647,7 +658,7 @@ main {
   gap: 8px;
   align-items: center;
   padding: 0 10px;
-  background: #202020;
+  background: var(--field);
   cursor: grab;
   touch-action: none;
 }
@@ -720,7 +731,7 @@ main {
 .canvas-empty h2 {
   font-weight: 600;
   font-size: 22px;
-  color: #ddd;
+  color: var(--ink);
 }
 .canvas-empty p {
   max-width: 350px;
@@ -829,4 +840,56 @@ main {
 }
 .dialog .preset-custom-toggle input {
   width: auto;
+}
+
+:root[data-appearance="light"] {
+  --workspace: #f0efed;
+  --ink: #292c33;
+  --muted: #5e626a;
+  --faint: #71747a;
+  --surface: #f7f6f3;
+  --field: #fff;
+  --menu: #f7f6f3;
+  --hairline: #00000026;
+  --control: #00000006;
+  --hover: #0000000c;
+}
+:root[data-appearance="light"] .sidebar-chrome .icon-button {
+  color: var(--muted);
+}
+:root[data-appearance="light"] .canvas-viewport {
+  background-image: radial-gradient(#00000018 0.8px, transparent 0.9px);
+}
+:root[data-appearance="light"] .tile > header,
+:root[data-appearance="light"] #toolbar.focus-bar,
+:root[data-appearance="light"] .resize-grip,
+:root[data-appearance="light"] .session-recovery {
+  background: var(--surface);
+}
+:root[data-appearance="light"] .window-inactive .selected {
+  background: #00000014;
+  color: var(--ink);
+}
+:root[data-appearance="light"] .window-inactive .selected .row-caption {
+  color: var(--muted);
+}
+
+.tile-overview {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  border: 0;
+  border-radius: 0 0 16px 16px;
+  background: transparent;
+  cursor: zoom-in;
+}
+.tile-overview:hover {
+  background: #ffffff04;
+}
+.sidebar-hidden main:has(#content.is-canvas) {
+  padding-top: 8px;
+}
+.sidebar-hidden #content.is-canvas {
+  margin-top: -8px;
 }

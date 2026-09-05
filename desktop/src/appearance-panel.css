@@ -1,0 +1,216 @@
+.appearance-fields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.appearance-fields:disabled {
+  opacity: 0.65;
+}
+.appearance-panel .appearance-sample {
+  position: relative;
+  isolation: isolate;
+  border: 0.5px solid var(--hairline);
+  border-radius: 12px;
+  min-height: 94px;
+  padding: 20px 16px 16px;
+  margin: 0 0 18px;
+  overflow: hidden;
+  background-size: cover;
+  background-position: center;
+}
+.appearance-sample-surface {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+.appearance-sample-line {
+  white-space: nowrap;
+}
+.appearance-sample-cursor {
+  display: inline-block;
+  width: 0.6em;
+  height: 1em;
+  vertical-align: -0.13em;
+  margin-left: 0.1em;
+  opacity: 0.75;
+}
+.appearance-sample-cursor[data-shape="bar"] {
+  width: 2px;
+}
+.appearance-sample-cursor[data-shape="underline"] {
+  height: 2px;
+}
+.appearance-sample-swatches {
+  display: flex;
+  gap: 6px;
+  margin-top: 15px;
+}
+.appearance-sample-swatches i {
+  display: block;
+  width: 20px;
+  height: 5px;
+  border-radius: 3px;
+}
+.appearance-imports,
+.appearance-detected,
+.appearance-background,
+.appearance-reset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.appearance-detected {
+  margin-top: 10px;
+}
+.appearance-detected > span {
+  flex-basis: 100%;
+}
+.appearance-detected button {
+  padding: 5px 9px;
+  font-size: 11px;
+}
+.appearance-panel .appearance-status {
+  margin: 8px 0 14px;
+}
+.appearance-range {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-height: 26px;
+}
+.dialog .appearance-range input[type="range"] {
+  min-width: 0;
+  flex: 1;
+  height: 6px;
+  padding: 0;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.appearance-range output {
+  min-width: 40px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+.appearance-colors,
+.appearance-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dialog .appearance-panel input[type="color"] {
+  height: 30px;
+  padding: 3px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.appearance-panel input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+.appearance-panel input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 5px;
+}
+.appearance-panel input[type="color"]::-moz-color-swatch {
+  border: 0;
+  border-radius: 5px;
+}
+.appearance-section-label {
+  margin-bottom: 7px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.appearance-background {
+  margin-bottom: 16px;
+}
+.appearance-details {
+  border-top: 0.5px solid var(--hairline);
+  padding-top: 7px;
+  margin-top: 8px;
+}
+.appearance-details summary {
+  cursor: pointer;
+  font-size: 11px;
+  color: var(--muted);
+  padding: 5px 0 12px;
+}
+.appearance-details[open] > summary {
+  margin-bottom: 4px;
+}
+.dialog .appearance-checkbox {
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: flex-end;
+}
+.dialog .appearance-checkbox input {
+  width: auto;
+  margin: 0;
+}
+.appearance-palette {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0 10px;
+}
+.appearance-palette label > span {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.appearance-skipped ul {
+  padding-left: 20px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+  max-height: 140px;
+  overflow: auto;
+  overflow-wrap: anywhere;
+}
+.appearance-reset-actions {
+  margin-top: 10px;
+  justify-content: space-between;
+}
+.appearance-reset-actions button {
+  font-size: 11px;
+  padding: 5px 0;
+}
+.dialog .appearance-error {
+  color: #ffb4b4;
+  overflow-wrap: anywhere;
+}
+:root[data-appearance="light"] .dialog .appearance-error {
+  color: #a12525;
+}
+@media (forced-colors: active) {
+  .appearance-panel .appearance-sample,
+  .appearance-panel input[type="color"] {
+    border: 1px solid CanvasText;
+  }
+  .dialog .appearance-error {
+    color: CanvasText;
+  }
+}
+
+.appearance-catalog {
+  margin: -5px 0 13px;
+  padding-top: 0;
+  border-top: 0;
+}
+.dialog .appearance-catalog label {
+  margin-bottom: 9px;
+}
+.dialog .appearance-catalog select[size] {
+  background-image: none;
+  padding: 5px;
+  min-height: 142px;
+  border-radius: 10px;
+}
+.appearance-catalog option {
+  padding: 5px 8px;
+  border-radius: 5px;
+}
+.appearance-catalog p {
+  margin: 8px 0 10px;
+}

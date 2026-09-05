@@ -1,4 +1,5 @@
 import CoreGraphics
+import Foundation
 
 public enum CanvasLayout {
     public static let grid: CGFloat = 16
@@ -67,6 +68,17 @@ public enum CanvasLayout {
             x: bestDX < threshold ? x : (frame.origin.x / grid).rounded() * grid,
             y: bestDY < threshold ? y : (frame.origin.y / grid).rounded() * grid
         )
+    }
+
+    /// Tile moves use screen-sized magnets at every overview scale. Docked
+    /// terminals belong to viewport rails, so their remembered canvas frames
+    /// must never attract a free tile.
+    public static func magnetSnapped(_ frame: CGRect, moving tileID: UUID,
+                                     on board: CanvasBoard, zoom: CGFloat) -> CGPoint {
+        let scale = zoom.isFinite && zoom > 0 ? zoom : 1
+        let others = board.freeTiles.filter { $0.id != tileID }.map(\.frame)
+        return magnetSnapped(frame, against: others,
+                             threshold: 12 / scale, proximity: 96 / scale)
     }
 
     // MARK: - Window-style edge resize

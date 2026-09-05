@@ -17,7 +17,7 @@ public enum ThemeImportError: Error, Equatable, Sendable {
 /// Detection is by extension FIRST and content second, because the extension
 /// is a hint and the bytes are the truth. The case that forces this: Windows
 /// Terminal and VS Code both write `settings.json`, and only the presence of a
-/// `schemes` array tells them apart. A file someone saved as `mytheme.txt` is
+/// `schemes` array or a standalone scheme tells them apart. A file someone saved as `mytheme.txt` is
 /// still a ghostty config, and it should still work.
 ///
 /// A file may yield MANY themes (a Windows Terminal schemes array), which is
@@ -44,7 +44,7 @@ public enum ThemeImport {
         // 2. JSON — the ambiguous case. Only the CONTENT can decide.
         if ext == "json" || looksLikeJSON(text) {
             if let root = JSONC.object(from: data) {
-                if root["schemes"] != nil {
+                if root["schemes"] != nil || WindowsTerminalParser.isStandaloneScheme(root) {
                     return finish(WindowsTerminalParser.parse(data, name: name))
                 }
                 return finish(VSCodeThemeParser.parse(data, name: name).map { [$0] } ?? [])

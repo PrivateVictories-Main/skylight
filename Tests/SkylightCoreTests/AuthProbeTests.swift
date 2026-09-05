@@ -140,6 +140,53 @@ final class AuthProbeTests: XCTestCase {
             .signedOut)
     }
 
+    // The vendors use exit 1 for an expected signed-out result. These cases
+    // follow their documented/source contracts, not a logged-out user account:
+    // https://code.claude.com/docs/en/cli-reference
+    // https://github.com/openai/codex/blob/459a79eb85400af759e9220c7bafb4429ae07516/codex-rs/cli/src/login.rs#L499-L501
+    func testClaudeSignedOutExitMakesSignInReachable() {
+        let state = AuthProbe.state(stdout: #"{"loggedIn": false}"#, stderr: nil,
+                                    exitCode: 1, probe: claudeProbe)
+        XCTAssertEqual(state, .signedOut)
+        XCTAssertEqual(HarnessRowState.of(installed: true, subscription: state), .signedOut)
+        XCTAssertNotNil(SubscriptionCopy.signInSpec(for: Catalog.harness("claude")!))
+    }
+
+    func testCodexSignedOutExitOnStderrMakesSignInReachable() {
+        let state = AuthProbe.state(stdout: "", stderr: "Not logged in\n",
+                                    exitCode: 1, probe: codexProbe)
+        XCTAssertEqual(state, .signedOut)
+        XCTAssertEqual(HarnessRowState.of(installed: true, subscription: state), .signedOut)
+        XCTAssertNotNil(SubscriptionCopy.signInSpec(for: Catalog.harness("codex")!))
+    }
+
+    func testUnexpectedExitCannotReportSignedOutEvenWithRecognizedOutput() {
+        for code in [nil, 2, 9, 127, -1] as [Int32?] {
+            XCTAssertEqual(AuthProbe.state(stdout: #"{"loggedIn": false}"#, stderr: nil,
+                                           exitCode: code, probe: claudeProbe), .unknown)
+            XCTAssertEqual(AuthProbe.state(stdout: nil, stderr: "Not logged in",
+                                           exitCode: code, probe: codexProbe), .unknown)
+        }
+    }
+
+    func testExpectedSignedOutExitStillRequiresNegativeEvidence() {
+        for output in ["", "Error checking login status", "Logged in using ChatGPT"] {
+            XCTAssertEqual(AuthProbe.state(stdout: nil, stderr: output,
+                                           exitCode: 1, probe: codexProbe), .unknown)
+        }
+        for output in ["", "{not json", "{}", #"{"loggedIn": true}"#] {
+            XCTAssertEqual(AuthProbe.state(stdout: output, stderr: nil,
+                                           exitCode: 1, probe: claudeProbe), .unknown)
+        }
+    }
+
+    func testOtherProbesDoNotInheritVendorNegativeExitCodes() {
+        let probe = AuthProbe(statusCommand: ["status"],
+                              format: .text(signedIn: ["Signed in"], signedOut: ["Signed out"]))
+        XCTAssertEqual(AuthProbe.state(stdout: "Signed out", stderr: nil,
+                                       exitCode: 1, probe: probe), .unknown)
+    }
+
     /// THE honesty rule of this whole feature: a credential file existing is
     /// not proof of a working subscription. It may be expired, revoked, or
     /// for a different account.

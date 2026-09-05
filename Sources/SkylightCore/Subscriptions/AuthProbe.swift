@@ -35,15 +35,21 @@ public struct AuthProbe: Equatable, Sendable {
     /// a second, unreviewed launch path.
     public let statusCommand: [String]?
     public let format: ProbeOutputFormat
+    /// Nonzero exits the vendor documents as an expected signed-out result.
+    /// A matching negative reply is still required; these codes never permit
+    /// a signed-in result. Undeclared failures stay unknown.
+    public let signedOutExitCodes: Set<Int32>
     /// Arguments for a terminal that signs the user in, or nil when the CLI
     /// signs in by simply being run.
     public let loginCommand: [String]?
 
     public init(statusCommand: [String]? = nil,
                 format: ProbeOutputFormat = .text(signedIn: [], signedOut: []),
+                signedOutExitCodes: Set<Int32> = [],
                 loginCommand: [String]? = nil) {
         self.statusCommand = statusCommand
         self.format = format
+        self.signedOutExitCodes = signedOutExitCodes
         self.loginCommand = loginCommand
     }
 }
@@ -84,9 +90,12 @@ public extension AuthProbe {
         // No status command means no evidence of any kind. Not "signed out" —
         // unknown, and launchable.
         guard probe.statusCommand != nil else { return .unknown }
-        // A CLI that failed has not told us anything, whatever it printed on
-        // the way down.
-        guard exitCode == 0 else { return .unknown }
+        // Claude and Codex report a normal signed-out state with exit 1.
+        // Accept that only when declared AND accompanied by their negative
+        // evidence. Crashes, missing statuses and other failures stay unknown.
+        guard let exitCode,
+              exitCode == 0 || probe.signedOutExitCodes.contains(exitCode)
+        else { return .unknown }
 
         func meaningful(_ text: String?) -> String? {
             guard let text,
@@ -108,6 +117,7 @@ public extension AuthProbe {
                 // the wrong way.
                 if signedOut.contains(where: stream.contains) { return .signedOut }
                 if signedIn.contains(where: stream.contains) {
+                    guard exitCode == 0 else { return .unknown }
                     return .signedIn(account: nil, plan: nil)
                 }
             }
@@ -125,6 +135,7 @@ public extension AuthProbe {
                       let loggedIn = root[loggedInKey] as? Bool
                 else { continue }
                 guard loggedIn else { return .signedOut }
+                guard exitCode == 0 else { return .unknown }
                 // Account and plan appear ONLY because the CLI printed them.
                 return .signedIn(account: accountKey.flatMap { root[$0] as? String },
                                  plan: planKey.flatMap { root[$0] as? String })

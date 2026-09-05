@@ -53,6 +53,8 @@ public enum Catalog {
                     format: .json(loggedInKey: "loggedIn",
                                   accountKey: "email",
                                   planKey: "subscriptionType"),
+                    // CLI reference: exit 1 with loggedIn:false is signed out.
+                    signedOutExitCodes: [1],
                     loginCommand: ["auth", "login"])),
         Harness(id: "codex", displayName: "Codex",
                 installCommand: "npm i -g @openai/codex", brand: .openai,
@@ -62,6 +64,8 @@ public enum Catalog {
                     statusCommand: ["login", "status"],
                     format: .text(signedIn: ["Logged in using"],
                                   signedOut: ["Not logged in", "not logged in"]),
+                    // The CLI prints Not logged in on stderr and exits 1.
+                    signedOutExitCodes: [1],
                     loginCommand: ["login"])),
         Harness(id: "gemini", displayName: "Gemini CLI",
                 installCommand: "npm i -g @google/gemini-cli", brand: .gemini,

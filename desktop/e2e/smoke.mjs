@@ -23,6 +23,15 @@ await mkdir(resultDir, { recursive: true });
 const support = await mkdtemp(join(tmpdir(), "skylight-ui-"));
 const project = join(support, "project with spaces");
 await mkdir(project);
+const config = join(support, "config");
+const ghosttyConfiguration = join(config, "ghostty", "config.ghostty");
+const ghosttyFixture = await readFile(
+  resolve("../shared/fixtures/theme-ghostty.conf"),
+  "utf8",
+);
+await mkdir(join(config, "ghostty"), { recursive: true });
+await writeFile(ghosttyConfiguration, ghosttyFixture);
+const appearanceFile = join(support, "appearance.json");
 const application = resolve(
   `target/release/skylight-desktop${windows ? ".exe" : ""}`,
 );
@@ -40,7 +49,11 @@ const driver = spawn(
   join(homedir(), ".cargo/bin", `tauri-driver${windows ? ".exe" : ""}`),
   [],
   {
-    env: { ...process.env, SKYLIGHT_PORTABLE_SUPPORT_DIR: support },
+    env: {
+      ...process.env,
+      SKYLIGHT_PORTABLE_SUPPORT_DIR: support,
+      XDG_CONFIG_HOME: config,
+    },
     stdio: ["ignore", "pipe", "pipe"],
     detached: !windows,
   },
@@ -202,6 +215,105 @@ async function cleanPreview(name) {
       (await readFile(join(project, `${name}.txt`), "utf8")).trim() === "ready",
   );
   await screenshot(name);
+}
+async function openAppearance() {
+  await click("#workspace-menu");
+  await clickText("Appearance");
+  await until("appearance panel", () => find(".appearance-panel"));
+}
+async function appearanceSnapshot() {
+  return inspect(`
+    const terminal = document.querySelector('.terminal-surface');
+    const viewport = terminal?.querySelector('.xterm-scrollable-element');
+    return {
+      panel: getComputedStyle(document.documentElement).getPropertyValue('--panel').trim(),
+      padding: terminal ? getComputedStyle(terminal).padding : null,
+      terminalBackground: viewport ? getComputedStyle(viewport).backgroundColor : null,
+    };
+  `);
+}
+async function importGhosttyPreview() {
+  await clickText("Import Ghostty");
+  await until("import preview applied", () =>
+    inspect(`return document.querySelector('.appearance-status')?.textContent.startsWith('Previewing ') &&
+      document.querySelector('input[aria-label="Font size"]')?.value === '15'`),
+  );
+  assert.deepEqual(
+    await inspect(`return {
+      fontSize: getComputedStyle(document.querySelector('.appearance-sample')).fontSize,
+      background: getComputedStyle(document.querySelector('.appearance-sample')).backgroundColor,
+      opacity: document.querySelector('input[aria-label="Background opacity"]').value,
+      paddingX: document.querySelector('input[aria-label="Horizontal padding"]').value,
+      paddingY: document.querySelector('input[aria-label="Vertical padding"]').value,
+    }`),
+    {
+      fontSize: "15px",
+      background: "rgb(16, 32, 48)",
+      opacity: "0.9",
+      paddingX: "16",
+      paddingY: "10",
+    },
+  );
+  const applied = await appearanceSnapshot();
+  assert.equal(applied.panel, "#102030");
+  assert.equal(applied.padding, "10px 16px");
+  const rgba = applied.terminalBackground.match(/[\d.]+/g).map(Number);
+  assert.deepEqual(rgba.slice(0, 3), [16, 32, 48]);
+  assert(
+    Math.abs(rgba[3] - 0.9) < 0.005,
+    "Terminal renderer received imported opacity",
+  );
+  return applied;
+}
+async function seedAppearanceContinuity() {
+  await keys(
+    windows
+      ? "set SKYLIGHT_APPEARANCE_SESSION=still_running\uE007"
+      : "SKYLIGHT_APPEARANCE_SESSION=still_running\uE007",
+  );
+}
+async function verifyAppearanceContinuity(name) {
+  // A shell variable survives only in this existing process. A fresh shell
+  // could produce a generic marker but cannot reproduce this local state.
+  await keys(
+    windows
+      ? `echo %SKYLIGHT_APPEARANCE_SESSION%>${name}.txt\uE007`
+      : `echo "$SKYLIGHT_APPEARANCE_SESSION">${name}.txt\uE007`,
+  );
+  await until(
+    "appearance change preserved the same shell process",
+    async () =>
+      (await readFile(join(project, `${name}.txt`), "utf8")).trim() ===
+      "still_running",
+  );
+}
+async function openCanvasLaunch() {
+  const viewport = await find(".canvas-viewport");
+  const rect = await inspect(
+    "return document.querySelector('.canvas-viewport').getBoundingClientRect().toJSON()",
+  );
+  await command("POST", "/actions", {
+    actions: [
+      {
+        type: "pointer",
+        id: "mouse",
+        parameters: { pointerType: "mouse" },
+        actions: [
+          {
+            type: "pointerMove",
+            duration: 0,
+            origin: { "element-6066-11e4-a52e-4f735466cecf": viewport },
+            x: Math.round(-rect.width / 2 + 24),
+            y: Math.round(-rect.height / 2 + 24),
+          },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+          { type: "pointerDown", button: 0 },
+          { type: "pointerUp", button: 0 },
+        ],
+      },
+    ],
+  });
 }
 async function openApp() {
   const result = await request("POST", "/session", {
@@ -382,6 +494,51 @@ try {
       assert.equal(preset.platformSpecs[local].workingDirectory, project);
     },
   );
+  await check(
+    "Discovered theme import reports errors and Cancel restores the live appearance",
+    async () => {
+      const before = await appearanceSnapshot();
+      await seedAppearanceContinuity();
+      await openAppearance();
+      // Discovery still finds the real file. Import must report a parser error
+      // inside the panel, preserve the current look, and remain usable afterward.
+      await writeFile(ghosttyConfiguration, "{ malformed theme");
+      try {
+        await clickText("Import Ghostty");
+        await until("malformed import is explained", () =>
+          inspect(`const error = document.querySelector('.appearance-error');
+          return error && !error.hidden && /JSON/.test(error.textContent)`),
+        );
+        assert.deepEqual(await appearanceSnapshot(), before);
+      } finally {
+        await writeFile(ghosttyConfiguration, ghosttyFixture);
+      }
+      evidence.appearancePreview = await importGhosttyPreview();
+      await screenshot("appearance-preview");
+      await clickText("Cancel");
+      await until(
+        "preview rollback",
+        async () =>
+          JSON.stringify(await appearanceSnapshot()) === JSON.stringify(before),
+      );
+      await assert.rejects(readFile(appearanceFile), { code: "ENOENT" });
+      await openAppearance();
+      assert.deepEqual(
+        await inspect(`return {
+          fontSize: document.querySelector('input[aria-label="Font size"]').value,
+          opacity: document.querySelector('input[aria-label="Background opacity"]').value,
+        }`),
+        { fontSize: "14", opacity: "1" },
+      );
+      await clickText("Cancel");
+      await marker("appearance_cancelled", false);
+      await verifyAppearanceContinuity("appearance_cancel_continuity");
+      assert.equal(
+        await readFile(ghosttyConfiguration, "utf8"),
+        ghosttyFixture,
+      );
+    },
+  );
   await check("Create canvas and move live terminal", async () => {
     // The first move must create the canvas AND place the terminal in it.
     await click("#workspace-menu");
@@ -440,6 +597,7 @@ try {
       "96px",
     );
     await click("#workspace-menu");
+    const terminalBeforeZoom = await find(".terminal-surface");
     await clickText("Zoom out");
     assert.equal(
       await inspect(
@@ -451,8 +609,22 @@ try {
       await inspect(
         "return document.querySelectorAll('.tile .terminal-surface').length",
       ),
-      0,
+      1,
     );
+    assert.equal(
+      await find(".terminal-surface"),
+      terminalBeforeZoom,
+      "Zoom preserves the existing terminal host",
+    );
+    assert.equal(
+      await inspect("return document.querySelector('.terminal-surface').inert"),
+      true,
+    );
+    assert.equal(
+      await inspect("return document.querySelector('.tile-overview').hidden"),
+      false,
+    );
+    await screenshot("canvas-overview");
     await click("#workspace-menu");
     await clickText("Actual size (100%)");
     await marker("after_zoom");
@@ -529,11 +701,36 @@ try {
     await running();
     await marker("search_launch", false);
     await screenshot("preset-launch");
-    await keys("exit\uE007");
-    await ended();
   });
   await check(
-    "Saved workspace survives app restart without executing sessions",
+    "Save imported appearance updates the existing terminal and keeps undo history",
+    async () => {
+      await seedAppearanceContinuity();
+      await openAppearance();
+      await importGhosttyPreview();
+      await clickText("Save appearance");
+      const history = await until("appearance durably saved", async () => {
+        const saved = JSON.parse(await readFile(appearanceFile, "utf8"));
+        return saved.current.theme?.background === "#102030" && saved;
+      });
+      assert.equal(history.current.fontSize, 15);
+      assert.equal(history.current.opacity, 0.9);
+      assert.equal(history.current.paddingX, 16);
+      assert.equal(history.current.paddingY, 10);
+      assert.equal(history.current.theme.palette["13"], "#ff88ee");
+      assert.equal(history.previous.theme, null);
+      assert.equal(history.previous.fontSize, 14);
+      assert.equal(history.previous.opacity, 1);
+      await marker("appearance_saved", false);
+      await verifyAppearanceContinuity("appearance_save_continuity");
+      evidence.savedAppearance = history;
+      await cleanPreview("themed-terminal");
+      await keys("exit\uE007");
+      await ended();
+    },
+  );
+  await check(
+    "Saved workspace and appearance survive app restart without executing sessions",
     async () => {
       await until("workspace saved", async () => {
         const saved = JSON.parse(
@@ -560,10 +757,26 @@ try {
         ),
         2,
       );
+      assert.equal((await appearanceSnapshot()).panel, "#102030");
       await screenshot("restored-workspace");
       await clickText("Open session");
       await running();
       await marker("restored", false);
+      const restoredAppearance = await appearanceSnapshot();
+      assert.equal(restoredAppearance.panel, "#102030");
+      assert.equal(restoredAppearance.padding, "10px 16px");
+      await screenshot("appearance-restored");
+      await seedAppearanceContinuity();
+      await click("#workspace-menu");
+      await clickText("Revert appearance");
+      await until("persisted appearance reverted", async () => {
+        const saved = JSON.parse(await readFile(appearanceFile, "utf8"));
+        return saved.current.theme === null && saved.current.fontSize === 14;
+      });
+      assert.equal((await appearanceSnapshot()).panel, "#212121");
+      assert.equal((await appearanceSnapshot()).padding, "12px 11px");
+      await marker("appearance_reverted", false);
+      await verifyAppearanceContinuity("appearance_revert_continuity");
       await keys("exit\uE007");
       await ended();
     },
@@ -572,32 +785,7 @@ try {
     "Canvas double-click launch and detach preserve the live process",
     async () => {
       await click(".canvas-row");
-      const viewport = await find(".canvas-viewport");
-      const rect = await inspect(
-        "return document.querySelector('.canvas-viewport').getBoundingClientRect().toJSON()",
-      );
-      await command("POST", "/actions", {
-        actions: [
-          {
-            type: "pointer",
-            id: "mouse",
-            parameters: { pointerType: "mouse" },
-            actions: [
-              {
-                type: "pointerMove",
-                duration: 0,
-                origin: { "element-6066-11e4-a52e-4f735466cecf": viewport },
-                x: Math.round(-rect.width / 2 + 24),
-                y: Math.round(-rect.height / 2 + 24),
-              },
-              { type: "pointerDown", button: 0 },
-              { type: "pointerUp", button: 0 },
-              { type: "pointerDown", button: 0 },
-              { type: "pointerUp", button: 0 },
-            ],
-          },
-        ],
-      });
+      await openCanvasLaunch();
       await click(".advanced-launch summary");
       await fill("Name", "Canvas launch");
       await fill(
@@ -619,6 +807,42 @@ try {
         ),
         0,
       );
+      await keys("exit\uE007");
+      await ended();
+    },
+  );
+  await check(
+    "Launching a saved preset from the canvas keeps its destination",
+    async () => {
+      await click(".canvas-row");
+      await openCanvasLaunch();
+      await clickText("Daily shell");
+      await until("saved preset placed on the same canvas", () =>
+        inspect(`return document.querySelectorAll('.tile').length === 2 &&
+        !!document.querySelector('.tile [aria-label="Focus Daily shell"]') &&
+        !!document.querySelector('.tile .terminal-surface')`),
+      );
+      await marker("canvas_preset");
+      await until("saved preset placement persisted", async () => {
+        const saved = JSON.parse(
+          await readFile(join(support, "workspace.json"), "utf8"),
+        );
+        const board = saved.canvases.find(
+          (canvas) => canvas.name === "QA canvas",
+        );
+        return board.tiles.some((tile) =>
+          saved.instances.some(
+            (instance) =>
+              instance.id === tile.itemID &&
+              instance.name === "Daily shell" &&
+              instance.spec.workingDirectory === project,
+          ),
+        );
+      });
+      await screenshot("canvas-preset-launch");
+      await click('[aria-label="Remove Daily shell from canvas"]');
+      await running();
+      await marker("canvas_preset_detached", false);
       await keys("exit\uE007");
       await ended();
     },

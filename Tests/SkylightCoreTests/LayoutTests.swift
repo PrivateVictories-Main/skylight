@@ -201,6 +201,35 @@ final class LayoutTests: XCTestCase {
                        CGPoint(x: 48, y: 48))
     }
 
+    func testTileMagnetsUseTheSameVisibleDistanceAtEveryZoom() {
+        let neighbor = CanvasTile(itemID: UUID(), origin: CGPoint(x: 97, y: 320),
+                                  size: CGSize(width: 560, height: 400))
+        let moving = CanvasTile(itemID: UUID(), origin: .zero, size: neighbor.size)
+        let board = CanvasBoard(name: "Magnets", tiles: [neighbor, moving])
+        for zoom: CGFloat in [0.2, 0.5, 1, 2, 3] {
+            let near = CGRect(x: neighbor.origin.x + 10 / zoom, y: 40,
+                              width: moving.size.width, height: moving.size.height)
+            XCTAssertEqual(CanvasLayout.magnetSnapped(near, moving: moving.id, on: board, zoom: zoom).x,
+                           neighbor.origin.x, "A ten-point visible gap should snap at \(zoom)")
+            let far = CGRect(x: neighbor.origin.x + 13 / zoom, y: 40,
+                             width: moving.size.width, height: moving.size.height)
+            XCTAssertNotEqual(CanvasLayout.magnetSnapped(far, moving: moving.id, on: board, zoom: zoom).x,
+                              neighbor.origin.x, "A thirteen-point visible gap should not snap at \(zoom)")
+        }
+    }
+
+    func testTileMagnetsIgnoreDockedFramesAndTheMovingTileItself() {
+        let hidden = CanvasTile(itemID: UUID(), origin: CGPoint(x: 97, y: 320),
+                                size: CGSize(width: 560, height: 400))
+        let moving = CanvasTile(itemID: UUID(), origin: CGPoint(x: 103, y: 40), size: hidden.size)
+        // Legacy/imported layouts may contain both entries while normalized.
+        let board = CanvasBoard(name: "Docked", tiles: [hidden, moving],
+                                docks: [.left: DockRail(thickness: 300,
+                                    slots: [DockSlot(itemID: hidden.itemID)])])
+        XCTAssertEqual(CanvasLayout.magnetSnapped(moving.frame, moving: moving.id, on: board, zoom: 1),
+                       CanvasLayout.snapped(moving.origin))
+    }
+
     func testReflowReturnsNilWhenEverythingFits() {
         let tile = CanvasTile(itemID: UUID(), origin: CGPoint(x: 48, y: 48),
                               size: CGSize(width: 560, height: 400))

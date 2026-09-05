@@ -10,10 +10,8 @@ import SkylightCore
 /// import leaves behind in the slot it did not fill. Forcing an inverse would
 /// invent a theme nobody chose.
 ///
-/// The names are stored, not the themes: a bundled theme is 485-entries-worth
-/// of data already on disk, and keeping a copy of one in UserDefaults would be
-/// a second version of it to drift. (Imported themes get their own sidecar
-/// files; that arrives with the import UI.)
+/// Preferences store names; imported themes and the previous appearance live
+/// together in an atomic library file. Bundled themes resolve from the catalog.
 @MainActor
 final class ThemeStore: ObservableObject {
     static let shared = ThemeStore()
@@ -34,214 +32,167 @@ final class ThemeStore: ObservableObject {
     /// is a coincidence that usually looks like it worked.
     @Published private(set) var revision = 0
 
-    private init() {
-        reload()
-        loadSnapshot()
+    /// A single transaction includes the library and the undo point. This
+    /// prevents a saved theme and its snapshot from getting out of step.
+    private struct Library: Codable {
+        var version = 1
+        var themes: [String: SkylightTheme] = [:]
+        var snapshot: ThemeSnapshot?
     }
 
-    /// Re-resolve both slots from stored names. Cheap and synchronous: a name
-    /// lookup against an in-memory catalogue.
+    private let defaults: UserDefaults
+    private let supportDirectory: URL
+    private var library: Library
+    private var loadFailure: Error?
+    private var libraryURL: URL {
+        supportDirectory.appendingPathComponent("__skylight-theme-library-v1.json")
+    }
+
+    /// Injectable paths keep persistence tests away from the user's settings.
+    init(defaults: UserDefaults = .standard,
+         supportDirectory: URL = WorkspacePaths.supportDirectory
+            .appendingPathComponent("themes", isDirectory: true)) {
+        self.defaults = defaults
+        self.supportDirectory = supportDirectory
+        library = Library()
+        let url = supportDirectory.appendingPathComponent("__skylight-theme-library-v1.json")
+        if FileManager.default.fileExists(atPath: url.path) {
+            do {
+                let decoded = try JSONDecoder().decode(Library.self, from: Data(contentsOf: url))
+                guard decoded.version == 1 else {
+                    throw NSError(domain: "Skylight.Theme", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "The saved theme library uses an unsupported version."])
+                }
+                library = decoded
+            } catch {
+                // A damaged library must never be replaced with an empty one
+                // just because the next import happened to be writable.
+                loadFailure = error
+            }
+        } else {
+            // Read the original sidecar layout without renaming or deleting
+            // any files. The first successful import writes the new library.
+            let urls = (try? FileManager.default.contentsOfDirectory(
+                at: supportDirectory, includingPropertiesForKeys: nil)) ?? []
+            for file in urls.sorted(by: { $0.lastPathComponent < $1.lastPathComponent })
+                where file.pathExtension == "json" {
+                if let data = try? Data(contentsOf: file),
+                   let theme = try? JSONDecoder().decode(SkylightTheme.self, from: data) {
+                    library.themes[theme.name] = theme
+                }
+            }
+            let snapshotURL = supportDirectory.appendingPathComponent("pre-import-snapshot.json")
+            if let data = try? Data(contentsOf: snapshotURL) {
+                library.snapshot = try? JSONDecoder().decode(ThemeSnapshot.self, from: data)
+            }
+        }
+        reload()
+    }
+
+    /// Re-resolve both appearance slots from the durable library and catalog.
     func reload() {
-        light = Self.resolve(UserDefaults.standard.string(forKey: Self.lightKey))
-        dark = Self.resolve(UserDefaults.standard.string(forKey: Self.darkKey))
+        light = resolve(defaults.string(forKey: Self.lightKey))
+        dark = resolve(defaults.string(forKey: Self.darkKey))
         revision &+= 1
     }
 
-    /// Set a slot by name; nil clears it back to the engine default.
     func select(light lightName: String?, dark darkName: String?) {
-        UserDefaults.standard.set(lightName, forKey: Self.lightKey)
-        UserDefaults.standard.set(darkName, forKey: Self.darkKey)
+        defaults.set(lightName, forKey: Self.lightKey)
+        defaults.set(darkName, forKey: Self.darkKey)
         reload()
     }
 
-    /// True when neither slot is set — the app is wearing the engine's own
-    /// look and `setTheme` has nothing to say.
     var isDefault: Bool { light == nil && dark == nil }
 
-    /// The active theme for the appearance currently on screen, or nil while
-    /// both slots are empty. Chrome tinting reads this.
     func active(isDarkAppearance: Bool) -> SkylightTheme? {
         isDarkAppearance ? dark ?? light : light ?? dark
     }
 
-    /// An imported theme SHADOWS a bundled one of the same name, deliberately:
-    /// if someone brought over their own "Catppuccin Mocha", that is the one
-    /// they meant, not the catalogue's copy of it.
-    private static func resolve(_ name: String?) -> SkylightTheme? {
+    private func resolve(_ name: String?) -> SkylightTheme? {
         guard let name, !name.isEmpty else { return nil }
-        if let imported = loadImported(named: name) { return imported }
-        return ThemeCatalogBridge.resolve(named: name)
+        return library.themes[name] ?? ThemeCatalogBridge.resolve(named: name)
     }
 
-    // MARK: - Imported themes on disk
-
-    private static let supportDir: URL = {
-        let dir = WorkspacePaths.supportDirectory.appendingPathComponent("themes", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }()
-
-    /// A filename that cannot escape the themes directory, cannot be empty,
-    /// and cannot be a dotfile. Theme names come from files other people
-    /// wrote: "../../../etc" is a name, so is "", so is ".".
-    ///
-    /// Two names that differ only in punctuation DO collide here ("Solarized
-    /// Dark" and "Solarized-Dark" both become "solarized-dark"), and that is
-    /// accepted rather than solved with a hash: the file is meant to be
-    /// findable by a human, a collision costs one overwritten import of a
-    /// theme with a near-identical name, and the alternative is a directory of
-    /// unreadable filenames. A digest suffix is the fix if it ever bites.
-    private static func slug(_ name: String) -> String {
-        let mapped = name.unicodeScalars.map {
-            CharacterSet.alphanumerics.contains($0) ? Character($0) : "-"
+    var importedThemes: [SkylightTheme] {
+        library.themes.values.sorted {
+            $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
         }
-        // Collapse runs and trim: "  A  B  " must not become "--a--b--".
-        let collapsed = String(mapped).lowercased()
-            .split(separator: "-", omittingEmptySubsequences: true)
-            .joined(separator: "-")
-        // An empty or all-punctuation name would write "" (the directory
-        // itself) or ".json" (a hidden file the picker never shows).
-        return collapsed.isEmpty ? "theme" : collapsed
     }
 
-    private static func loadImported(named name: String) -> SkylightTheme? {
-        let url = supportDir.appendingPathComponent("\(slug(name)).json")
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(SkylightTheme.self, from: data)
-    }
+    /// Hand edits retain the last import's undo point.
+    func snapshotNoteHandEdit() {}
 
-    /// Instance-side alias so views do not reach for the type directly.
-    var importedThemes: [SkylightTheme] { Self.imported }
+    var canRevert: Bool { library.snapshot != nil }
 
-    /// A hand edit after an import stands on its own but must not cost the
-    /// ability to undo the import (see ThemeSnapshotStore).
-    func snapshotNoteHandEdit() { snapshots.noteHandEdit() }
-
-    /// Every theme imported so far, newest name order irrelevant — the picker
-    /// sorts. Unreadable files are skipped rather than failing the whole list.
-    static var imported: [SkylightTheme] {
-        let urls = (try? FileManager.default.contentsOfDirectory(
-            at: supportDir, includingPropertiesForKeys: nil)) ?? []
-        return urls
-            .filter { $0.pathExtension == "json" }
-            .compactMap { url in
-                (try? Data(contentsOf: url)).flatMap {
-                    try? JSONDecoder().decode(SkylightTheme.self, from: $0)
-                }
-            }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-    }
-
-    /// Persist an imported theme so it survives relaunch. Atomic, and a
-    /// failure to write is not a reason to refuse the import — the theme still
-    /// applies for this run.
-    @discardableResult
-    static func save(_ theme: SkylightTheme) -> Bool {
-        guard let data = try? JSONEncoder().encode(theme) else { return false }
-        let url = supportDir.appendingPathComponent("\(slug(theme.name)).json")
-        return (try? data.write(to: url, options: .atomic)) != nil
-    }
-
-    // MARK: - The revert snapshot
-
-    private static var snapshotURL: URL {
-        supportDir.appendingPathComponent("pre-import-snapshot.json")
-    }
-
-    private(set) var snapshots = ThemeSnapshotStore()
-
-    /// Capture the world as it stands, then let the caller apply. Ryan's
-    /// ratified rule is that an import WINS over everything set by hand —
-    /// which is only defensible because this makes getting back one click.
-    func captureSnapshot() {
-        snapshots.capture(Self.currentValues())
-        persistSnapshot()
-    }
-
-    /// Put every captured value back and forget the snapshot. Returns false
-    /// when there was nothing to revert.
-    @discardableResult
-    func revert() -> Bool {
-        guard let values = snapshots.revert() else { return false }
-        let defaults = UserDefaults.standard
-        defaults.set(values.appearance, forKey: Appearance.appearanceKey)
-        defaults.set(values.windowBackground, forKey: Appearance.backgroundKey)
-        if let opacity = values.terminalOpacity {
-            defaults.set(opacity, forKey: Appearance.terminalOpacityKey)
-        }
-        defaults.set(values.terminalFontSize ?? 0, forKey: Appearance.fontSizeKey)
-        defaults.set(values.fontFamily, forKey: Appearance.fontFamilyKey)
-        select(light: values.lightTheme, dark: values.darkTheme)
-        persistSnapshot()
-        return true
-    }
-
-    var canRevert: Bool { snapshots.canRevert }
-
-    private static func currentValues() -> ThemeSnapshot {
-        let defaults = UserDefaults.standard
-        return ThemeSnapshot(
+    private func currentValues() -> ThemeSnapshot {
+        ThemeSnapshot(
             appearance: defaults.string(forKey: Appearance.appearanceKey),
             windowBackground: defaults.string(forKey: Appearance.backgroundKey),
             terminalOpacity: defaults.object(forKey: Appearance.terminalOpacityKey) as? Double,
-            // object(forKey:), like the opacity above: integer(forKey:)
-            // returns 0 for "never set", which is indistinguishable from the
-            // 0 that MEANS "engine default" — so a revert could not tell
-            // "restore the default" from "restore nothing".
             terminalFontSize: defaults.object(forKey: Appearance.fontSizeKey) as? Int,
             fontFamily: defaults.string(forKey: Appearance.fontFamilyKey),
-            lightTheme: defaults.string(forKey: lightKey),
-            darkTheme: defaults.string(forKey: darkKey))
+            lightTheme: defaults.string(forKey: Self.lightKey),
+            darkTheme: defaults.string(forKey: Self.darkKey),
+            lightThemeValues: light, darkThemeValues: dark)
     }
 
-    private func persistSnapshot() {
-        if let stored = snapshots.stored, let data = try? JSONEncoder().encode(stored) {
-            try? data.write(to: Self.snapshotURL, options: .atomic)
-        } else {
-            try? FileManager.default.removeItem(at: Self.snapshotURL)
+    private func persist(_ next: Library) throws {
+        if let loadFailure { throw loadFailure }
+        let data = try JSONEncoder().encode(next)
+        try FileManager.default.createDirectory(at: supportDirectory, withIntermediateDirectories: true)
+        try data.write(to: libraryURL, options: .atomic)
+        library = next
+    }
+
+    /// The library commit happens before any visible preference changes. A
+    /// failed import leaves the previous appearance and undo point intact.
+    func apply(_ theme: SkylightTheme) throws {
+        guard !theme.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw NSError(domain: "Skylight.Theme", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "The theme needs a name before it can be saved."])
         }
-    }
+        var next = library
+        next.snapshot = currentValues()
+        next.themes[theme.name] = theme
+        try persist(next)
 
-    private func loadSnapshot() {
-        guard let data = try? Data(contentsOf: Self.snapshotURL),
-              let stored = try? JSONDecoder().decode(ThemeSnapshot.self, from: data)
-        else { return }
-        snapshots = ThemeSnapshotStore(snapshot: stored)
-    }
-
-    // MARK: - Applying an import
-
-    /// The one path an imported theme takes: snapshot, persist, select, and
-    /// let everything that watches appearance catch up. An import wins over
-    /// hand-set values by design — the snapshot above is the way back.
-    func apply(_ theme: SkylightTheme) {
-        captureSnapshot()
-        Self.save(theme)
-        let defaults = UserDefaults.standard
-        // "Applies EVERYTHING": the look the theme states reaches the app's
-        // own settings, not only the terminal's colours.
-        let applied = ThemeApplication.appearance(for: theme,
-                                                  reduceTransparency: false)
+        let applied = ThemeApplication.appearance(for: theme, reduceTransparency: false)
         defaults.set(applied.isDark ? "dark" : "light", forKey: Appearance.appearanceKey)
         if theme.backgroundOpacity != nil {
             defaults.set(applied.opacity, forKey: Appearance.terminalOpacityKey)
         }
-        if let size = applied.fontSize, Appearance.fontSizes.contains(Int(size)) {
-            defaults.set(Int(size), forKey: Appearance.fontSizeKey)
+        if let size = applied.fontSize,
+           let offered = Appearance.fontSizes.first(where: { Double($0) == size }) {
+            defaults.set(offered, forKey: Appearance.fontSizeKey)
         }
-        // A font we do not have installed is not applied — the theme would
-        // silently render in something else and look broken for no visible
-        // reason. Honest fallback, named to the user by the import sheet.
         if let family = applied.fontFamily, Appearance.fontIsInstalled(family) {
             defaults.set(family, forKey: Appearance.fontFamilyKey)
         }
         if theme.isDarkDerived {
-            select(light: UserDefaults.standard.string(forKey: Self.lightKey),
-                   dark: theme.name)
+            select(light: defaults.string(forKey: Self.lightKey), dark: theme.name)
         } else {
-            select(light: theme.name,
-                   dark: UserDefaults.standard.string(forKey: Self.darkKey))
+            select(light: theme.name, dark: defaults.string(forKey: Self.darkKey))
         }
+    }
+
+    /// Restore both unset preferences and the actual previous palettes, even
+    /// after a same-name reimport or app restart. Failed writes keep undo available.
+    @discardableResult
+    func revert() throws -> Bool {
+        guard let values = library.snapshot else { return false }
+        var next = library
+        if let theme = values.lightThemeValues { next.themes[theme.name] = theme }
+        if let theme = values.darkThemeValues { next.themes[theme.name] = theme }
+        next.snapshot = nil
+        try persist(next)
+
+        defaults.set(values.appearance, forKey: Appearance.appearanceKey)
+        defaults.set(values.windowBackground, forKey: Appearance.backgroundKey)
+        defaults.set(values.terminalOpacity, forKey: Appearance.terminalOpacityKey)
+        defaults.set(values.terminalFontSize, forKey: Appearance.fontSizeKey)
+        defaults.set(values.fontFamily, forKey: Appearance.fontFamilyKey)
+        select(light: values.lightTheme, dark: values.darkTheme)
+        return true
     }
 
     /// Fonts a theme names but the machine does not have. Surfaced by the

@@ -1,4 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+mod appearance_commands;
 use fs2::FileExt;
 use serde::Serialize;
 use skylight_runtime::{
@@ -24,6 +25,7 @@ struct Runtime {
     sessions: Mutex<HashMap<Uuid, Arc<Session>>>,
     path: PathBuf,
     _lock: File,
+    appearance_lock: Mutex<()>,
 }
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -242,6 +244,7 @@ fn main() {
                 sessions: Mutex::new(HashMap::new()),
                 path: directory.join("workspace.json"),
                 _lock: lock,
+                appearance_lock: Mutex::new(()),
             }));
             Ok(())
         })
@@ -263,7 +266,15 @@ fn main() {
             acknowledge_output,
             close_session,
             import_workspace,
-            export_workspace
+            export_workspace,
+            appearance_commands::get_appearance,
+            appearance_commands::save_appearance,
+            appearance_commands::revert_appearance,
+            appearance_commands::discover_themes,
+            appearance_commands::import_detected_theme,
+            appearance_commands::import_theme_file,
+            appearance_commands::choose_background,
+            appearance_commands::bundled_themes
         ])
         .run(tauri::generate_context!())
         .expect("Unable to start Skylight");

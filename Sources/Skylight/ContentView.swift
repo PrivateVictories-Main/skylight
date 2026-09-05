@@ -595,21 +595,14 @@ struct DetailView: View {
         }
         .animation(.easeOut(duration: 0.18), value: state.draggingItemID)
         .animation(Motion.viewport, value: state.focusedInstance)
-        // With the sidebar hidden its bottom-bar handle goes with it. The 30pt
-        // band the content already steps below becomes a DELIBERATE slim bar —
-        // material, hairline edge, window controls at home on it — not a raw
-        // slab of leftover container backing. It doubles as the drag handle.
+        // Keep a transparent window-drag region around the traffic lights.
+        // The content already reserves their height; painting another toolbar
+        // here created a full-width band whenever the sidebar was hidden.
         .overlay(alignment: .top) {
             if sidebarCollapsed {
                 WindowDragArea()
                     .frame(height: 30)
                     .frame(maxWidth: .infinity)
-                    .background(.bar)
-                    .overlay(alignment: .bottom) {
-                        Rectangle()
-                            .fill(Color.primary.opacity(0.10))
-                            .frame(height: 0.5)
-                    }
                     .ignoresSafeArea(edges: .top)
                     .transition(.opacity)
             }

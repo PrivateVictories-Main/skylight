@@ -6,10 +6,10 @@ import SkylightCore
 /// Named for the migration, not for the format: SkylightCore already owns a
 /// `ThemeSource` (which format a theme CAME from) and two types with one name
 /// in one module is a coin-flip at every use site.
-struct MigrationSource: Identifiable {
+struct MigrationSource: Identifiable, Sendable {
     let id: String
     let displayName: String
-    /// Absolute paths, first hit wins. `~` already expanded.
+    /// Absolute paths. Ghostty loads all in order; other sources use the first hit.
     let paths: [String]
 
     /// The first path that actually exists on this machine, or nil.
@@ -19,18 +19,23 @@ struct MigrationSource: Identifiable {
 }
 
 enum ThemeDiscovery {
-    private static var home: String {
-        FileManager.default.homeDirectoryForCurrentUser.path
-    }
-
     /// Where the terminals people actually migrate from keep their look.
     /// Ordered by fidelity: the formats that translate exactly come first, so
     /// a machine with several installed offers its best answer at the top.
     static var sources: [MigrationSource] {
+        sources(home: FileManager.default.homeDirectoryForCurrentUser.path,
+                environment: ProcessInfo.processInfo.environment)
+    }
+
+    static func sources(home: String, environment: [String: String]) -> [MigrationSource] {
         let support = "\(home)/Library/Application Support"
+        let configuredXDG = environment["XDG_CONFIG_HOME"] ?? ""
+        let xdg = configuredXDG.hasPrefix("/") ? configuredXDG : "\(home)/.config"
         return [
             MigrationSource(id: "ghostty", displayName: "Ghostty",
-                        paths: ["\(home)/.config/ghostty/config"]),
+                        paths: ["\(xdg)/ghostty/config.ghostty", "\(xdg)/ghostty/config",
+                                "\(support)/com.mitchellh.ghostty/config.ghostty",
+                                "\(support)/com.mitchellh.ghostty/config"]),
             MigrationSource(id: "iterm2", displayName: "iTerm2",
                         paths: ["\(home)/Library/Preferences/com.googlecode.iterm2.plist"]),
             MigrationSource(id: "warp", displayName: "Warp",
@@ -59,16 +64,31 @@ enum ThemeDiscovery {
     ///
     /// So the check is a real parse. The files are small and this runs once
     /// when the tab appears, never per render.
-    static func usable() -> [MigrationSource] {
-        sources.filter { source in
-            guard let path = source.found else { return false }
-            if case .success = load(path) { return true }
+    static func usable(_ candidates: [MigrationSource] = sources) -> [MigrationSource] {
+        candidates.filter { source in
+            if case .success = load(source) { return true }
             return false
         }
     }
 
+    /// Ghostty composes every existing default config in this order. Reading
+    /// only its first path loses the macOS overrides the user actually sees.
+    static func load(_ source: MigrationSource) -> Result<[SkylightTheme], ThemeImportError> {
+        guard source.id == "ghostty" else {
+            guard let path = source.found else { return .failure(.empty) }
+            return load(path)
+        }
+        var parts: [String] = []
+        for path in source.paths where FileManager.default.fileExists(atPath: path) {
+            guard let data = boundedData(at: URL(fileURLWithPath: path)),
+                  let text = String(data: data, encoding: .utf8) else { continue }
+            parts.append(text)
+        }
+        return parse(Data(parts.joined(separator: "\n").utf8), filename: "Ghostty.config")
+    }
+
     /// A theme file is small. These bounds exist because the walk below runs
-    /// on the main actor and the file picker lets someone choose a DIRECTORY —
+    /// during discovery and the file picker lets someone choose a DIRECTORY —
     /// so "load this folder" could be the home directory, and an unbounded
     /// recursive enumeration of it would hang the app with the Settings window
     /// open.
@@ -77,7 +97,7 @@ enum ThemeDiscovery {
     private static let maximumFileBytes = 512 * 1024
 
     private static let readableExtensions: Set<String> =
-        ["yml", "yaml", "itermcolors", "toml", "json", "conf", "config", "lua"]
+        ["yml", "yaml", "itermcolors", "toml", "json", "conf", "config", "ghostty", "lua"]
 
     /// Read a file at a byte cap. A theme is kilobytes; anything that is not
     /// is not a theme, and reading it whole to find that out is the problem.
@@ -117,12 +137,12 @@ enum ThemeDiscovery {
                     continue
                 }
                 guard readableExtensions.contains(url.pathExtension.lowercased())
+                        || url.lastPathComponent == "config"
                 else { continue }
                 scanned += 1
                 if scanned > maximumFilesScanned { break }
                 guard let data = boundedData(at: url),
-                      let parsed = try? ThemeImport.parse(
-                        data: data, filename: url.lastPathComponent).get()
+                      let parsed = try? parse(data, filename: url.lastPathComponent).get()
                 else { continue }
                 themes.append(contentsOf: parsed)
             }
@@ -133,18 +153,30 @@ enum ThemeDiscovery {
         guard let data = boundedData(at: URL(fileURLWithPath: path)) else {
             return .failure(.empty)
         }
-        let parsed = ThemeImport.parse(data: data,
-                                       filename: (path as NSString).lastPathComponent)
+        return parse(data, filename: (path as NSString).lastPathComponent)
+    }
+
+    private static func parse(_ data: Data, filename: String) -> Result<[SkylightTheme], ThemeImportError> {
+        let parsed = ThemeImport.parse(data: data, filename: filename)
         // A ghostty config that only NAMES a theme still counts as an import:
         // resolve the reference against the bundled catalogue.
         if case let .success(themes) = parsed, themes.count == 1,
            let text = String(data: data, encoding: .utf8),
            let config = GhosttyConfigParser.parse(text, name: "config"),
-           let reference = config.themeReference ?? config.darkThemeReference,
-           let named = ThemeCatalogBridge.resolve(named: reference) {
+           let reference = config.themeReference ?? config.darkThemeReference ?? config.lightThemeReference {
             // The config's own explicit keys still win over the theme it names
             // — ghostty's rule, and merging is how it is spelled here.
-            return .success([named.merging(themes[0])])
+            if let named = ThemeCatalogBridge.resolve(named: reference) {
+                return .success([named.merging(themes[0])])
+            }
+            // A custom theme reference needs the actual theme file. An
+            // invented black-and-white fallback would look like a successful import.
+            guard themes[0].stated.background, themes[0].stated.foreground else {
+                return .failure(.malformed("Theme ‘\(reference)’ was not found. Import its theme file instead"))
+            }
+            var explicit = themes[0]
+            explicit.skipped.append("theme ‘\(reference)’ (not found; explicit colors kept)")
+            return .success([explicit])
         }
         return parsed
     }
@@ -170,7 +202,8 @@ struct ThemeSettingsView: View {
         let mine = trimmed.isEmpty
             ? imported
             : imported.filter { $0.name.localizedCaseInsensitiveContains(trimmed) }
-        return mine + ThemeCatalogBridge.search(trimmed)
+        let importedNames = Set(imported.map(\.name))
+        return mine + ThemeCatalogBridge.search(trimmed).filter { !importedNames.contains($0.name) }
     }
 
     var body: some View {
@@ -190,8 +223,10 @@ struct ThemeSettingsView: View {
         }
         .padding(18)
         .task {
-            migrationSources = ThemeDiscovery.usable()
             imported = ThemeStore.shared.importedThemes
+            let discovered = await Task.detached(priority: .utility) { ThemeDiscovery.usable() }.value
+            guard !Task.isCancelled else { return }
+            migrationSources = discovered
         }
         .sheet(isPresented: Binding(get: { !candidates.isEmpty },
                                     set: { if !$0 { candidates = [] } })) {
@@ -293,8 +328,7 @@ struct ThemeSettingsView: View {
     // MARK: - Actions
 
     private func load(_ source: MigrationSource) {
-        guard let path = source.found else { return }
-        switch ThemeDiscovery.load(path) {
+        switch ThemeDiscovery.load(source) {
         case let .success(themes) where themes.count == 1:
             apply(themes[0])
         case let .success(themes):
@@ -320,7 +354,12 @@ struct ThemeSettingsView: View {
     }
 
     private func apply(_ theme: SkylightTheme) {
-        ThemeStore.shared.apply(theme)
+        do {
+            try ThemeStore.shared.apply(theme)
+        } catch {
+            importMessage = "Couldn’t save \(theme.name). Your current look is unchanged. \(error.localizedDescription)"
+            return
+        }
         var notes: [String] = []
         if !theme.skipped.isEmpty {
             notes.append("Not imported: \(theme.skipped.joined(separator: ", ")).")
@@ -335,8 +374,12 @@ struct ThemeSettingsView: View {
     }
 
     private func revert() {
-        ThemeStore.shared.revert()
-        importMessage = "Reverted to your settings from before the import."
+        do {
+            guard try ThemeStore.shared.revert() else { return }
+            importMessage = "Reverted to your settings from before the import."
+        } catch {
+            importMessage = "Couldn’t restore your look. You can try Revert again. \(error.localizedDescription)"
+        }
         refresh()
     }
 
@@ -397,7 +440,7 @@ private struct ThemeChoiceSheet: View {
                 .font(.system(size: 13, weight: .semibold))
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(themes, id: \.name) { theme in
+                    ForEach(Array(themes.enumerated()), id: \.offset) { _, theme in
                         Button { choose(theme) } label: {
                             HStack(spacing: 10) {
                                 Swatches(theme: theme)

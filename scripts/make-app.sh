@@ -12,7 +12,9 @@ BUILD_DIR="${SKYLIGHT_BUILD_DIR:-.build}"
 swift build --scratch-path "$BUILD_DIR" -c "$CONFIG"
 
 BIN="$BUILD_DIR/$CONFIG/Skylight"
-APP="build/Skylight.app"
+APP_NAME="${SKYLIGHT_APP_NAME:-Skylight}"
+[[ -n "$APP_NAME" && "$APP_NAME" != *[/\\]* && "$APP_NAME" != .* ]] || { echo "Invalid app bundle name" >&2; exit 2; }
+APP="build/$APP_NAME.app"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS"

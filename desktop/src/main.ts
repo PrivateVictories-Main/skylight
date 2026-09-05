@@ -16,6 +16,19 @@ import {
 } from "./model";
 import { showMenu, type MenuAction } from "./menu";
 import { presetEditor } from "./preset-editor";
+import {
+  DEFAULT_APPEARANCE,
+  applyChrome,
+  type AppearanceHistory,
+  type AppearanceSettings,
+} from "./appearance";
+import {
+  magnetSnap,
+  snapSize,
+  fitToView,
+  arrangeTiles,
+  zoomAround,
+} from "./canvas-layout";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
@@ -35,7 +48,72 @@ let selected: { kind: "terminal" | "canvas"; id: string } | undefined;
 let previousBoard: string | undefined;
 let modal: HTMLDialogElement | undefined;
 let saving = Promise.resolve();
+let lastFocusedSession: string | undefined;
+let canvasRefresh: (() => void) | undefined;
+let navigationSave: ReturnType<typeof setTimeout> | undefined;
 let allowClose = false;
+let appearanceHistory: AppearanceHistory = {
+  current: structuredClone(DEFAULT_APPEARANCE),
+  previous: null,
+};
+let activeAppearance = appearanceHistory.current;
+function previewAppearance(settings: AppearanceSettings): void {
+  activeAppearance = settings;
+  applyChrome(settings);
+  for (const session of sessions.values()) session.applyAppearance(settings);
+}
+let appearanceOpening = false;
+async function openAppearance(): Promise<void> {
+  if (appearanceOpening || modal) return;
+  appearanceOpening = true;
+  let panelModule;
+  try {
+    panelModule = await import("./appearance-panel");
+  } finally {
+    appearanceOpening = false;
+  }
+  if (modal) return;
+  const { appearancePanel } = panelModule;
+  const entry = structuredClone(appearanceHistory.current);
+  const { dialog: dlg, body, close } = dialog("Appearance");
+  let committed = false;
+  dlg.addEventListener("close", () => {
+    if (!committed) previewAppearance(entry);
+  });
+  body.append(
+    appearancePanel({
+      current: entry,
+      preview: previewAppearance,
+      cancel: close,
+      save: async (settings) => {
+        dlg.dataset.busy = "true";
+        try {
+          const next = await invoke<AppearanceHistory>("save_appearance", {
+            settings,
+          });
+          appearanceHistory = next;
+          previewAppearance(next.current);
+          committed = true;
+          delete dlg.dataset.busy;
+          close();
+        } finally {
+          delete dlg.dataset.busy;
+        }
+      },
+      importFile: () => invoke("import_theme_file"),
+      discover: () => invoke("discover_themes"),
+      importDetected: (id) => invoke("import_detected_theme", { id }),
+      chooseBackground: () => invoke("choose_background"),
+      catalog: () => invoke("bundled_themes"),
+    }),
+  );
+  dlg.showModal();
+}
+async function revertAppearance(): Promise<void> {
+  appearanceHistory = await invoke<AppearanceHistory>("revert_appearance");
+  previewAppearance(appearanceHistory.current);
+  restoreFocus();
+}
 let providerRefresh: Promise<void> | undefined;
 const sessions = new Map<string, TerminalSession>();
 const starting = new Map<string, Promise<void>>();
@@ -236,6 +314,7 @@ function select(item: { kind: "terminal" | "canvas"; id: string }): void {
   void persist();
 }
 function render(): void {
+  canvasRefresh = undefined;
   const board =
     selected?.kind === "canvas"
       ? workspace.canvases.find((b) => b.id === selected!.id)
@@ -243,7 +322,7 @@ function render(): void {
   const visibleIDs = new Set(
     selected?.kind === "terminal"
       ? [selected.id]
-      : board?.zoom === 1
+      : board
         ? board.tiles.map((tile) => tile.itemID)
         : [],
   );
@@ -268,7 +347,7 @@ function render(): void {
   if (selected.kind === "canvas") {
     if (board) renderCanvas(board);
     else renderWelcome();
-    if (focused && visibleIDs.has(focused.instance.id))
+    if (board?.zoom === 1 && focused && visibleIDs.has(focused.instance.id))
       focused.terminal.focus();
     return;
   }
@@ -278,6 +357,8 @@ function render(): void {
     return;
   }
   content.dataset.sessionState = status(instance.id);
+  const activeSession = sessions.get(instance.id);
+  if (activeSession) activeSession.element.inert = false;
   // A terminal owns its full panel. Commands live on its sidebar row, keeping
   // shell text at the top just like the native macOS TerminalPanel.
   if (previousBoard) {
@@ -380,7 +461,11 @@ async function startSession(instance: Instance): Promise<void> {
         render();
     },
     report,
+    activeAppearance,
   );
+  session.element.addEventListener("focusin", () => {
+    lastFocusedSession = instance.id;
+  });
   sessions.set(instance.id, session);
   select({ kind: "terminal", id: instance.id });
   try {
@@ -400,11 +485,14 @@ function dialog(title: string): {
   body: HTMLDivElement;
   close: () => void;
 } {
+  if (modal?.dataset.busy === "true")
+    throw new Error("Wait for the appearance save to finish");
   modal?.close();
   modal?.remove();
   const dlg = element("dialog", undefined, "dialog");
   const heading = element("header");
   const close = () => {
+    if (dlg.dataset.busy === "true") return;
     dlg.close();
     dlg.remove();
     if (modal === dlg) modal = undefined;
@@ -418,7 +506,8 @@ function dialog(title: string): {
   dlg.append(heading, body);
   document.body.append(dlg);
   modal = dlg;
-  dlg.addEventListener("cancel", () => {
+  dlg.addEventListener("cancel", (event) => {
+    event.preventDefault();
     requestAnimationFrame(close);
   });
   return { dialog: dlg, body, close };
@@ -426,6 +515,14 @@ function dialog(title: string): {
 function restoreFocus(): void {
   if (selected?.kind === "terminal")
     sessions.get(selected.id)?.terminal.focus();
+  else if (selected?.kind === "canvas" && lastFocusedSession) {
+    const board = workspace.canvases.find((b) => b.id === selected!.id);
+    if (
+      board?.zoom === 1 &&
+      board.tiles.some((t) => t.itemID === lastFocusedSession)
+    )
+      sessions.get(lastFocusedSession)?.terminal.focus();
+  }
 }
 function field(label: string, value = "", placeholder = ""): HTMLInputElement {
   const input = element("input");
@@ -463,7 +560,7 @@ async function editInstance(
           preset.name,
           () => {
             close();
-            return launchPreset(preset);
+            return launchPreset(preset, targetBoard);
           },
           "preset-launch",
         ),
@@ -756,18 +853,56 @@ function moveToCanvas(instance: Instance, board: Canvas): void {
     (viewport.clientHeight - tile.size[1]) / 2 - tile.origin[1],
   ];
 }
-function renderCanvas(board: Canvas): void {
-  const zoom = (value: number) => {
-    board.zoom = Math.max(0.25, Math.min(2, Math.round(value * 100) / 100));
-    render();
+function queueNavigationSave(): void {
+  clearTimeout(navigationSave);
+  navigationSave = setTimeout(() => {
+    navigationSave = undefined;
     void persist();
-  };
-  const canvasActions = (): MenuAction[] => [
+  }, 160);
+}
+function canvasZoom(
+  board: Canvas,
+  value: number,
+  pivot?: readonly [number, number],
+): void {
+  const viewport = document.querySelector<HTMLElement>(".canvas-viewport");
+  if (!viewport || viewport.dataset.dragging) return;
+  const next = zoomAround(
+    board.pan,
+    board.zoom,
+    value,
+    pivot ?? [viewport.clientWidth / 2, viewport.clientHeight / 2],
+  );
+  board.zoom = next.zoom;
+  board.pan = next.pan;
+  canvasRefresh?.();
+  queueNavigationSave();
+}
+function canvasFit(board: Canvas, arrange = false): void {
+  const viewport = document.querySelector<HTMLElement>(".canvas-viewport");
+  if (!viewport) return;
+  const size = [viewport.clientWidth, viewport.clientHeight] as const;
+  if (arrange) board.tiles = arrangeTiles(board.tiles, size);
+  const fitted = fitToView(board.tiles, size);
+  if (fitted) {
+    board.zoom = fitted.zoom;
+    board.pan = fitted.pan;
+  }
+  if (arrange) render();
+  else canvasRefresh?.();
+  void persist();
+}
+function canvasActions(board: Canvas): MenuAction[] {
+  return [
     { label: "New terminal", run: () => editInstance(undefined, board) },
-    { label: "Zoom out", run: () => zoom(board.zoom - 0.1) },
-    { label: "Zoom in", run: () => zoom(board.zoom + 0.1) },
-    { label: "Actual size (100%)", run: () => zoom(1) },
+    { label: "Zoom out", run: () => canvasZoom(board, board.zoom - 0.1) },
+    { label: "Zoom in", run: () => canvasZoom(board, board.zoom + 0.1) },
+    { label: "Actual size (100%)", run: () => canvasZoom(board, 1) },
+    { label: "Fit canvas", run: () => canvasFit(board) },
+    { label: "Arrange terminals", run: () => canvasFit(board, true) },
   ];
+}
+function renderCanvas(board: Canvas): void {
   const viewport = element("div", undefined, "canvas-viewport");
   const plane = element("div", undefined, "canvas-plane");
   viewport.append(plane);
@@ -776,7 +911,7 @@ function renderCanvas(board: Canvas): void {
     "aria-label",
     `${board.name}, ${Math.round(board.zoom * 100)}%`,
   );
-  contextual(viewport, canvasActions);
+  contextual(viewport, () => canvasActions(board));
   viewport.ondblclick = (event) => {
     if (event.target === viewport || event.target === plane)
       void editInstance(undefined, board).catch(report);
@@ -786,13 +921,61 @@ function renderCanvas(board: Canvas): void {
     plane.style.transform = `translate(${board.pan[0]}px,${board.pan[1]}px) scale(${board.zoom})`;
     viewport.style.backgroundSize = `${64 * board.zoom}px ${64 * board.zoom}px`;
     viewport.style.backgroundPosition = `${board.pan[0]}px ${board.pan[1]}px`;
+    viewport.setAttribute(
+      "aria-label",
+      `${board.name}, ${Math.round(board.zoom * 100)}%`,
+    );
+    for (const overlay of viewport.querySelectorAll<HTMLButtonElement>(
+      ".tile-overview",
+    ))
+      overlay.hidden = board.zoom === 1;
+    for (const tile of board.tiles) {
+      const session = sessions.get(tile.itemID);
+      if (session) session.element.inert = board.zoom !== 1;
+    }
   };
+  canvasRefresh = transform;
+  viewport.addEventListener(
+    "wheel",
+    (event) => {
+      if (viewport.dataset.dragging) return;
+      if (
+        !event.ctrlKey &&
+        board.zoom === 1 &&
+        (event.target as HTMLElement).closest(".terminal-surface")
+      )
+        return;
+      event.preventDefault();
+      const unit =
+        event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? viewport.clientHeight
+            : 1;
+      if (event.ctrlKey) {
+        const rect = viewport.getBoundingClientRect();
+        canvasZoom(board, board.zoom * Math.exp(-event.deltaY * unit * 0.008), [
+          event.clientX - rect.left,
+          event.clientY - rect.top,
+        ]);
+      } else {
+        board.pan = [
+          board.pan[0] - event.deltaX * unit,
+          board.pan[1] - event.deltaY * unit,
+        ];
+        transform();
+        queueNavigationSave();
+      }
+    },
+    { passive: false },
+  );
   transform();
   viewport.onpointerdown = (e) => {
     if (e.button !== 0) return;
     if (e.target !== viewport && e.target !== plane) return;
     const start = [e.clientX, e.clientY];
     const pan = [...board.pan];
+    viewport.dataset.dragging = "true";
     viewport.setPointerCapture(e.pointerId);
     viewport.onpointermove = (move) => {
       board.pan = [
@@ -803,8 +986,10 @@ function renderCanvas(board: Canvas): void {
     };
     viewport.onpointerup = () => {
       viewport.onpointermove = null;
+      delete viewport.dataset.dragging;
       void persist();
     };
+    viewport.onpointercancel = viewport.onpointerup;
   };
   if (!residentIDs(board).length) {
     const empty = element("div", undefined, "canvas-empty");
@@ -854,6 +1039,7 @@ function renderCanvas(board: Canvas): void {
       if ((e.target as HTMLElement).closest("button")) return;
       const point = [e.clientX, e.clientY];
       const origin = [...tile.origin];
+      viewport.dataset.dragging = "true";
       header.setPointerCapture(e.pointerId);
       header.onpointermove = (move) => {
         tile.origin = [
@@ -865,8 +1051,18 @@ function renderCanvas(board: Canvas): void {
       };
       header.onpointerup = () => {
         header.onpointermove = null;
+        delete viewport.dataset.dragging;
+        tile.origin = magnetSnap(
+          tile,
+          board.tiles.filter((t) => t.id !== tile.id),
+          12 / board.zoom,
+          96 / board.zoom,
+        );
+        card.style.left = `${tile.origin[0]}px`;
+        card.style.top = `${tile.origin[1]}px`;
         void persist();
       };
+      header.onpointercancel = header.onpointerup;
     };
     header
       .querySelector(".session-status")
@@ -892,6 +1088,7 @@ function renderCanvas(board: Canvas): void {
       grip.focus();
       const point = [e.clientX, e.clientY];
       const size = [...tile.size];
+      viewport.dataset.dragging = "true";
       grip.setPointerCapture(e.pointerId);
       grip.onpointermove = (move) =>
         setSize(
@@ -900,8 +1097,11 @@ function renderCanvas(board: Canvas): void {
         );
       grip.onpointerup = () => {
         grip.onpointermove = null;
+        delete viewport.dataset.dragging;
+        setSize(...snapSize(tile.size));
         void persist();
       };
+      grip.onpointercancel = grip.onpointerup;
     };
     grip.onkeydown = (e) => {
       const step = e.shiftKey ? 32 : 16;
@@ -917,21 +1117,27 @@ function renderCanvas(board: Canvas): void {
       }
     };
     const session = sessions.get(instance.id);
-    if (session && board.zoom === 1) {
+    if (session) {
       inside.append(session.element);
       session.setVisible(true);
-    } else if (session) {
-      inside.append(
-        element(
-          "p",
-          `${instance.spec.harness ?? "Terminal"} · ${status(instance.id)}`,
-        ),
-        button(
-          "Focus terminal",
-          () => select({ kind: "terminal", id: instance.id }),
-          "subtle",
-        ),
+      const overview = button(
+        "",
+        () => {
+          board.zoom = 1;
+          board.pan = [
+            (viewport.clientWidth - tile.size[0]) / 2 - tile.origin[0],
+            (viewport.clientHeight - tile.size[1]) / 2 - tile.origin[1],
+          ];
+          transform();
+          session.terminal.focus();
+          void persist();
+        },
+        "tile-overview",
       );
+      overview.setAttribute("aria-label", `Open ${instance.name} at 100%`);
+      overview.hidden = board.zoom === 1;
+      session.element.inert = board.zoom !== 1;
+      inside.append(overview);
     } else renderReady(instance, inside);
   }
   const docked = Object.values(board.docks)
@@ -1105,7 +1311,10 @@ function editPreset(preset: Instance): void {
   body.append(form);
   dlg.showModal();
 }
-async function launchPreset(preset: Instance): Promise<void> {
+async function launchPreset(
+  preset: Instance,
+  targetBoard?: Canvas,
+): Promise<void> {
   const instance: Instance = {
     id: crypto.randomUUID(),
     name: preset.name,
@@ -1114,6 +1323,10 @@ async function launchPreset(preset: Instance): Promise<void> {
   workspace.instances.push(instance);
   await persist();
   await start(instance);
+  if (targetBoard && workspace.canvases.includes(targetBoard)) {
+    moveToCanvas(instance, targetBoard);
+    select({ kind: "canvas", id: targetBoard.id });
+  }
 }
 async function savePreset(instance: Instance): Promise<void> {
   const { dialog: dlg, body, close } = dialog("Save launch preset");
@@ -1147,7 +1360,7 @@ async function savePreset(instance: Instance): Promise<void> {
   name.select();
 }
 async function closeWindow(): Promise<void> {
-  if (allowClose) return;
+  if (allowClose || modal?.dataset.busy === "true") return;
   const active = [...sessions.values()].filter(
     (s) => s.state === "running" || s.state === "opening",
   ).length;
@@ -1160,6 +1373,11 @@ async function closeWindow(): Promise<void> {
     ))
   )
     return;
+  if (navigationSave) {
+    clearTimeout(navigationSave);
+    navigationSave = undefined;
+    void persist();
+  }
   await saving;
   await Promise.all([...sessions.values()].map((s) => s.close()));
   sessions.clear();
@@ -1192,6 +1410,10 @@ document
       { label: "New terminal", run: () => editInstance() },
       { label: "New canvas", id: "new-canvas", run: () => newCanvas() },
       { label: "Search workspace", run: palette },
+      { label: "Appearance", run: openAppearance },
+      ...(appearanceHistory.previous
+        ? [{ label: "Revert appearance", run: revertAppearance }]
+        : []),
       { label: "Import workspace", run: importWorkspace },
       {
         label: "Export workspace",
@@ -1205,30 +1427,18 @@ document
       if (instance) actions.push(...instanceActions(instance));
     } else if (selected?.kind === "canvas") {
       const board = workspace.canvases.find((b) => b.id === selected!.id);
-      if (board)
-        for (const [label, value] of [
-          ["Zoom out", board.zoom - 0.1],
-          ["Zoom in", board.zoom + 0.1],
-          ["Actual size (100%)", 1],
-        ] as const)
-          actions.push({
-            label,
-            run: () => {
-              board.zoom = Math.max(
-                0.25,
-                Math.min(2, Math.round(value * 100) / 100),
-              );
-              render();
-              void persist();
-            },
-          });
+      if (board) actions.push(...canvasActions(board).slice(1));
     }
     menuAt(event.currentTarget as HTMLElement, actions);
   });
 document.addEventListener("keydown", (e) => {
+  if (modal?.dataset.busy === "true") return;
   const command =
     data?.platform === "macos" ? e.metaKey : e.ctrlKey && e.shiftKey;
-  if (command && e.key.toLowerCase() === "p") {
+  if (command && e.key === "," && !modal) {
+    e.preventDefault();
+    void openAppearance().catch(report);
+  } else if (command && e.key.toLowerCase() === "p") {
     e.preventDefault();
     palette();
   } else if (command && e.key.toLowerCase() === "t" && !modal) {
@@ -1237,6 +1447,16 @@ document.addEventListener("keydown", (e) => {
   } else if (command && e.key === "." && previousBoard && !modal) {
     e.preventDefault();
     select({ kind: "canvas", id: previousBoard });
+  } else if (command && selected?.kind === "canvas" && !modal) {
+    const board = workspace.canvases.find((b) => b.id === selected!.id);
+    if (!board) return;
+    if (["+", "=", "-", "_", "0", ")", "9", "(", "a", "A"].includes(e.key)) {
+      e.preventDefault();
+      if (["+", "="].includes(e.key)) canvasZoom(board, board.zoom + 0.1);
+      else if (["-", "_"].includes(e.key)) canvasZoom(board, board.zoom - 0.1);
+      else if (["0", ")"].includes(e.key)) canvasZoom(board, 1);
+      else canvasFit(board, e.key.toLowerCase() === "a");
+    }
   }
 });
 async function boot(): Promise<void> {
@@ -1252,6 +1472,14 @@ async function boot(): Promise<void> {
   }
   data = await invoke<Bootstrap>("bootstrap");
   workspace = data.workspace;
+  try {
+    appearanceHistory = await invoke<AppearanceHistory>("get_appearance");
+  } catch (error) {
+    report(
+      `Saved appearance could not be read. It has not been replaced. ${String(error)}`,
+    );
+  }
+  previewAppearance(appearanceHistory.current);
   root.dataset.ready = "true";
   selected = workspace.selectedInstance
     ? { kind: "terminal", id: workspace.selectedInstance }

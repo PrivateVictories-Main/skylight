@@ -7,7 +7,7 @@ import SkylightCore
 
 /// One set of magnification limits for the whole canvas. A second, disagreeing
 /// floor somewhere else is exactly how a "safe" divisor stops being safe.
-private enum CanvasZoom {
+enum CanvasZoom {
     /// Endless in feel, bounded in fact: below 0.2 tiles are unreadable specks,
     /// above 3 a terminal is a wall of pixels.
     static let minimum: CGFloat = 0.2
@@ -34,6 +34,28 @@ private enum CanvasZoom {
         let value = clamped(value)
         return abs(value - 1) < snapTolerance ? 1 : value
     }
+
+    /// Keep the same content point under the pointer while changing scale,
+    /// including the final settle onto 100%.
+    static func anchoredPan(_ pan: CGPoint, from oldZoom: CGFloat,
+                            to newZoom: CGFloat, at anchor: CGPoint) -> CGPoint {
+        let ratio = clamped(newZoom) / safe(oldZoom)
+        return CGPoint(x: anchor.x - (anchor.x - pan.x) * ratio,
+                       y: anchor.y - (anchor.y - pan.y) * ratio)
+    }
+
+    /// Canvas navigation takes precedence over the embedded terminal's font
+    /// shortcuts only while the board is the active navigation context.
+    static func shortcut(_ characters: String?, modifiers: NSEvent.ModifierFlags) -> CanvasZoomAction? {
+        guard modifiers.contains(.command), modifiers.isDisjoint(with: [.control, .option]) else { return nil }
+        switch characters {
+        case "=", "+": return .zoomIn
+        case "-": return modifiers.contains(.shift) ? nil : .zoomOut
+        case "0": return modifiers.contains(.shift) ? nil : .actual
+        case "9": return modifiers.contains(.shift) ? nil : .fit
+        default: return nil
+        }
+    }
 }
 
 /// An endless board of live tiles. There is no content frame — tiles live at
@@ -56,6 +78,7 @@ struct CanvasView: View {
 
     @State private var pan: CGPoint = .zero
     @State private var zoom: CGFloat = 1
+    @State private var zoomGestureAnchor: CGPoint?
     @State private var viewport: CGSize = .zero
     /// True while a tile is being moved or resized — a reflow must never land
     /// in the middle of a gesture.
@@ -87,6 +110,7 @@ struct CanvasView: View {
             ZStack(alignment: .topLeading) {
                 PanSurface(
                     onPan: { delta in
+                        guard !tileInteracting else { return }
                         pan.x += delta.width
                         pan.y += delta.height
                     },
@@ -108,6 +132,9 @@ struct CanvasView: View {
                     onCommandChanged: { held in
                         if commandHeld != held { commandHeld = held }
                     },
+                    onZoomShortcut: { state.requestZoom($0) },
+                    navigationEnabled: !tileInteracting && !state.switcherShown && !state.newSheetShown,
+                    overviewScrollFrame: zoom == 1 ? nil : layout.free,
                     installsEventMonitors: reflowEnabled
                 )
                 DotGrid(pan: pan, zoom: zoom, dotColor: themes.dotGrid)
@@ -256,13 +283,15 @@ struct CanvasView: View {
     /// Re-zoom keeping `anchor` (a screen point) pinned to the same content —
     /// the cursor stays on the thing it is pointing at.
     private func setZoom(_ newZoom: CGFloat, around anchor: CGPoint) {
-        let ratio = newZoom / safeZoom
-        pan = CGPoint(x: anchor.x - (anchor.x - pan.x) * ratio,
-                      y: anchor.y - (anchor.y - pan.y) * ratio)
+        pan = CanvasZoom.anchoredPan(pan, from: zoom, to: newZoom, at: anchor)
         zoom = newZoom
     }
 
     private func zoomBy(factor: CGFloat, around anchor: CGPoint) {
+        // A pinch reaches the local event monitor even during a tile drag.
+        // Match menu zoom: never change the coordinate system under a resize.
+        guard !tileInteracting else { return }
+        zoomGestureAnchor = anchor
         let target = CanvasZoom.clamped(zoom * factor)
         guard target != zoom else { return }
         setZoom(target, around: anchor)
@@ -270,8 +299,10 @@ struct CanvasView: View {
 
     /// Pinch ended: settle onto exactly 100% if we are close, then persist.
     private func endZoomGesture() {
+        defer { zoomGestureAnchor = nil }
+        guard !tileInteracting, let anchor = zoomGestureAnchor else { return }
         let settled = CanvasZoom.snapped(zoom)
-        if settled != zoom { setZoom(settled, around: viewportCenter) }
+        if settled != zoom { setZoom(settled, around: anchor) }
         commitViewport()
     }
 
@@ -523,6 +554,11 @@ struct PanSurface: NSViewRepresentable {
     let onDoubleClick: (CGPoint) -> Void
     /// ⌘ went down or came up anywhere in this window.
     let onCommandChanged: (Bool) -> Void
+    let onZoomShortcut: (CanvasZoomAction) -> Void
+    var navigationEnabled = true
+    /// At overview scales the tile is a navigation thumbnail. Its opaque
+    /// SwiftUI hit target must not swallow a scroll destined for the plane.
+    var overviewScrollFrame: CGRect?
     /// Preview canvases (drop overlay) are pictures — a local monitor would
     /// bypass their allowsHitTesting(false) and misroute pinches onto an
     /// invisible board, or arm a grab layer on tiles nobody can touch.
@@ -546,6 +582,9 @@ struct PanSurface: NSViewRepresentable {
         view.contextMenu = contextMenu
         view.onDoubleClick = onDoubleClick
         view.onCommandChanged = onCommandChanged
+        view.onZoomShortcut = onZoomShortcut
+        view.navigationEnabled = navigationEnabled
+        view.overviewScrollFrame = overviewScrollFrame
         view.installsEventMonitors = installsEventMonitors
     }
 
@@ -557,6 +596,9 @@ struct PanSurface: NSViewRepresentable {
         var contextMenu: ((CGPoint) -> NSMenu)?
         var onDoubleClick: ((CGPoint) -> Void)?
         var onCommandChanged: ((Bool) -> Void)?
+        var onZoomShortcut: ((CanvasZoomAction) -> Void)?
+        var navigationEnabled = true
+        var overviewScrollFrame: CGRect?
         var installsEventMonitors = true
         private var dragOrigin: CGPoint?
         private var dragged = false
@@ -571,6 +613,7 @@ struct PanSurface: NSViewRepresentable {
         }
         private let magnify = MonitorBox()
         private let flags = MonitorBox()
+        private let navigation = MonitorBox()
         /// ⌘-tab carries the key-up to the OTHER app, so a local monitor never
         /// hears ⌘ lift. Losing key is that missing release.
         private let resignKey = MonitorBox()
@@ -578,6 +621,7 @@ struct PanSurface: NSViewRepresentable {
         deinit {
             if let monitor = magnify.monitor { NSEvent.removeMonitor(monitor) }
             if let monitor = flags.monitor { NSEvent.removeMonitor(monitor) }
+            if let monitor = navigation.monitor { NSEvent.removeMonitor(monitor) }
             if let token = resignKey.monitor {
                 NotificationCenter.default.removeObserver(token)
             }
@@ -603,14 +647,37 @@ struct PanSurface: NSViewRepresentable {
                 NSEvent.removeMonitor(monitor)
                 flags.monitor = nil
             }
+            if let monitor = navigation.monitor {
+                NSEvent.removeMonitor(monitor)
+                navigation.monitor = nil
+            }
             if let token = resignKey.monitor {
                 NotificationCenter.default.removeObserver(token)
                 resignKey.monitor = nil
             }
             guard let window, installsEventMonitors else { return }
+            navigation.monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .scrollWheel]) {
+                [weak self] event in
+                guard let self, self.navigationEnabled, event.window === self.window,
+                      self.window?.attachedSheet == nil else { return event }
+                if event.type == .keyDown,
+                   let action = CanvasZoom.shortcut(event.charactersIgnoringModifiers,
+                                                     modifiers: event.modifierFlags) {
+                    self.onZoomShortcut?(action)
+                    return nil
+                }
+                if event.type == .scrollWheel,
+                   let frame = self.overviewScrollFrame,
+                   frame.contains(self.viewportPoint(event.locationInWindow)) {
+                    self.scrollWheel(with: event)
+                    return nil
+                }
+                return event
+            }
             magnify.monitor = NSEvent.addLocalMonitorForEvents(matching: .magnify) {
                 [weak self] event in
-                guard let self, event.window === self.window else { return event }
+                guard let self, self.navigationEnabled, event.window === self.window,
+                      self.window?.attachedSheet == nil else { return event }
                 let p = self.convert(event.locationInWindow, from: nil)
                 guard self.bounds.contains(p) else { return event }
                 self.handleMagnify(event, at: p)
@@ -654,7 +721,8 @@ struct PanSurface: NSViewRepresentable {
             let scale: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 14
             onPan?(CGSize(width: event.scrollingDeltaX * scale,
                           height: event.scrollingDeltaY * scale))
-            if event.phase == .ended || event.momentumPhase == .ended {
+            if event.phase == .ended || event.phase == .cancelled
+                || event.momentumPhase == .ended || event.momentumPhase == .cancelled {
                 wheelSettle?.cancel()
                 wheelSettle = nil
                 onPanEnded?()
@@ -1059,10 +1127,12 @@ struct TileView: View {
             width: tile.size.width,
             height: tile.size.height
         )
-        let others = (state.canvases.first { $0.id == boardID }?.tiles ?? [])
-            .filter { $0.id != tile.id }
-            .map(\.frame)
-        updated.origin = CanvasLayout.magnetSnapped(proposed, against: others)
+        if let board = state.canvases.first(where: { $0.id == boardID }) {
+            updated.origin = CanvasLayout.magnetSnapped(proposed, moving: tile.id,
+                                                        on: board, zoom: gestureZoom)
+        } else {
+            updated.origin = CanvasLayout.snapped(proposed.origin)
+        }
         withAnimation(Self.settleSpring) { dragOffset = .zero }
         grabbing = false
         interacting = false

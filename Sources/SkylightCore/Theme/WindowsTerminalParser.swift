@@ -19,10 +19,23 @@ public enum WindowsTerminalParser {
     private static let names = ["black", "red", "green", "yellow",
                                  "blue", "purple", "cyan", "white"]
 
+    /// Theme galleries also distribute a single scheme object. Its anchor
+    /// colors distinguish it from VS Code's dotted terminal color keys.
+    static func isStandaloneScheme(_ root: [String: Any]) -> Bool {
+        root["background"] is String && root["foreground"] is String
+            && root["colors"] == nil && root["workbench.colorCustomizations"] == nil
+    }
+
     public static func parse(_ data: Data, name: String) -> [SkylightTheme] {
-        guard let root = JSONC.object(from: data),
-              let schemes = root["schemes"] as? [[String: Any]]
-        else { return [] }
+        guard let root = JSONC.object(from: data) else { return [] }
+        let schemes: [[String: Any]]
+        if let items = root["schemes"] as? [[String: Any]] {
+            schemes = items
+        } else if root["schemes"] == nil, isStandaloneScheme(root) {
+            schemes = [root]
+        } else {
+            return []
+        }
 
         // The default profile's look, joined onto every scheme below.
         let defaults = (root["profiles"] as? [String: Any])
@@ -30,10 +43,13 @@ public enum WindowsTerminalParser {
         var joined: [String] = []
         var opacity: Double?
         if let raw = defaults?["opacity"] as? Double {
-            // Newer settings write 0–100, older ones 0–1. "1" is opaque under
-            // both readings, so the split point is safe either way.
-            opacity = raw > 1 ? raw / 100 : raw
+            // `opacity` is always a percentage, including 1 = one percent.
+            // The old fractional setting has a different key.
+            opacity = min(max(raw / 100, 0), 1)
             joined.append("opacity \(raw) joined from the default profile")
+        } else if let raw = defaults?["acrylicOpacity"] as? Double {
+            opacity = min(max(raw, 0), 1)
+            joined.append("acrylicOpacity \(raw) joined from the default profile")
         }
         let font = defaults?["font"] as? [String: Any]
         let fontSize = font?["size"] as? Double

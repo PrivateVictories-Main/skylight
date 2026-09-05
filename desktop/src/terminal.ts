@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import type { Instance } from "./model";
+import { terminalOptions, type AppearanceSettings } from "./appearance";
 import "@xterm/xterm/css/xterm.css";
 
 export class TerminalSession {
@@ -22,6 +23,7 @@ export class TerminalSession {
     readonly instance: Instance,
     private changed: () => void,
     private report: (error: unknown) => void,
+    appearance: AppearanceSettings,
   ) {
     this.element.className = "terminal-surface";
     this.terminal = new Terminal({
@@ -31,20 +33,8 @@ export class TerminalSession {
       cursorBlink: false,
       scrollback: 3000,
       allowProposedApi: false,
-      theme: {
-        background: "#212121",
-        foreground: "#d8d8d8",
-        cursor: "#d8d8d8",
-        selectionBackground: "#ffffff33",
-        black: "#262830",
-        red: "#ec8791",
-        green: "#a6d8ac",
-        yellow: "#e9cf8e",
-        blue: "#9cbbf3",
-        magenta: "#c6a3ed",
-        cyan: "#9cdad8",
-        white: "#e2e4e9",
-      },
+      allowTransparency: true,
+      ...terminalOptions(appearance),
     });
     this.terminal.loadAddon(this.fit);
     this.terminal.open(this.element);
@@ -54,6 +44,12 @@ export class TerminalSession {
     );
     this.observer = new ResizeObserver(() => this.scheduleFit());
     this.observer.observe(this.element);
+    this.applyAppearance(appearance);
+  }
+  applyAppearance(settings: AppearanceSettings): void {
+    this.terminal.options = terminalOptions(settings);
+    this.element.style.padding = `${settings.paddingY}px ${settings.paddingX}px`;
+    this.scheduleFit();
   }
   async start(program: string, cwd: string | null): Promise<void> {
     const output = new Channel<ArrayBuffer>();
