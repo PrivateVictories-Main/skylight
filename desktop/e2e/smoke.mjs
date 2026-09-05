@@ -251,6 +251,9 @@ try {
         sidebarInset: getComputedStyle(document.querySelector('.sidebar'), '::before').left,
         newButtonBottom: innerHeight - document.querySelector('#new-terminal').getBoundingClientRect().bottom,
         folderCaption: document.querySelector('.row-caption').textContent,
+        scrollThumbRadius: getComputedStyle(document.querySelector('.xterm .scrollbar .slider')).borderRadius,
+        scrollThumbInset: getComputedStyle(document.querySelector('.xterm .scrollbar .slider')).borderLeftWidth,
+        scrollThumbClip: getComputedStyle(document.querySelector('.xterm .scrollbar .slider')).backgroundClip,
       };
     `);
     assert.deepEqual(visual, {
@@ -263,6 +266,9 @@ try {
       sidebarInset: "8px",
       newButtonBottom: 17,
       folderCaption: "project with spaces",
+      scrollThumbRadius: "999px",
+      scrollThumbInset: "4px",
+      scrollThumbClip: "padding-box",
     });
     evidence.visualContract = visual;
     assert.equal(

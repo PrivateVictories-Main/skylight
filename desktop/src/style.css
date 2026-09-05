@@ -333,6 +333,13 @@ main {
 .xterm-viewport {
   scrollbar-width: thin;
 }
+/* xterm 6 draws its own scrollbar. Keep its full pointer target while matching
+   the narrow, rounded thumb of the native terminal on every OS. */
+.terminal-surface .xterm .xterm-scrollable-element > .scrollbar > .slider {
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
 .session-recovery {
   position: absolute;
   bottom: 12px;
