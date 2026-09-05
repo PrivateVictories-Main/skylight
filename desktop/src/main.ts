@@ -19,6 +19,11 @@ import { presetEditor } from "./preset-editor";
 import "./style.css";
 
 const root = document.querySelector<HTMLDivElement>("#app")!;
+const updateWindowFocus = () =>
+  root.classList.toggle("window-inactive", !document.hasFocus());
+window.addEventListener("focus", updateWindowFocus);
+window.addEventListener("blur", updateWindowFocus);
+updateWindowFocus();
 root.innerHTML = `<aside class="sidebar"><header class="sidebar-chrome"><button id="workspace-menu" class="icon-button" aria-label="Workspace menu" title="Workspace menu">…</button><span class="spacer"></span><button id="switch" class="icon-button" aria-label="Search workspace" title="Search workspace"></button><button id="sidebar-toggle" class="icon-button" aria-label="Hide sidebar" title="Hide sidebar"></button></header><nav id="sessions" aria-label="Workspace"></nav><footer><button id="new-terminal" aria-label="New Terminal">＋ New</button></footer></aside><button id="sidebar-reveal" class="icon-button" aria-label="Show sidebar" title="Show sidebar" hidden></button><main><header id="toolbar"></header><div id="content"></div><div id="notice" role="status" hidden></div></main>`;
 const nav = document.querySelector<HTMLElement>("#sessions")!;
 const toolbar = document.querySelector<HTMLElement>("#toolbar")!;
@@ -86,6 +91,9 @@ const glyphs = {
   search: '<circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/>',
   sidebar:
     '<rect x="2" y="3" width="16" height="14" rx="2"/><path d="M8 3v14M4.5 6h1m-1 3h1"/>',
+  expand: '<path d="M3 8V3h5M3 3l5 5m9 4v5h-5m5 0-5-5"/>',
+  close: '<path d="m5 5 10 10M15 5 5 15"/>',
+  plus: '<path d="M10 3v14M3 10h14"/>',
 } as const;
 function icon(kind: keyof typeof glyphs): HTMLElement {
   const node = element("span", undefined, "glyph");
@@ -148,7 +156,16 @@ function renderNav(): void {
       status(instance.id) === "ended"
         ? "Session ended"
         : instance.spec.workingDirectory;
-    if (caption) label.append(element("span", caption, "row-caption"));
+    if (caption) {
+      const folder = caption.split(/[\\/]/).filter(Boolean).at(-1);
+      const short =
+        caption === "Session ended" || !folder || /^[A-Za-z]:$/.test(folder)
+          ? caption
+          : folder;
+      const subtitle = element("span", short, "row-caption");
+      subtitle.title = caption;
+      label.append(subtitle);
+    }
     row.append(icon("terminal"), label);
     const more = button(
       "…",
@@ -393,7 +410,10 @@ function dialog(title: string): {
     if (modal === dlg) modal = undefined;
     restoreFocus();
   };
-  heading.append(element("h2", title), button("×", close, "icon-button"));
+  const dismiss = button("", close, "icon-button");
+  dismiss.append(icon("close"));
+  dismiss.setAttribute("aria-label", "Close dialog");
+  heading.append(element("h2", title), dismiss);
   const body = element("div", undefined, "dialog-body");
   dlg.append(heading, body);
   document.body.append(dlg);
@@ -811,7 +831,7 @@ function renderCanvas(board: Canvas): void {
       element("strong", instance.name),
       element("span", status(instance.id), "session-status"),
       button(
-        "↗",
+        "",
         () => select({ kind: "terminal", id: instance.id }),
         "icon-button",
       ),
@@ -819,7 +839,9 @@ function renderCanvas(board: Canvas): void {
     header
       .querySelector("button")
       ?.setAttribute("aria-label", `Focus ${instance.name}`);
-    const detach = button("×", () => detachInstance(instance), "icon-button");
+    header.querySelector("button")?.append(icon("expand"));
+    const detach = button("", () => detachInstance(instance), "icon-button");
+    detach.append(icon("close"));
     detach.setAttribute("aria-label", `Remove ${instance.name} from canvas`);
     header.append(detach);
     contextual(header, () => instanceActions(instance));
@@ -852,7 +874,8 @@ function renderCanvas(board: Canvas): void {
     const inside = element("div", undefined, "tile-content");
     card.append(header, inside);
     plane.append(card);
-    const grip = button("⌟", () => {}, "resize-grip");
+    const grip = button("", () => {}, "resize-grip");
+    grip.append(icon("expand"));
     grip.setAttribute("aria-label", `Resize ${instance.name}`);
     card.append(grip);
     const setSize = (width: number, height: number) => {
@@ -1143,6 +1166,9 @@ async function closeWindow(): Promise<void> {
   allowClose = true;
   await getCurrentWindow().close();
 }
+document
+  .querySelector("#new-terminal")!
+  .replaceChildren(icon("plus"), element("span", "New"));
 document.querySelector("#new-terminal")!.addEventListener("click", () => {
   void editInstance().catch(report);
 });

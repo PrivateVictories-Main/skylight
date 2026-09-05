@@ -184,6 +184,25 @@ async function marker(name, focus = true) {
       `SKYLIGHT_${name}`,
   );
 }
+async function cleanPreview(name) {
+  // These are commands in the real QA shell, not injected terminal output.
+  // Clear the test transcript so the app's actual surfaces are easy to compare.
+  if (windows) {
+    await keys(
+      `prompt $G\uE007cls & echo Skylight & echo A quiet place for your work. & echo ready > ${name}.txt\uE007`,
+    );
+  } else {
+    await keys(
+      `printf '\\033[2J\\033[HSkylight\\nA quiet place for your work.\\n'; printf ready > ${name}.txt\uE007`,
+    );
+  }
+  await until(
+    "preview command completed",
+    async () =>
+      (await readFile(join(project, `${name}.txt`), "utf8")).trim() === "ready",
+  );
+  await screenshot(name);
+}
 async function openApp() {
   const result = await request("POST", "/session", {
     capabilities: {
@@ -218,6 +237,7 @@ try {
     await running();
     await marker("initial", false);
     await screenshot("terminal");
+    await cleanPreview("terminal-preview");
     const visual = await inspect(`
       const main = document.querySelector('main').getBoundingClientRect();
       const panel = document.querySelector('#content');
@@ -227,6 +247,10 @@ try {
         radius: getComputedStyle(panel).borderRadius,
         toolbarHeight: document.querySelector('#toolbar').getBoundingClientRect().height,
         presetsInSidebar: document.querySelectorAll('#sessions .preset-row').length,
+        sidebarRadius: getComputedStyle(document.querySelector('.sidebar'), '::before').borderRadius,
+        sidebarInset: getComputedStyle(document.querySelector('.sidebar'), '::before').left,
+        newButtonBottom: innerHeight - document.querySelector('#new-terminal').getBoundingClientRect().bottom,
+        folderCaption: document.querySelector('.row-caption').textContent,
       };
     `);
     assert.deepEqual(visual, {
@@ -235,6 +259,10 @@ try {
       radius: "16px",
       toolbarHeight: 0,
       presetsInSidebar: 0,
+      sidebarRadius: "16px",
+      sidebarInset: "8px",
+      newButtonBottom: 17,
+      folderCaption: "project with spaces",
     });
     evidence.visualContract = visual;
     assert.equal(
@@ -286,6 +314,18 @@ try {
     await click("#new-terminal");
     await until("preset in New dialog", () => find("dialog .preset-launch"));
     await screenshot("new-terminal");
+    assert.equal(
+      await inspect(
+        "return getComputedStyle(document.querySelector('.dialog select')).appearance",
+      ),
+      "none",
+    );
+    assert.equal(
+      await inspect(
+        "return getComputedStyle(document.querySelector('.dialog select')).borderRadius",
+      ),
+      "8px",
+    );
     await keys("\uE00C");
     await marker("after_launch_dialog", false);
   });
@@ -429,6 +469,13 @@ try {
       "64px 64px",
     );
     await screenshot("canvas");
+    assert.equal(
+      await inspect(
+        "return document.querySelectorAll('.tile header button .glyph svg').length",
+      ),
+      2,
+    );
+    await cleanPreview("canvas-preview");
     await keys("exit\uE007");
     await until("canvas reports process exit", () =>
       inspect(

@@ -31,6 +31,7 @@
   --faint: #828282;
   --panel: #212121;
   --hairline: #ffffff26;
+  --accent: #0a64d8;
 }
 * {
   box-sizing: border-box;
@@ -69,13 +70,13 @@ button:disabled {
   cursor: default;
 }
 .primary {
-  background: #e2e2e2;
-  color: #222;
+  background: var(--accent);
+  color: #fff;
   border-color: transparent;
   font-weight: 600;
 }
 .primary:hover {
-  background: #fff;
+  background: #1674e8;
 }
 .subtle,
 .icon-button {
@@ -97,7 +98,7 @@ button:disabled {
   height: 16px;
   flex: 0 0 16px;
   display: inline-flex;
-  color: #b0b0b0;
+  color: currentColor;
 }
 .glyph svg {
   width: 100%;
@@ -109,11 +110,22 @@ button:disabled {
   height: 100vh;
 }
 .sidebar {
+  position: relative;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  padding: 8px 10px 8px 18px;
-  border-right: 0.5px solid var(--hairline);
+  padding: 8px 10px 17px 18px;
+}
+/* SwiftUI's inset sidebar is one rounded surface, including its bottom bar. */
+.sidebar::before {
+  content: "";
+  position: absolute;
+  inset: 8px 0 8px 8px;
+  z-index: -1;
+  border: 0.5px solid var(--hairline);
+  border-radius: 16px;
+  pointer-events: none;
 }
 .sidebar-chrome {
   display: flex;
@@ -171,8 +183,16 @@ nav h2 {
 }
 .session-row.selected,
 .canvas-row.selected {
-  background: #ffffff29;
+  background: var(--accent);
   color: #fff;
+}
+.selected .row-caption,
+.selected .count {
+  color: #ffffffb3;
+}
+.window-inactive .session-row.selected,
+.window-inactive .canvas-row.selected {
+  background: #ffffff29;
 }
 .row-label {
   min-width: 0;
@@ -228,6 +248,10 @@ nav h2 {
   padding: 9px 4px 0;
 }
 #new-terminal {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   width: 100%;
   height: 30px;
   padding: 0;
@@ -238,6 +262,12 @@ nav h2 {
 }
 #new-terminal:hover {
   background: #ffffff20;
+}
+#new-terminal .glyph {
+  width: 12px;
+  height: 12px;
+  flex-basis: 12px;
+  color: var(--muted);
 }
 main {
   display: flex;
@@ -289,7 +319,7 @@ main {
 #content.is-canvas {
   margin: -8px;
   border: 0;
-  border-radius: 0;
+  border-radius: 16px;
   background: #1e1e1e;
 }
 .terminal-surface {
@@ -409,8 +439,18 @@ main {
   background: #202020;
   border: 1px solid var(--hairline);
   color: #e5e5e5;
-  border-radius: 6px;
+  border-radius: 8px;
   padding: 8px;
+}
+.dialog select {
+  appearance: none;
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='m3 4.5 3 3 3-3' fill='none' stroke='%23b0b0b0' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+.dialog input[type="checkbox"] {
+  accent-color: var(--accent);
 }
 .dialog p {
   font-size: 12px;
@@ -585,11 +625,13 @@ main {
   position: absolute;
   display: flex;
   flex-direction: column;
-  background: var(--panel);
-  border: 1px solid #ffffff28;
+  background:
+    linear-gradient(var(--panel), var(--panel)) padding-box,
+    linear-gradient(#ffffff47, #ffffff0d, #0000001f) border-box;
+  border: 1px solid transparent;
   border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 10px 22px #0002;
+  box-shadow: 0 5px 12px #00000024;
 }
 .tile > header {
   height: 30px;
@@ -598,7 +640,7 @@ main {
   gap: 8px;
   align-items: center;
   padding: 0 10px;
-  background: #252525;
+  background: #202020;
   cursor: grab;
   touch-action: none;
 }
@@ -613,14 +655,20 @@ main {
   color: var(--muted);
 }
 .tile > header .glyph {
-  width: 14px;
-  height: 14px;
-  flex-basis: 14px;
+  width: 12px;
+  height: 12px;
+  flex-basis: 12px;
+  color: var(--muted);
 }
 .tile > header button {
   width: 20px;
   height: 22px;
   font-size: 14px;
+}
+.tile > header button .glyph {
+  width: 10px;
+  height: 10px;
+  flex-basis: 10px;
 }
 .session-status {
   font-size: 10px;
@@ -705,6 +753,14 @@ main {
   z-index: 1;
   font-size: 12px;
   line-height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.resize-grip .glyph {
+  width: 10px;
+  height: 10px;
+  flex-basis: 10px;
 }
 #sidebar-reveal {
   position: absolute;
@@ -733,6 +789,14 @@ main {
   }
 }
 @media (forced-colors: active) {
+  .dialog select {
+    appearance: auto;
+    background-image: none;
+  }
+  .tile,
+  .sidebar::before {
+    border-color: CanvasText;
+  }
   .session-row.selected,
   .canvas-row.selected {
     outline: 1px solid Highlight;
